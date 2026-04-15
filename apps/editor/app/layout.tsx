@@ -30,9 +30,10 @@ export default function RootLayout({
     <html
       className={`${geistSans.variable} ${geistMono.variable} ${GeistPixelSquare.variable} ${barlow.variable}`}
       lang="en"
+      suppressHydrationWarning
     >
       <head>
-        <Script src="/translate-inject.js" strategy="beforeInteractive" />
+        <Script src="/translate-inject.js" strategy="afterInteractive" />
         {process.env.NODE_ENV === 'development' && (
           <Script
             crossOrigin="anonymous"
@@ -41,7 +42,7 @@ export default function RootLayout({
           />
         )}
       </head>
-      <body className="font-sans">
+      <body className="font-sans" suppressHydrationWarning>
         {children}
         {process.env.NODE_ENV === 'development' && <Agentation />}
       </body>
