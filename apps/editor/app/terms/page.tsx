@@ -3,7 +3,7 @@ import Link from 'next/link'
 
 export const metadata: Metadata = {
   title: 'Terms of Service',
-  description: 'Terms of Service for Pascal Editor and the Pascal platform.',
+  description: 'Terms of Service for 建筑王.',
 }
 
 export default function TermsPage() {
@@ -39,31 +39,29 @@ export default function TermsPage() {
           <section className="mb-8 space-y-4">
             <h2 className="font-semibold text-xl">1. Introduction</h2>
             <p className="text-foreground/90 leading-relaxed">
-              Welcome to Pascal Editor (&quot;Editor&quot;) and the Pascal platform at pascal.app
-              (&quot;Platform&quot;), operated by Pascal Group Inc. (&quot;we,&quot; &quot;us,&quot;
+              Welcome to 建筑王 (&quot;建筑王&quot;), operated by Pascal Group Inc. (&quot;we,&quot; &quot;us,&quot;
               or &quot;our&quot;). By accessing or using our services, you agree to these Terms of
               Service.
             </p>
           </section>
 
           <section className="mb-8 space-y-4">
-            <h2 className="font-semibold text-xl">2. The Editor and Platform</h2>
+            <h2 className="font-semibold text-xl">2. 建筑王</h2>
             <p className="text-foreground/90 leading-relaxed">
-              The Pascal Editor is open-source software released under the MIT License. You may use,
-              copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Editor
+              建筑王 is open-source software released under the MIT License. You may use,
+              copy, modify, merge, publish, distribute, sublicense, and/or sell copies of 建筑王
               software in accordance with the MIT License terms.
             </p>
             <p className="text-foreground/90 leading-relaxed">
-              The Pascal platform (pascal.app) and its associated services, including user accounts,
-              cloud storage, and project hosting, are proprietary services owned and operated by
-              Pascal Group Inc. These Terms govern your use of the Platform.
+              建筑王 and its associated services are proprietary services owned and operated by
+              Pascal Group Inc. These Terms govern your use of 建筑王.
             </p>
           </section>
 
           <section className="mb-8 space-y-4">
             <h2 className="font-semibold text-xl">3. Accounts and Authentication</h2>
             <p className="text-foreground/90 leading-relaxed">
-              To use certain features of the Platform, you must create an account. We use Google
+              To use certain features of 建筑王, you must create an account. We use Google
               OAuth and magic link email authentication through Supabase. You are responsible for
               maintaining the security of your account credentials and for all activities that occur
               under your account.
@@ -75,16 +73,16 @@ export default function TermsPage() {
             <p className="text-foreground/90 leading-relaxed">You agree not to:</p>
             <ul className="list-disc space-y-2 pl-6 text-foreground/90">
               <li>
-                Use the Platform for any unlawful purpose or in violation of any applicable laws
+                Use 建筑王 for any unlawful purpose or in violation of any applicable laws
               </li>
               <li>
                 Upload, share, or distribute content that infringes intellectual property rights
               </li>
-              <li>Attempt to gain unauthorized access to the Platform or its systems</li>
-              <li>Interfere with or disrupt the Platform&apos;s infrastructure</li>
+              <li>Attempt to gain unauthorized access to 建筑王 or its systems</li>
+              <li>Interfere with or disrupt 建筑王&apos;s infrastructure</li>
               <li>Upload malicious code, viruses, or harmful content</li>
               <li>Harass, abuse, or harm other users</li>
-              <li>Use the Platform to send spam or unsolicited communications</li>
+              <li>Use 建筑王 to send spam or unsolicited communications</li>
             </ul>
           </section>
 
@@ -92,7 +90,7 @@ export default function TermsPage() {
             <h2 className="font-semibold text-xl">5. Your Content and Intellectual Property</h2>
             <p className="text-foreground/90 leading-relaxed">
               You retain full ownership of all content, projects, and data you create or upload to
-              the Platform (&quot;Your Content&quot;). By using the Platform, you grant us a limited
+              建筑王 (&quot;Your Content&quot;). By using 建筑王, you grant us a limited
               license to store, display, and transmit Your Content solely to provide our services to
               you.
             </p>
@@ -103,11 +101,11 @@ export default function TermsPage() {
           </section>
 
           <section className="mb-8 space-y-4">
-            <h2 className="font-semibold text-xl">6. Platform Ownership</h2>
+            <h2 className="font-semibold text-xl">6. 建筑王 Ownership</h2>
             <p className="text-foreground/90 leading-relaxed">
-              The Platform, including its design, features, and proprietary code, is owned by Pascal
-              Group Inc. and protected by intellectual property laws. While the Editor source code
-              is open-source under the MIT License, the Platform services, branding, and
+              建筑王, including its design, features, and proprietary code, is owned by Pascal
+              Group Inc. and protected by intellectual property laws. While 建筑王 source code
+              is open-source under the MIT License, 建筑王 services, branding, and
               infrastructure remain our proprietary property.
             </p>
           </section>
@@ -116,7 +114,7 @@ export default function TermsPage() {
             <h2 className="font-semibold text-xl">7. Account Termination</h2>
             <p className="text-foreground/90 leading-relaxed">
               We reserve the right to suspend or terminate your account if you violate these Terms
-              or engage in conduct that we determine is harmful to the Platform or other users. You
+              or engage in conduct that we determine is harmful to 建筑王 or other users. You
               may also delete your account at any time by contacting us at{' '}
               <a
                 className="text-foreground underline hover:text-foreground/80"
@@ -137,7 +135,7 @@ export default function TermsPage() {
               NON-INFRINGEMENT.
             </p>
             <p className="text-foreground/90 leading-relaxed">
-              We do not warrant that the Platform will be uninterrupted, error-free, or free of
+              We do not warrant that 建筑王 will be uninterrupted, error-free, or free of
               harmful components.
             </p>
           </section>
@@ -155,7 +153,7 @@ export default function TermsPage() {
             <h2 className="font-semibold text-xl">10. Changes to Terms</h2>
             <p className="text-foreground/90 leading-relaxed">
               We may update these Terms from time to time. We will notify you of material changes by
-              posting the updated Terms on the Platform. Your continued use of the Platform after
+              posting the updated Terms on 建筑王. Your continued use of 建筑王 after
               changes are posted constitutes your acceptance of the revised Terms.
             </p>
           </section>

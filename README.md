@@ -1,4 +1,4 @@
-# Pascal Editor
+# 建筑王
 
 A 3D building editor built with React Three Fiber and WebGPU.
 

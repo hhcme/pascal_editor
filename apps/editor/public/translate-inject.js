@@ -428,7 +428,7 @@
 
   // ── Initialize ──
   function init() {
-    console.log('[FindTop i18n] Starting Chinese localization')
+    console.log('[建筑王 i18n] Starting Chinese localization')
 
     // Initial pass — translate any text already in DOM
     if (document.body) {

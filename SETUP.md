@@ -1,4 +1,4 @@
-# Pascal Editor — Setup
+# 建筑王 — Setup
 
 ## Prerequisites
 

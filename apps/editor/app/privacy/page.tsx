@@ -3,7 +3,7 @@ import Link from 'next/link'
 
 export const metadata: Metadata = {
   title: 'Privacy Policy',
-  description: 'Privacy Policy for Pascal Editor and the Pascal platform.',
+  description: 'Privacy Policy for 建筑王.',
 }
 
 export default function PrivacyPage() {
@@ -39,8 +39,8 @@ export default function PrivacyPage() {
           <section className="mb-8 space-y-4">
             <h2 className="font-semibold text-xl">1. Introduction</h2>
             <p className="text-foreground/90 leading-relaxed">
-              Pascal Group Inc. (&quot;we,&quot; &quot;us,&quot; or &quot;our&quot;) operates the
-              Pascal Editor and Platform at pascal.app. This Privacy Policy explains how we collect,
+              Pascal Group Inc. (&quot;we,&quot; &quot;us,&quot; or &quot;our&quot;) operates
+              建筑王. This Privacy Policy explains how we collect,
               use, and protect your information when you use our services.
             </p>
           </section>
@@ -61,15 +61,15 @@ export default function PrivacyPage() {
 
             <h3 className="mt-4 font-medium text-lg">Project Data</h3>
             <p className="text-foreground/90 leading-relaxed">
-              When you use the Platform, we store your projects, including 3D building designs,
+              When you use 建筑王, we store your projects, including 3D building designs,
               floor plans, and associated metadata.
             </p>
 
             <h3 className="mt-4 font-medium text-lg">Usage Analytics</h3>
             <p className="text-foreground/90 leading-relaxed">
               We use Vercel Analytics and Speed Insights to collect anonymized usage data, including
-              page views, performance metrics, and general usage patterns. This helps us improve the
-              Platform.
+              page views, performance metrics, and general usage patterns. This helps us improve
+              建筑王.
             </p>
           </section>
 
@@ -101,7 +101,7 @@ export default function PrivacyPage() {
           <section className="mb-8 space-y-4">
             <h2 className="font-semibold text-xl">5. Third-Party Services</h2>
             <p className="text-foreground/90 leading-relaxed">
-              We use the following third-party services to operate the Platform:
+              We use the following third-party services to operate 建筑王:
             </p>
             <ul className="list-disc space-y-2 pl-6 text-foreground/90">
               <li>
@@ -123,7 +123,7 @@ export default function PrivacyPage() {
           <section className="mb-8 space-y-4">
             <h2 className="font-semibold text-xl">6. Cookies</h2>
             <p className="text-foreground/90 leading-relaxed">
-              We use minimal cookies necessary for the Platform to function:
+              We use minimal cookies necessary for 建筑王 to function:
             </p>
             <ul className="list-disc space-y-2 pl-6 text-foreground/90">
               <li>
@@ -171,7 +171,7 @@ export default function PrivacyPage() {
           <section className="mb-8 space-y-4">
             <h2 className="font-semibold text-xl">9. Children&apos;s Privacy</h2>
             <p className="text-foreground/90 leading-relaxed">
-              The Platform is not intended for children under 13. We do not knowingly collect
+              建筑王 is not intended for children under 13. We do not knowingly collect
               personal information from children under 13. If you believe we have collected such
               information, please contact us immediately.
             </p>
@@ -181,8 +181,8 @@ export default function PrivacyPage() {
             <h2 className="font-semibold text-xl">10. Changes to This Policy</h2>
             <p className="text-foreground/90 leading-relaxed">
               We may update this Privacy Policy from time to time. We will notify you of material
-              changes by posting the updated policy on the Platform. Your continued use of the
-              Platform after changes are posted constitutes your acceptance of the revised policy.
+              changes by posting the updated policy on 建筑王. Your continued use of
+              建筑王 after changes are posted constitutes your acceptance of the revised policy.
             </p>
           </section>
 

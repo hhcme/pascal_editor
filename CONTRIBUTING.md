@@ -1,4 +1,4 @@
-# Contributing to Pascal Editor
+# Contributing to 建筑王
 
 Thanks for your interest in contributing! We welcome all kinds of contributions — bug fixes, new features, documentation, and ideas.
 
