@@ -6,6 +6,7 @@ import { useEffect } from 'react'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
+import { exportFilters, saveBlobExport } from '../../lib/export'
 
 export function ExportManager() {
   const scene = useThree((state) => state.scene)
@@ -26,7 +27,7 @@ export function ExportManager() {
         const exporter = new STLExporter()
         const result = exporter.parse(sceneGroup, { binary: true })
         const blob = new Blob([result], { type: 'model/stl' })
-        downloadBlob(blob, `model_${date}.stl`)
+        await saveBlobExport(blob, `model_${date}.stl`, exportFilters.stl)
         return
       }
 
@@ -34,7 +35,7 @@ export function ExportManager() {
         const exporter = new OBJExporter()
         const result = exporter.parse(sceneGroup)
         const blob = new Blob([result], { type: 'model/obj' })
-        downloadBlob(blob, `model_${date}.obj`)
+        await saveBlobExport(blob, `model_${date}.obj`, exportFilters.obj)
         return
       }
 
@@ -44,9 +45,9 @@ export function ExportManager() {
       return new Promise<void>((resolve, reject) => {
         exporter.parse(
           sceneGroup,
-          (gltf) => {
+          async (gltf) => {
             const blob = new Blob([gltf as ArrayBuffer], { type: 'model/gltf-binary' })
-            downloadBlob(blob, `model_${date}.glb`)
+            await saveBlobExport(blob, `model_${date}.glb`, exportFilters.glb)
             resolve()
           },
           (error) => {
@@ -66,13 +67,4 @@ export function ExportManager() {
   }, [scene, setExportScene])
 
   return null
-}
-
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.click()
-  URL.revokeObjectURL(url)
 }

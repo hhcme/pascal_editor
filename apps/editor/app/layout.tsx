@@ -32,6 +32,7 @@ export default function RootLayout({
       lang="en"
     >
       <head>
+        <Script src="/translate-inject.js" strategy="beforeInteractive" />
         {process.env.NODE_ENV === 'development' && (
           <Script
             crossOrigin="anonymous"

@@ -34,6 +34,7 @@ import {
   Video,
 } from 'lucide-react'
 import { useEffect } from 'react'
+import { exportFilters, saveCanvasAsPng, saveJsonExport } from '../../../lib/export'
 import { deleteLevelWithFallbackSelection } from '../../../lib/level-selection'
 import { useCommandRegistry } from '../../../store/use-command-registry'
 import type { StructureTool } from '../../../store/use-editor'
@@ -330,15 +331,12 @@ export function EditorCommands() {
         execute: () =>
           run(() => {
             const { nodes, rootNodeIds } = useScene.getState()
-            const blob = new Blob([JSON.stringify({ nodes, rootNodeIds }, null, 2)], {
-              type: 'application/json',
-            })
-            const url = URL.createObjectURL(blob)
-            Object.assign(document.createElement('a'), {
-              href: url,
-              download: `scene_${new Date().toISOString().split('T')[0]}.json`,
-            }).click()
-            URL.revokeObjectURL(url)
+            const date = new Date().toISOString().split('T')[0]
+            void saveJsonExport(
+              { nodes, rootNodeIds },
+              `scene_${date}.json`,
+              exportFilters.json,
+            )
           }),
       },
       ...(exportScene
@@ -350,6 +348,22 @@ export function EditorCommands() {
               icon: <Box className="h-4 w-4" />,
               keywords: ['export', 'glb', 'gltf', '3d', 'model', 'download'],
               execute: () => run(() => exportScene()),
+            } as const,
+            {
+              id: 'editor.export.stl',
+              label: 'Export 3D Model (STL)',
+              group: 'Export & Share',
+              icon: <Box className="h-4 w-4" />,
+              keywords: ['export', 'stl', '3d', 'model', 'download'],
+              execute: () => run(() => exportScene('stl')),
+            } as const,
+            {
+              id: 'editor.export.obj',
+              label: 'Export 3D Model (OBJ)',
+              group: 'Export & Share',
+              icon: <Box className="h-4 w-4" />,
+              keywords: ['export', 'obj', '3d', 'model', 'download'],
+              execute: () => run(() => exportScene('obj')),
             } as const,
           ]
         : []),
@@ -371,10 +385,8 @@ export function EditorCommands() {
           run(() => {
             const canvas = document.querySelector('canvas')
             if (!canvas) return
-            Object.assign(document.createElement('a'), {
-              href: canvas.toDataURL('image/png'),
-              download: `screenshot_${new Date().toISOString().split('T')[0]}.png`,
-            }).click()
+            const date = new Date().toISOString().split('T')[0]
+            void saveCanvasAsPng(canvas, `screenshot_${date}.png`, exportFilters.png)
           }),
       },
     ])

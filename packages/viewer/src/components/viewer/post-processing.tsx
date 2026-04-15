@@ -47,7 +47,34 @@ const RETRY_DELAY_MS = 500
 const DARK_BG = '#1f2433'
 const LIGHT_BG = '#ffffff'
 
+function BasicRenderPass() {
+  const { gl: renderer, scene, camera } = useThree()
+
+  useFrame(() => {
+    const renderAsync = (renderer as any).renderAsync
+    if (typeof renderAsync === 'function') {
+      void renderAsync.call(renderer, scene, camera)
+      return
+    }
+
+    ;(renderer as any).render(scene, camera)
+  }, 1)
+
+  return null
+}
+
 const PostProcessingPasses = () => {
+  const shouldBypassPostFx =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('host') === 'findtop'
+
+  // Electron webviews have shown unstable WebGPU post-processing behavior
+  // (blank frames / flicker) even when the raw scene render is healthy.
+  // Bypass the custom pipeline in the desktop host until we harden it there.
+  if (shouldBypassPostFx) {
+    return <BasicRenderPass />
+  }
+
   const { gl: renderer, scene, camera } = useThree()
   const renderPipelineRef = useRef<RenderPipeline | null>(null)
   const hasPipelineErrorRef = useRef(false)
