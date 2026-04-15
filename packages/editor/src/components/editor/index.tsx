@@ -102,7 +102,8 @@ export interface EditorProps {
 
   projectId?: string | null
 
-  // Persistence — defaults to localStorage when omitted
+  // Persistence hooks.
+  // Hosts may back these with localStorage, HTTP APIs, or another adapter.
   onLoad?: () => Promise<SceneGraph | null>
   onSave?: (scene: SceneGraph) => Promise<void>
   onDirty?: () => void

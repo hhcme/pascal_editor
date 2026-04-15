@@ -17,7 +17,7 @@ interface UseAutoSaveOptions {
 
 /**
  * Generic autosave hook. Subscribes to the scene store and debounces saves.
- * Falls back to localStorage when no `onSave` is provided.
+ * Falls back to localStorage when no `onSave` adapter is provided.
  *
  * ⚠️  Mount in exactly ONE component (the Editor).
  */

@@ -1,6 +1,8 @@
 import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
+  output: 'export',
+  assetPrefix: '.',
   typescript: {
     ignoreBuildErrors: true,
   },
@@ -19,7 +21,7 @@ const nextConfig: NextConfig = {
     },
   },
   images: {
-    unoptimized: process.env.NEXT_PUBLIC_ASSETS_CDN_URL?.startsWith('http://localhost') ?? false,
+    unoptimized: true,
     remotePatterns: [
       {
         protocol: 'https',

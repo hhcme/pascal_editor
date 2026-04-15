@@ -27,8 +27,12 @@ export const CustomCameraControls = () => {
   const selection = useViewer((s) => s.selection)
   const currentLevelId = selection.levelId
   const firstLoad = useRef(true)
+  const lastSceneSignature = useRef<string | null>(null)
   const maxPolarAngle =
     !isPreviewMode && allowUndergroundCamera ? DEBUG_MAX_POLAR_ANGLE : DEFAULT_MAX_POLAR_ANGLE
+  const sceneSignature = useScene(
+    (state) => `${state.rootNodeIds.join('|')}::${Object.keys(state.nodes).length}`,
+  )
 
   const camera = useThree((state) => state.camera)
   const raycaster = useThree((state) => state.raycaster)
@@ -38,8 +42,73 @@ export const CustomCameraControls = () => {
     raycaster.layers.enable(ZONE_LAYER)
   }, [camera, raycaster])
 
+  const focusSceneObject = useCallback((nodeId: string | null, animated: boolean) => {
+    if (!(controls.current && nodeId)) return false
+
+    const object3D = sceneRegistry.nodes.get(nodeId)
+    if (!object3D) return false
+
+    tempBox.setFromObject(object3D)
+    if (tempBox.isEmpty()) return false
+
+    tempBox.getCenter(tempCenter)
+    tempBox.getSize(tempSize)
+
+    const maxDim = Math.max(tempSize.x, tempSize.y, tempSize.z, 10)
+    const distance = Math.max(maxDim * 1.8, 20)
+
+    controls.current.setLookAt(
+      tempCenter.x + distance * 0.75,
+      tempCenter.y + distance * 0.55,
+      tempCenter.z + distance * 0.75,
+      tempCenter.x,
+      tempCenter.y,
+      tempCenter.z,
+      animated,
+    )
+
+    return true
+  }, [])
+
   useEffect(() => {
     if (isPreviewMode) return // Preview mode uses auto-navigate instead
+    if (!controls.current) return
+
+    const isNewScene = lastSceneSignature.current !== sceneSignature
+    lastSceneSignature.current = sceneSignature
+
+    if (firstLoad.current || isNewScene) {
+      firstLoad.current = false
+
+      let cancelled = false
+      let attempts = 0
+
+      const targetNodeId =
+        currentLevelId ??
+        selection.buildingId ??
+        (useScene.getState().rootNodeIds[0] ? String(useScene.getState().rootNodeIds[0]) : null)
+
+      const focusSelection = () => {
+        if (cancelled) return
+
+        if (focusSceneObject(targetNodeId, true)) return
+
+        attempts += 1
+        if (attempts < 6) {
+          requestAnimationFrame(focusSelection)
+          return
+        }
+
+        controls.current?.setLookAt(20, 20, 20, 0, 0, 0, true)
+      }
+
+      requestAnimationFrame(focusSelection)
+
+      return () => {
+        cancelled = true
+      }
+    }
+
     let targetY = 0
     if (currentLevelId) {
       const levelMesh = sceneRegistry.nodes.get(currentLevelId)
@@ -47,14 +116,10 @@ export const CustomCameraControls = () => {
         targetY = levelMesh.position.y
       }
     }
-    if (!controls.current) return
-    if (firstLoad.current) {
-      firstLoad.current = false
-      controls.current.setLookAt(20, 20, 20, 0, 0, 0, true)
-    }
+
     controls.current.getTarget(currentTarget)
     controls.current.moveTo(currentTarget.x, targetY, currentTarget.z, true)
-  }, [currentLevelId, isPreviewMode])
+  }, [currentLevelId, focusSceneObject, isPreviewMode, sceneSignature, selection.buildingId])
 
   useEffect(() => {
     if (!controls.current) return

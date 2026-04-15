@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { exportFilters, saveJsonExport } from './../../../../../lib/export'
 import { Button } from './../../../../../components/ui/primitives/button'
 import {
   Dialog,
@@ -204,15 +205,8 @@ export function SettingsPanel({
 
   const handleSaveBuild = () => {
     const sceneData = { nodes, rootNodeIds }
-    const json = JSON.stringify(sceneData, null, 2)
-    const blob = new Blob([json], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
     const date = new Date().toISOString().split('T')[0]
-    link.download = `layout_${date}.json`
-    link.click()
-    URL.revokeObjectURL(url)
+    void saveJsonExport(sceneData, `layout_${date}.json`, exportFilters.json)
   }
 
   const handleFileLoad = (e: React.ChangeEvent<HTMLInputElement>) => {

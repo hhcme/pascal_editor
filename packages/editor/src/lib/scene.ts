@@ -355,6 +355,28 @@ function resetEditorInteractionState() {
   })
 }
 
+function resetViewerPresentationState() {
+  const viewer = useViewer.getState()
+
+  viewer.setPreviewSelectedIds([])
+  viewer.setHoverHighlightMode('default')
+  viewer.setCameraDragging(false)
+  viewer.setWalkthroughMode(false)
+  viewer.setDebugColors(false)
+  viewer.setCameraMode('perspective')
+  viewer.setLevelMode('stacked')
+  viewer.setWallMode('up')
+
+  useEditor.setState({
+    allowUndergroundCamera: false,
+    isFirstPersonMode: false,
+    isFloorplanOpen: false,
+    isPreviewMode: false,
+    viewMode: '3d',
+    _viewModeBeforeFirstPerson: null,
+  })
+}
+
 function hasUsableSceneGraph(sceneGraph?: SceneGraph | null): sceneGraph is SceneGraph {
   return (
     !!sceneGraph &&
@@ -364,6 +386,8 @@ function hasUsableSceneGraph(sceneGraph?: SceneGraph | null): sceneGraph is Scen
 }
 
 export function applySceneGraphToEditor(sceneGraph?: SceneGraph | null) {
+  resetEditorInteractionState()
+
   if (hasUsableSceneGraph(sceneGraph)) {
     const { nodes, rootNodeIds } = sceneGraph
     useScene.getState().setScene(nodes as any, rootNodeIds as any)
@@ -371,6 +395,7 @@ export function applySceneGraphToEditor(sceneGraph?: SceneGraph | null) {
     useScene.getState().clearScene()
   }
 
+  resetViewerPresentationState()
   syncEditorSelectionFromCurrentScene()
 }
 

@@ -107,7 +107,11 @@ const Viewer: React.FC<ViewerProps> = ({
       className={`transition-colors duration-700 ${theme === 'dark' ? 'bg-[#1f2433]' : 'bg-[#fafafa]'}`}
       dpr={[1, 1.5]}
       gl={async (props) => {
-        const renderer = new THREE.WebGPURenderer(props as any)
+        const renderer = new THREE.WebGPURenderer({
+          ...props,
+          alpha: true,
+          antialias: true,
+        } as ConstructorParameters<typeof THREE.WebGPURenderer>[0])
         renderer.toneMapping = THREE.ACESFilmicToneMapping
         renderer.toneMappingExposure = 0.9
         // Awaiting init() is required when the browser falls back to the
