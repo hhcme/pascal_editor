@@ -1,6 +1,6 @@
 'use client'
 
-import { useScene } from '@pascal-app/core'
+import { emitter, useScene } from '@pascal-app/core'
 import {
   Editor,
   type SaveStatus,
@@ -155,6 +155,7 @@ export default function Home() {
     async (scene: SceneGraph) => {
       try {
         await saveSceneToApi(scene)
+        emitter.emit('camera-controls:generate-thumbnail', { projectId: context.projectId })
       } catch (error) {
         postToHost('error', {
           message: error instanceof Error ? error.message : 'Failed to save scene',
@@ -205,6 +206,7 @@ export default function Home() {
 
       try {
         await persistCurrentScene()
+        emitter.emit('camera-controls:generate-thumbnail', { projectId: context.projectId })
         postToHost('save-status', 'saved')
       } catch (error) {
         postToHost('error', {
@@ -220,13 +222,17 @@ export default function Home() {
       await saveJsonExport({ nodes, rootNodeIds }, `scene_${date}.json`, exportFilters.json)
     }
 
-    async function exportModelFromHost(format: 'glb' | 'stl' | 'obj') {
+    async function exportModelFromHost(options: {
+      format: 'glb' | 'stl' | 'obj'
+      filename?: string
+      directoryPath?: string
+    }) {
       const exportScene = useViewer.getState().exportScene
       if (!exportScene) {
         throw new Error('3D exporter is not ready')
       }
 
-      await exportScene(format)
+      return exportScene(options)
     }
 
     async function exportScreenshotFromHost() {
@@ -256,14 +262,33 @@ export default function Home() {
       }
 
       if (event.data.type === 'export-model') {
-        const format = (event.data.payload as { format?: 'glb' | 'stl' | 'obj' } | undefined)?.format
+        const payload = event.data.payload as {
+          format?: 'glb' | 'stl' | 'obj'
+          filename?: string
+          directoryPath?: string
+        } | undefined
+        const format = payload?.format
         if (!format) return
 
-        void exportModelFromHost(format).catch((error) => {
-          postToHost('error', {
-            message: error instanceof Error ? error.message : `Host-triggered ${format} export failed`,
-          })
+        void exportModelFromHost({
+          format,
+          filename: payload?.filename,
+          directoryPath: payload?.directoryPath,
         })
+          .then((filePath) => {
+            postToHost('export-result', {
+              status: filePath ? 'success' : 'cancelled',
+              format,
+              filePath,
+            })
+          })
+          .catch((error) => {
+            postToHost('export-result', {
+              status: 'error',
+              format,
+              message: error instanceof Error ? error.message : `Host-triggered ${format} export failed`,
+            })
+          })
         return
       }
 

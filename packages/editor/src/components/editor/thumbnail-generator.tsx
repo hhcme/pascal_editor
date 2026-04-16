@@ -33,6 +33,74 @@ interface ThumbnailGeneratorProps {
   onThumbnailCapture?: (blob: Blob) => void
 }
 
+async function captureFloorplanSvgThumbnail(): Promise<Blob | null> {
+  const svg = document.querySelector('svg[data-editor-floorplan-thumbnail="true"]') as SVGSVGElement | null
+  if (!svg) return null
+
+  const viewBox = svg.viewBox.baseVal
+  const sourceWidth = viewBox?.width || 1600
+  const sourceHeight = viewBox?.height || 900
+  if (!sourceWidth || !sourceHeight) return null
+
+  const clonedSvg = svg.cloneNode(true) as SVGSVGElement
+  clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+  clonedSvg.setAttribute('width', String(sourceWidth))
+  clonedSvg.setAttribute('height', String(sourceHeight))
+  clonedSvg.setAttribute('preserveAspectRatio', 'xMidYMid meet')
+
+  const svgMarkup = new XMLSerializer().serializeToString(clonedSvg)
+  const svgBlob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' })
+  const svgUrl = URL.createObjectURL(svgBlob)
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const nextImage = new Image()
+      nextImage.onload = () => resolve(nextImage)
+      nextImage.onerror = () => reject(new Error('Failed to load floorplan SVG'))
+      nextImage.src = svgUrl
+    })
+
+    const targetCanvas = document.createElement('canvas')
+    targetCanvas.width = THUMBNAIL_WIDTH
+    targetCanvas.height = THUMBNAIL_HEIGHT
+    const context = targetCanvas.getContext('2d')
+    if (!context) {
+      throw new Error('Failed to create thumbnail canvas context')
+    }
+
+    context.fillStyle = '#f8fafc'
+    context.fillRect(0, 0, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT)
+
+    const sourceAspect = image.width / image.height
+    const targetAspect = THUMBNAIL_WIDTH / THUMBNAIL_HEIGHT
+    let drawWidth = THUMBNAIL_WIDTH
+    let drawHeight = THUMBNAIL_HEIGHT
+    let drawX = 0
+    let drawY = 0
+
+    if (sourceAspect > targetAspect) {
+      drawHeight = THUMBNAIL_HEIGHT
+      drawWidth = drawHeight * sourceAspect
+      drawX = (THUMBNAIL_WIDTH - drawWidth) / 2
+    } else {
+      drawWidth = THUMBNAIL_WIDTH
+      drawHeight = drawWidth / sourceAspect
+      drawY = (THUMBNAIL_HEIGHT - drawHeight) / 2
+    }
+
+    context.drawImage(image, drawX, drawY, drawWidth, drawHeight)
+
+    return await new Promise<Blob>((resolve, reject) =>
+      targetCanvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error('Floorplan thumbnail export failed'))),
+        'image/png',
+      ),
+    )
+  } finally {
+    URL.revokeObjectURL(svgUrl)
+  }
+}
+
 export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorProps) => {
   const gl = useThree((state) => state.gl)
   const scene = useThree((state) => state.scene)
@@ -144,6 +212,12 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
     isGenerating.current = true
 
     try {
+      const floorplanBlob = await captureFloorplanSvgThumbnail()
+      if (floorplanBlob) {
+        onThumbnailCaptureRef.current?.(floorplanBlob)
+        return
+      }
+
       const thumbnailCamera = thumbnailCameraRef.current
       if (!thumbnailCamera) return
 

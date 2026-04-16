@@ -9840,6 +9840,7 @@ export function FloorplanPanel() {
         ) : (
           <svg
             className="h-full w-full touch-none"
+            data-editor-floorplan-thumbnail="true"
             onClick={isMarqueeSelectionToolActive ? undefined : handleBackgroundClick}
             onContextMenu={(event) => event.preventDefault()}
             onDoubleClick={isMarqueeSelectionToolActive ? undefined : handleBackgroundDoubleClick}

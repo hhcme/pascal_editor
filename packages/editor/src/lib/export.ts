@@ -8,6 +8,7 @@ type ExportFilter = {
 type ExportFileOptions = {
   data: string
   filename: string
+  directoryPath?: string
   filters?: ExportFilter[]
 }
 
@@ -62,12 +63,13 @@ export async function saveBlobExport(
   blob: Blob,
   filename: string,
   filters?: ExportFilter[],
+  directoryPath?: string,
 ): Promise<string | null> {
   const hostApi = getExportHostApi()
 
   if (hostApi?.exportFile) {
     const data = await blobToBase64(blob)
-    const filePath = await hostApi.exportFile({ data, filename, filters })
+    const filePath = await hostApi.exportFile({ data, filename, filters, directoryPath })
     if (filePath) {
       return filePath
     }

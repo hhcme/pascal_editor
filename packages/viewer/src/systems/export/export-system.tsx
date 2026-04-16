@@ -8,6 +8,7 @@ import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
 import useViewer from '../../store/use-viewer'
+import type { ExportSceneRequest } from '../../store/use-viewer'
 
 const EDITOR_LAYER = 1 // same constant used across the editor
 
@@ -27,9 +28,11 @@ export const ExportSystem = () => {
   const setExportScene = useViewer((state) => state.setExportScene)
 
   useEffect(() => {
-    const exportFn = async (format: 'glb' | 'stl' | 'obj' = 'glb') => {
+    const exportFn = async (request: ExportSceneRequest = 'glb') => {
+      const normalizedRequest = typeof request === 'string' ? { format: request } : request
+      const format = normalizedRequest.format ?? 'glb'
       const date = new Date().toISOString().split('T')[0]
-      const filename = `pascal-export-${date}`
+      const filename = normalizedRequest.filename || `pascal-export-${date}.${format}`
 
       // Clone scene and strip editor-only objects (layer 1 = EDITOR_LAYER)
       const exportRoot = scene.clone(true) as Scene
@@ -53,16 +56,18 @@ export const ExportSystem = () => {
             { binary: true }
           )
         })
-        downloadBlob(new Blob([result], { type: 'model/gltf-binary' }), `${filename}.glb`)
+        downloadBlob(new Blob([result], { type: 'model/gltf-binary' }), filename)
       } else if (format === 'stl') {
         const exporter = new STLExporter()
         const result = exporter.parse(exportRoot, { binary: true }) as DataView
-        downloadBlob(new Blob([result.buffer as ArrayBuffer], { type: 'model/stl' }), `${filename}.stl`)
+        downloadBlob(new Blob([result.buffer as ArrayBuffer], { type: 'model/stl' }), filename)
       } else if (format === 'obj') {
         const exporter = new OBJExporter()
         const result = exporter.parse(exportRoot)
-        downloadBlob(new Blob([result], { type: 'model/obj' }), `${filename}.obj`)
+        downloadBlob(new Blob([result], { type: 'model/obj' }), filename)
       }
+
+      return null
     }
 
     setExportScene(exportFn)

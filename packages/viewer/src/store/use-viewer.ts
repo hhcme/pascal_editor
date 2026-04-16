@@ -18,6 +18,16 @@ type Outliner = {
   hoveredObjects: Object3D[]
 }
 
+export type ExportSceneRequest =
+  | 'glb'
+  | 'stl'
+  | 'obj'
+  | {
+      format?: 'glb' | 'stl' | 'obj'
+      filename?: string
+      directoryPath?: string
+    }
+
 type ViewerState = {
   selection: SelectionPath
   previewSelectedIds: BaseNode['id'][]
@@ -65,8 +75,8 @@ type ViewerState = {
   outliner: Outliner // No setter as we will manipulate directly the arrays
 
   // Export functionality
-  exportScene: ((format?: 'glb' | 'stl' | 'obj') => Promise<void>) | null
-  setExportScene: (fn: ((format?: 'glb' | 'stl' | 'obj') => Promise<void>) | null) => void
+  exportScene: ((request?: ExportSceneRequest) => Promise<string | null>) | null
+  setExportScene: (fn: ((request?: ExportSceneRequest) => Promise<string | null>) | null) => void
 
   debugColors: boolean
   setDebugColors: (enabled: boolean) => void
