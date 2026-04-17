@@ -14,6 +14,7 @@ interface LevelTreeNodeProps {
 }
 
 export function LevelTreeNode({ nodeId, depth, isLast }: LevelTreeNodeProps) {
+  const levelId = nodeId as LevelNode['id']
   const [expanded, setExpanded] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
   const isVisible = useScene((s) => s.nodes[nodeId]?.visible !== false)
@@ -21,11 +22,11 @@ export function LevelTreeNode({ nodeId, depth, isLast }: LevelTreeNodeProps) {
     useShallow((s) => (s.nodes[nodeId] as LevelNode | undefined)?.children ?? []),
   )
   const level = useScene((s) => (s.nodes[nodeId] as LevelNode | undefined)?.level ?? 0)
-  const isSelected = useViewer((state) => state.selection.levelId === nodeId)
+  const isSelected = useViewer((state) => state.selection.levelId === levelId)
   const isHovered = useViewer((state) => state.hoveredId === nodeId)
   const setSelection = useViewer((state) => state.setSelection)
 
-  const handleClick = useCallback(() => setSelection({ levelId: nodeId }), [nodeId, setSelection])
+  const handleClick = useCallback(() => setSelection({ levelId }), [levelId, setSelection])
   const handleDoubleClick = useCallback(() => focusTreeNode(nodeId), [nodeId])
   const handleToggle = useCallback(() => setExpanded((prev) => !prev), [])
   const handleStartEditing = useCallback(() => setIsEditing(true), [])

@@ -10,8 +10,10 @@ import {
   ViewerToolbarRight,
 } from '@pascal-app/editor'
 import { useViewer } from '@pascal-app/viewer'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { exportFilters, saveCanvasAsPng, saveJsonExport } from '../../../packages/editor/src/lib/export'
+
+const RECOVERY_DEBOUNCE_MS = 1500
 
 const SIDEBAR_TABS: (SidebarTab & { component: React.ComponentType })[] = [
   { id: 'site', label: 'Scene', component: () => null },
@@ -25,7 +27,7 @@ type EditorBootstrapPayload = {
   }
   scene: SceneGraph
   config: {
-    language: 'zh-CN'
+    language: 'zh-CN' | 'en'
     autosave: boolean
     hostMode: 'electron-webview'
   }
@@ -37,7 +39,7 @@ type HostCommand = {
   payload?: unknown
 }
 
-function getProjectApiPath(projectId: string, action: 'bootstrap' | 'scene' | 'thumbnail') {
+function getProjectApiPath(projectId: string, action: 'bootstrap' | 'scene' | 'thumbnail' | 'recovery') {
   return `/__findtop__/projects/${encodeURIComponent(projectId)}/${action}`
 }
 
@@ -78,7 +80,7 @@ function normalizeScene(scene: unknown): SceneGraph {
 
 async function requestProjectJson<TResponse>(
   projectId: string,
-  action: 'bootstrap' | 'scene' | 'thumbnail',
+  action: 'bootstrap' | 'scene' | 'thumbnail' | 'recovery',
   init?: RequestInit,
 ): Promise<TResponse> {
   if (!projectId) {
@@ -104,6 +106,8 @@ async function requestProjectJson<TResponse>(
 export default function Home() {
   const context = useMemo(readProjectContext, [])
   const bootstrapLoadedRef = useRef(false)
+  const recoveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(false)
 
   const fetchBootstrap = useCallback(async (): Promise<EditorBootstrapPayload> => {
     return requestProjectJson<EditorBootstrapPayload>(context.projectId, 'bootstrap')
@@ -137,10 +141,46 @@ export default function Home() {
     [context.projectId],
   )
 
+  const persistRecovery = useCallback(async () => {
+    if (!bootstrapLoadedRef.current) return
+
+    const { nodes, rootNodeIds } = useScene.getState()
+    const scene = { nodes, rootNodeIds } as SceneGraph
+    await requestProjectJson<{ ok: true; updatedAt: string }>(context.projectId, 'recovery', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ scene }),
+    })
+  }, [context.projectId])
+
+  const scheduleRecoveryPersist = useCallback(() => {
+    if (recoveryTimeoutRef.current) {
+      clearTimeout(recoveryTimeoutRef.current)
+    }
+
+    recoveryTimeoutRef.current = setTimeout(() => {
+      recoveryTimeoutRef.current = undefined
+      void persistRecovery().catch((error) => {
+        postToHost('error', {
+          message: error instanceof Error ? error.message : 'Failed to persist recovery file',
+        })
+      })
+    }, RECOVERY_DEBOUNCE_MS)
+  }, [persistRecovery])
+
+  const clearScheduledRecoveryPersist = useCallback(() => {
+    if (!recoveryTimeoutRef.current) return
+    clearTimeout(recoveryTimeoutRef.current)
+    recoveryTimeoutRef.current = undefined
+  }, [])
+
   const handleLoad = useCallback(async () => {
     try {
       const bootstrap = await fetchBootstrap()
       bootstrapLoadedRef.current = true
+      setAutoSaveEnabled(bootstrap.config.autosave)
       return normalizeScene(bootstrap.scene)
     } catch (error) {
       bootstrapLoadedRef.current = false
@@ -154,6 +194,7 @@ export default function Home() {
   const handleSave = useCallback(
     async (scene: SceneGraph) => {
       try {
+        clearScheduledRecoveryPersist()
         await saveSceneToApi(scene)
         emitter.emit('camera-controls:generate-thumbnail', { projectId: context.projectId })
       } catch (error) {
@@ -163,12 +204,13 @@ export default function Home() {
         throw error
       }
     },
-    [saveSceneToApi],
+    [clearScheduledRecoveryPersist, context.projectId, saveSceneToApi],
   )
 
   const handleDirty = useCallback(() => {
     postToHost('dirty-changed', true)
-  }, [])
+    scheduleRecoveryPersist()
+  }, [scheduleRecoveryPersist])
 
   const handleSaveStatusChange = useCallback((status: SaveStatus) => {
     postToHost('save-status', status)
@@ -205,6 +247,7 @@ export default function Home() {
       postToHost('save-status', 'saving')
 
       try {
+        clearScheduledRecoveryPersist()
         await persistCurrentScene()
         emitter.emit('camera-controls:generate-thumbnail', { projectId: context.projectId })
         postToHost('save-status', 'saved')
@@ -311,13 +354,22 @@ export default function Home() {
     return () => {
       window.removeEventListener('message', onMessage)
     }
-  }, [context.host, context.language, context.projectId, persistCurrentScene])
+  }, [clearScheduledRecoveryPersist, context.host, context.language, context.projectId, persistCurrentScene])
+
+  useEffect(() => {
+    return () => {
+      if (recoveryTimeoutRef.current) {
+        clearTimeout(recoveryTimeoutRef.current)
+      }
+    }
+  }, [])
 
   return (
     <div className="h-screen w-screen">
       <Editor
         layoutVersion="v2"
         projectId={context.projectId || 'findtop'}
+        autoSaveEnabled={autoSaveEnabled}
         sidebarTabs={SIDEBAR_TABS}
         viewerToolbarLeft={<ViewerToolbarLeft />}
         viewerToolbarRight={<ViewerToolbarRight />}

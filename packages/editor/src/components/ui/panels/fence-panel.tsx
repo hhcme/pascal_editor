@@ -3,9 +3,7 @@
 import {
   type AnyNode,
   type AnyNodeId,
-  type FenceBaseStyle,
   type FenceNode,
-  type FenceStyle,
   type MaterialSchema,
   useScene,
 } from '@pascal-app/core'
@@ -17,13 +15,13 @@ import { SegmentedControl } from '../controls/segmented-control'
 import { SliderControl } from '../controls/slider-control'
 import { PanelWrapper } from './panel-wrapper'
 
-const FENCE_STYLE_OPTIONS: { label: string; value: FenceStyle }[] = [
+const FENCE_STYLE_OPTIONS: { label: string; value: FenceNode['style'] }[] = [
   { label: 'Slat', value: 'slat' },
   { label: 'Rail', value: 'rail' },
   { label: 'Privacy', value: 'privacy' },
 ]
 
-const FENCE_BASE_STYLE_OPTIONS: { label: string; value: FenceBaseStyle }[] = [
+const FENCE_BASE_STYLE_OPTIONS: { label: string; value: FenceNode['baseStyle'] }[] = [
   { label: 'Grounded', value: 'grounded' },
   { label: 'Floating', value: 'floating' },
 ]

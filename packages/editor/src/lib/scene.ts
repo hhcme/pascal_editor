@@ -1,6 +1,7 @@
 'use client'
 
 import { resolveLevelId, sceneRegistry, useScene } from '@pascal-app/core'
+import type { BaseNode, BuildingNode, LevelNode, ZoneNode } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
 import useEditor, {
   hasCustomPersistedEditorUiState,
@@ -14,10 +15,10 @@ export type SceneGraph = {
 }
 
 type PersistedSelectionPath = {
-  buildingId: string | null
-  levelId: string | null
-  zoneId: string | null
-  selectedIds: string[]
+  buildingId: BuildingNode['id'] | null
+  levelId: LevelNode['id'] | null
+  zoneId: ZoneNode['id'] | null
+  selectedIds: BaseNode['id'][]
 }
 
 const EMPTY_PERSISTED_SELECTION: PersistedSelectionPath = {
@@ -74,11 +75,14 @@ function normalizePersistedSelectionPath(
   selection: Partial<PersistedSelectionPath> | null | undefined,
 ): PersistedSelectionPath {
   return {
-    buildingId: typeof selection?.buildingId === 'string' ? selection.buildingId : null,
-    levelId: typeof selection?.levelId === 'string' ? selection.levelId : null,
-    zoneId: typeof selection?.zoneId === 'string' ? selection.zoneId : null,
+    buildingId:
+      typeof selection?.buildingId === 'string'
+        ? (selection.buildingId as BuildingNode['id'])
+        : null,
+    levelId: typeof selection?.levelId === 'string' ? (selection.levelId as LevelNode['id']) : null,
+    zoneId: typeof selection?.zoneId === 'string' ? (selection.zoneId as ZoneNode['id']) : null,
     selectedIds: Array.isArray(selection?.selectedIds)
-      ? selection.selectedIds.filter((id): id is string => typeof id === 'string')
+      ? selection.selectedIds.filter((id): id is BaseNode['id'] => typeof id === 'string')
       : [],
   }
 }
@@ -116,10 +120,10 @@ function readPersistedSelection(): PersistedSelectionPath | null {
 }
 
 export function writePersistedSelection(selection: {
-  buildingId: string | null
-  levelId: string | null
-  zoneId: string | null
-  selectedIds: string[]
+  buildingId: BuildingNode['id'] | null
+  levelId: LevelNode['id'] | null
+  zoneId: ZoneNode['id'] | null
+  selectedIds: BaseNode['id'][]
 }) {
   if (typeof window === 'undefined') {
     return

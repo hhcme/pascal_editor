@@ -18,6 +18,7 @@ interface BuildingTreeNodeProps {
 }
 
 export function BuildingTreeNode({ nodeId, depth, isLast }: BuildingTreeNodeProps) {
+  const buildingId = nodeId as BuildingNode['id']
   const [expanded, setExpanded] = useState(true)
   const createNode = useScene((state) => state.createNode)
   const isVisible = useScene((s) => s.nodes[nodeId]?.visible !== false)
@@ -25,12 +26,12 @@ export function BuildingTreeNode({ nodeId, depth, isLast }: BuildingTreeNodeProp
   const children = useScene(
     useShallow((s) => (s.nodes[nodeId] as BuildingNode | undefined)?.children ?? []),
   )
-  const isSelected = useViewer((state) => state.selection.buildingId === nodeId)
+  const isSelected = useViewer((state) => state.selection.buildingId === buildingId)
   const isHovered = useViewer((state) => state.hoveredId === nodeId)
   const setSelection = useViewer((state) => state.setSelection)
 
   const handleClick = () => {
-    setSelection({ buildingId: nodeId })
+    setSelection({ buildingId })
   }
 
   const handleAddLevel = (e: React.MouseEvent) => {
@@ -38,9 +39,9 @@ export function BuildingTreeNode({ nodeId, depth, isLast }: BuildingTreeNodeProp
     const newLevel = LevelNode.parse({
       level: children.length,
       children: [],
-      parentId: nodeId,
+      parentId: buildingId,
     })
-    createNode(newLevel, nodeId)
+    createNode(newLevel, buildingId)
   }
 
   return (

@@ -55,7 +55,7 @@ import { Grid } from './grid'
 import { PresetThumbnailGenerator } from './preset-thumbnail-generator'
 import { SelectionManager } from './selection-manager'
 import { SiteEdgeLabels } from './site-edge-labels'
-import { type SnapshotCameraData, ThumbnailGenerator } from './thumbnail-generator'
+import { ThumbnailGenerator } from './thumbnail-generator'
 import { WallMeasurementLabel } from './wall-measurement-label'
 
 const CAMERA_CONTROLS_HINT_DISMISSED_STORAGE_KEY = 'editor-camera-controls-hint-dismissed:v1'
@@ -108,6 +108,7 @@ export interface EditorProps {
   onSave?: (scene: SceneGraph) => Promise<void>
   onDirty?: () => void
   onSaveStatusChange?: (status: SaveStatus) => void
+  autoSaveEnabled?: boolean
 
   // Version preview
   previewScene?: SceneGraph
@@ -117,7 +118,7 @@ export interface EditorProps {
   isLoading?: boolean
 
   // Thumbnail
-  onThumbnailCapture?: (blob: Blob, cameraData: SnapshotCameraData) => void
+  onThumbnailCapture?: (blob: Blob) => void
 
   // Version preview overlays (rendered by host app)
   sidebarOverlay?: ReactNode
@@ -512,7 +513,7 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
   isVersionPreviewMode: boolean
   isLoading: boolean
   isFirstPersonMode: boolean
-  onThumbnailCapture?: (blob: Blob, cameraData: SnapshotCameraData) => void
+  onThumbnailCapture?: (blob: Blob) => void
 }) {
   return (
     <>
@@ -594,7 +595,7 @@ const ViewerCanvas = memo(function ViewerCanvas({
   hasLoadedInitialScene: boolean
   showLoader: boolean
   isFirstPersonMode: boolean
-  onThumbnailCapture?: (blob: Blob, cameraData: SnapshotCameraData) => void
+  onThumbnailCapture?: (blob: Blob) => void
 }) {
   const viewMode = useEditor((s) => s.viewMode)
   const floorplanPaneRatio = useEditor((s) => s.floorplanPaneRatio)
@@ -718,6 +719,7 @@ export default function Editor({
   onSave,
   onDirty,
   onSaveStatusChange,
+  autoSaveEnabled = true,
   previewScene,
   isVersionPreviewMode = false,
   isLoading = false,
@@ -737,6 +739,7 @@ export default function Editor({
     onDirty,
     onSaveStatusChange,
     isVersionPreviewMode,
+    isAutoSaveEnabled: autoSaveEnabled,
   })
 
   const [isSceneLoading, setIsSceneLoading] = useState(false)

@@ -13,17 +13,18 @@ interface ZoneTreeNodeProps {
 }
 
 export function ZoneTreeNode({ nodeId, depth, isLast }: ZoneTreeNodeProps) {
+  const zoneId = nodeId as ZoneNode['id']
   const [isEditing, setIsEditing] = useState(false)
   const updateNode = useScene((state) => state.updateNode)
   const isVisible = useScene((s) => s.nodes[nodeId]?.visible !== false)
   const color = useScene((s) => (s.nodes[nodeId] as ZoneNode | undefined)?.color)
   const polygon = useScene((s) => (s.nodes[nodeId] as ZoneNode | undefined)?.polygon ?? [])
-  const isSelected = useViewer((state) => state.selection.zoneId === nodeId)
+  const isSelected = useViewer((state) => state.selection.zoneId === zoneId)
   const isHovered = useViewer((state) => state.hoveredId === nodeId)
   const setSelection = useViewer((state) => state.setSelection)
   const setHoveredId = useViewer((state) => state.setHoveredId)
 
-  const handleClick = useCallback(() => setSelection({ zoneId: nodeId }), [nodeId, setSelection])
+  const handleClick = useCallback(() => setSelection({ zoneId }), [zoneId, setSelection])
   const handleDoubleClick = useCallback(() => focusTreeNode(nodeId), [nodeId])
   const handleMouseEnter = useCallback(() => setHoveredId(nodeId), [nodeId, setHoveredId])
   const handleMouseLeave = useCallback(() => setHoveredId(null), [setHoveredId])
@@ -40,7 +41,7 @@ export function ZoneTreeNode({ nodeId, depth, isLast }: ZoneTreeNodeProps) {
       depth={depth}
       expanded={false}
       hasChildren={false}
-      icon={<ColorDot color={color} onChange={(c) => updateNode(nodeId, { color: c })} />}
+      icon={<ColorDot color={color ?? '#3b82f6'} onChange={(c) => updateNode(zoneId, { color: c })} />}
       isHovered={isHovered}
       isLast={isLast}
       isSelected={isSelected}
@@ -74,8 +75,11 @@ function calculatePolygonArea(polygon: Array<[number, number]>): number {
 
   for (let i = 0; i < n; i++) {
     const j = (i + 1) % n
-    area += polygon[i]?.[0] * polygon[j]?.[1]
-    area -= polygon[j]?.[0] * polygon[i]?.[1]
+    const current = polygon[i]
+    const next = polygon[j]
+    if (!(current && next)) continue
+    area += current[0] * next[1]
+    area -= next[0] * current[1]
   }
 
   return Math.abs(area) / 2

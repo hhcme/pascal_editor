@@ -348,7 +348,7 @@ export function EditorCommands() {
               icon: <Box className="h-4 w-4" />,
               keywords: ['export', 'glb', 'gltf', '3d', 'model', 'download'],
               execute: () => run(() => exportScene()),
-            } as const,
+            },
             {
               id: 'editor.export.stl',
               label: 'Export 3D Model (STL)',
@@ -356,7 +356,7 @@ export function EditorCommands() {
               icon: <Box className="h-4 w-4" />,
               keywords: ['export', 'stl', '3d', 'model', 'download'],
               execute: () => run(() => exportScene('stl')),
-            } as const,
+            },
             {
               id: 'editor.export.obj',
               label: 'Export 3D Model (OBJ)',
@@ -364,7 +364,7 @@ export function EditorCommands() {
               icon: <Box className="h-4 w-4" />,
               keywords: ['export', 'obj', '3d', 'model', 'download'],
               execute: () => run(() => exportScene('obj')),
-            } as const,
+            },
           ]
         : []),
       {

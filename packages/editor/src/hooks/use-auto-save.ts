@@ -13,6 +13,7 @@ interface UseAutoSaveOptions {
   onDirty?: () => void
   onSaveStatusChange?: (status: SaveStatus) => void
   isVersionPreviewMode?: boolean
+  isAutoSaveEnabled?: boolean
 }
 
 /**
@@ -26,6 +27,7 @@ export function useAutoSave({
   onDirty,
   onSaveStatusChange,
   isVersionPreviewMode = false,
+  isAutoSaveEnabled = true,
 }: UseAutoSaveOptions): { isLoadingSceneRef: MutableRefObject<boolean> } {
   const saveTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined)
   const isSavingRef = useRef(false)
@@ -39,6 +41,7 @@ export function useAutoSave({
   const onDirtyRef = useRef(onDirty)
   const onSaveStatusChangeRef = useRef(onSaveStatusChange)
   const isVersionPreviewModeRef = useRef(isVersionPreviewMode)
+  const isAutoSaveEnabledRef = useRef(isAutoSaveEnabled)
 
   useEffect(() => {
     onSaveRef.current = onSave
@@ -52,6 +55,9 @@ export function useAutoSave({
   useEffect(() => {
     isVersionPreviewModeRef.current = isVersionPreviewMode
   }, [isVersionPreviewMode])
+  useEffect(() => {
+    isAutoSaveEnabledRef.current = isAutoSaveEnabled
+  }, [isAutoSaveEnabled])
 
   const setSaveStatus = useCallback((status: SaveStatus) => {
     onSaveStatusChangeRef.current?.(status)
@@ -121,6 +127,10 @@ export function useAutoSave({
       onDirtyRef.current?.()
       setSaveStatus('pending')
 
+      if (!isAutoSaveEnabledRef.current) {
+        return
+      }
+
       if (isSavingRef.current) {
         pendingSaveRef.current = true
         return
@@ -173,6 +183,11 @@ export function useAutoSave({
 
     if (isSavingRef.current) return
 
+    if (!isAutoSaveEnabled) {
+      setSaveStatus(hasDirtyChangesRef.current ? 'pending' : 'saved')
+      return
+    }
+
     if (hasDirtyChangesRef.current) {
       setSaveStatus('pending')
       if (!saveTimeoutRef.current) {
@@ -185,7 +200,7 @@ export function useAutoSave({
     }
 
     setSaveStatus('saved')
-  }, [isVersionPreviewMode, setSaveStatus])
+  }, [isAutoSaveEnabled, isVersionPreviewMode, setSaveStatus])
 
   return { isLoadingSceneRef }
 }
