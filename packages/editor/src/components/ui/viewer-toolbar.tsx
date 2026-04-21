@@ -18,13 +18,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from './primitives/tooltip'
 
 // ── Shared styles ───────────────────────────────────────────────────────────
 
-/** Container for a group of buttons — no padding, overflow-hidden clips children flush. */
-const TOOLBAR_CONTAINER =
-  'inline-flex h-8 items-stretch overflow-hidden rounded-xl border border-border bg-background/90 shadow-2xl backdrop-blur-md'
+/** Compact glass rail for canvas HUD controls. */
+const TOOLBAR_CONTAINER = 'editor-toolbar-group'
 
-/** Ghost button inside a container — flush edges, no individual border/radius. */
+/** Ghost button inside a HUD rail. */
 const TOOLBAR_BTN =
-  'flex items-center justify-center w-8 text-muted-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground/90'
+  'editor-icon-button flex min-h-9 min-w-9 items-center justify-center px-2 text-muted-foreground transition-colors'
 
 // ── View mode segmented control ─────────────────────────────────────────────
 
@@ -57,10 +56,10 @@ function ViewModeControl() {
         return (
           <button
             className={cn(
-              'flex items-center justify-center gap-1.5 px-2.5 font-medium text-xs transition-colors',
+              'flex min-h-9 items-center justify-center gap-1.5 px-3 font-semibold text-xs transition-colors',
               isActive
-                ? 'bg-accent text-foreground'
-                : 'text-muted-foreground/70 hover:bg-accent/80 hover:text-muted-foreground',
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:bg-accent hover:text-foreground',
             )}
             key={mode.id}
             onClick={() => setViewMode(mode.id)}
@@ -115,7 +114,7 @@ function WalkthroughButton() {
         <button
           className={cn(
             TOOLBAR_BTN,
-            isFirstPersonMode && 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/20',
+            isFirstPersonMode && 'bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/20',
           )}
           onClick={toggle}
           type="button"
@@ -158,7 +157,7 @@ function ThemeToggle() {
     <Tooltip>
       <TooltipTrigger asChild>
         <button
-          className={cn(TOOLBAR_BTN, theme === 'dark' ? 'text-indigo-400/60' : 'text-amber-400/60')}
+          className={cn(TOOLBAR_BTN, theme === 'dark' ? 'text-sky-500/80' : 'text-amber-500/80')}
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
           type="button"
         >
@@ -215,7 +214,7 @@ function LevelModeToggle() {
           className={cn(
             TOOLBAR_BTN,
             'w-auto gap-1.5 px-2.5',
-            !isDefault && 'bg-accent text-foreground/90',
+            !isDefault && 'bg-primary/10 text-primary',
           )}
           onClick={cycle}
           type="button"
@@ -300,8 +299,8 @@ function WallModeToggle() {
             TOOLBAR_BTN,
             'w-auto gap-1.5 px-2.5',
             wallMode !== 'cutaway'
-              ? 'bg-accent'
-              : 'opacity-60 grayscale hover:opacity-100 hover:grayscale-0',
+              ? 'bg-primary/10 text-primary'
+              : 'opacity-70 grayscale hover:opacity-100 hover:grayscale-0',
           )}
           onClick={cycle}
           type="button"
@@ -327,7 +326,7 @@ function CameraModeToggle() {
         <button
           className={cn(
             TOOLBAR_BTN,
-            cameraMode === 'orthographic' && 'bg-accent text-foreground/90',
+            cameraMode === 'orthographic' && 'bg-primary/10 text-primary',
           )}
           onClick={() =>
             setCameraMode(cameraMode === 'perspective' ? 'orthographic' : 'perspective')
@@ -353,7 +352,7 @@ function PreviewButton() {
     <Tooltip>
       <TooltipTrigger asChild>
         <button
-          className="flex items-center gap-1.5 px-2.5 font-medium text-muted-foreground/80 text-xs transition-colors hover:bg-accent/80 hover:text-foreground/90"
+          className="editor-icon-button flex min-h-9 items-center gap-1.5 px-3 font-semibold text-muted-foreground text-xs transition-colors hover:bg-accent hover:text-foreground"
           onClick={() => useEditor.getState().setPreviewMode(true)}
           type="button"
         >
@@ -383,11 +382,11 @@ export function ViewerToolbarRight() {
       <LevelModeToggle />
       <WallModeToggle />
       <GridSnapToggle />
-      <div className="my-1.5 w-px bg-border/50" />
+      <div className="my-2 w-px bg-border/70" />
       <UnitToggle />
       <ThemeToggle />
       <CameraModeToggle />
-      <div className="my-1.5 w-px bg-border/50" />
+      <div className="my-2 w-px bg-border/70" />
       <WalkthroughButton />
       <PreviewButton />
     </div>

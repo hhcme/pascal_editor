@@ -137,7 +137,7 @@ export function StairSegmentPanel() {
       onBack={handleBack}
       onClose={handleClose}
       title={node.name || 'Stair Segment'}
-      width={300}
+      width={340}
     >
       <PanelSection title="Type">
         <SegmentedControl
@@ -221,7 +221,7 @@ export function StairSegmentPanel() {
           <span className="text-muted-foreground text-xs">Fill to floor</span>
           <button
             className={`relative h-5 w-10 rounded-full transition-colors ${
-              node.fillToFloor ? 'bg-blue-500' : 'bg-accent'
+              node.fillToFloor ? 'bg-primary' : 'bg-accent'
             }`}
             onClick={() => handleUpdate({ fillToFloor: !node.fillToFloor })}
             type="button"
@@ -329,10 +329,10 @@ export function StairSegmentPanel() {
             onClick={handleDuplicate}
           />
           <ActionButton
-            className="hover:bg-red-500/20"
-            icon={<Trash2 className="h-3.5 w-3.5 text-red-400" />}
+            icon={<Trash2 className="h-3.5 w-3.5" />}
             label="Delete"
             onClick={handleDelete}
+            tone="danger"
           />
         </ActionGroup>
       </PanelSection>

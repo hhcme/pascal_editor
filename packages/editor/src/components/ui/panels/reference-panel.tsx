@@ -44,7 +44,7 @@ export function ReferencePanel() {
       icon={isScan ? undefined : undefined}
       onClose={handleClose}
       title={node.name || (isScan ? '3D Scan' : 'Guide Image')}
-      width={300}
+      width={340}
     >
       <PanelSection title="Position">
         <SliderControl

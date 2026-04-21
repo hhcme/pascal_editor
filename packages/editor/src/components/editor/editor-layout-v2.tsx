@@ -5,9 +5,9 @@ import useEditor from '../../store/use-editor'
 import { useSidebarStore } from '../ui/primitives/sidebar'
 import { type SidebarTab, TabBar } from '../ui/sidebar/tab-bar'
 
-const SIDEBAR_MIN_WIDTH = 300
-const SIDEBAR_MAX_WIDTH = 800
-const SIDEBAR_COLLAPSE_THRESHOLD = 220
+const SIDEBAR_MIN_WIDTH = 320
+const SIDEBAR_MAX_WIDTH = 560
+const SIDEBAR_COLLAPSE_THRESHOLD = 236
 
 // ── Left column: resizable panel with tab bar ────────────────────────────────
 
@@ -31,6 +31,12 @@ function LeftColumn({
 
   const isResizing = useRef(false)
   const isExpanding = useRef(false)
+
+  useEffect(() => {
+    if (!isCollapsed && width < SIDEBAR_MIN_WIDTH) {
+      setWidth(SIDEBAR_MIN_WIDTH)
+    }
+  }, [isCollapsed, setWidth, width])
 
   // Ensure active panel is a valid tab
   useEffect(() => {
@@ -103,7 +109,7 @@ function LeftColumn({
   if (isCollapsed) {
     return (
       <div
-        className="relative h-full w-2 flex-shrink-0 cursor-col-resize transition-colors hover:bg-primary/20"
+        className="relative h-full w-3 flex-shrink-0 cursor-col-resize border-border border-r bg-sidebar transition-colors hover:bg-primary/10"
         onPointerDown={handleGrabDown}
         title="Expand sidebar"
       />
@@ -112,7 +118,7 @@ function LeftColumn({
 
   return (
     <div
-      className="relative z-10 flex h-full flex-shrink-0 flex-col bg-sidebar text-sidebar-foreground"
+      className="editor-left-panel relative z-10 flex h-full max-[700px]:max-h-[calc(100dvh-156px)] flex-shrink-0 flex-col bg-sidebar text-sidebar-foreground"
       style={{
         width,
         transition: isDragging ? 'none' : 'width 150ms ease',
@@ -129,7 +135,7 @@ function LeftColumn({
         className="absolute inset-y-0 -right-3 z-[100] flex w-6 cursor-col-resize items-center justify-center"
         onPointerDown={handleResizerDown}
       >
-        <div className="h-8 w-1 rounded-full bg-neutral-500" />
+        <div className="h-10 w-1 rounded-full bg-muted-foreground/35 transition-colors hover:bg-primary/70" />
       </div>
     </div>
   )
@@ -150,16 +156,14 @@ function RightColumn({
 }) {
   return (
     <div
-      className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
+      className="editor-canvas-shell relative flex min-w-0 flex-1 flex-col overflow-hidden"
       style={{
-        borderTopLeftRadius: 16,
-        clipPath: 'inset(0 0 0 0 round 16px 0 0 0)',
-        boxShadow: '-4px -2px 16px rgba(0, 0, 0, 0.08), -1px 0 4px rgba(0, 0, 0, 0.04)',
+        clipPath: 'inset(0 0 0 0)',
       }}
     >
       {/* Viewer toolbar */}
       {(toolbarLeft || toolbarRight) && (
-        <div className="pointer-events-none absolute top-3 right-3 left-3 z-20 flex items-center justify-between gap-2">
+        <div className="pointer-events-none absolute top-3 right-4 left-4 z-20 flex items-center justify-between gap-3">
           <div className="pointer-events-auto flex items-center gap-2">{toolbarLeft}</div>
           <div className="pointer-events-auto flex items-center gap-2">{toolbarRight}</div>
         </div>
@@ -203,12 +207,12 @@ export function EditorLayoutV2({
   overlays,
 }: EditorLayoutV2Props) {
   return (
-    <div className="flex h-full w-full flex-col bg-sidebar text-foreground">
+    <div className="editor-workbench flex h-full w-full flex-col bg-sidebar text-foreground">
       {/* Top navbar */}
       {navbarSlot}
 
       {/* Main content: left column + right column */}
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
         {sidebarTabs.length > 0 && (
           <LeftColumn
             renderTabContent={renderTabContent}

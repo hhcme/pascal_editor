@@ -28,8 +28,8 @@ import { cn } from './../../../lib/utils'
 
 const SIDEBAR_COOKIE_NAME = 'sidebar_state'
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
-const SIDEBAR_WIDTH = '18rem'
-const SIDEBAR_WIDTH_MOBILE = '18rem'
+const SIDEBAR_WIDTH = '20rem'
+const SIDEBAR_WIDTH_MOBILE = '20rem'
 const SIDEBAR_WIDTH_ICON = '3rem'
 const SIDEBAR_KEYBOARD_SHORTCUT = 'b'
 const SIDEBAR_COLLAPSE_THRESHOLD = 220
@@ -47,7 +47,7 @@ type SidebarStore = {
 export const useSidebarStore = create<SidebarStore>()(
   persist(
     (set) => ({
-      width: 288, // 18rem = 288px
+      width: 320, // 20rem = 320px
       setWidth: (width) => {
         if (width < SIDEBAR_COLLAPSE_THRESHOLD) {
           set({ isCollapsed: true })
@@ -203,7 +203,7 @@ function SidebarResizer({ side }: { side: 'left' | 'right' }) {
     const handlePointerMove = (e: PointerEvent) => {
       if (!isResizing.current) return
       const newWidth = side === 'left' ? e.clientX : window.innerWidth - e.clientX
-      setWidth(Math.max(288, Math.min(newWidth, 800)))
+      setWidth(Math.max(320, Math.min(newWidth, 800)))
     }
 
     const handlePointerUp = () => {

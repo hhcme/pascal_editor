@@ -7,6 +7,7 @@ import {
   type MaterialTarget,
 } from '@pascal-app/core'
 import { useEffect, useState } from 'react'
+import { cn } from '../../../lib/utils'
 
 type MaterialPickerProps = {
   nodeType?: MaterialTarget
@@ -82,20 +83,23 @@ export function MaterialPicker({
   }
 
   return (
-    <div className={`space-y-3 ${disabled ? 'pointer-events-none opacity-50' : ''}`}>
+    <div className={cn('space-y-3', disabled && 'pointer-events-none opacity-50')}>
       {(catalogItems.length > 0 || onChange) && (
         <div className="space-y-2">
           {catalogItems.length > 0 ? (
-            <div className="text-gray-500 text-xs uppercase tracking-[0.16em]">Library</div>
+            <div className="font-semibold text-[11px] text-muted-foreground">Library</div>
           ) : null}
-          <div className="flex flex-wrap gap-1.5">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(48px,1fr))] gap-2">
             {catalogItems.map((item) => (
               <button
-                className={`h-14 w-14 shrink-0 overflow-hidden rounded-lg border transition-all ${
+                aria-pressed={selectedCatalogId === toLibraryMaterialRef(item.id)}
+                className={cn(
+                  'h-12 min-w-12 overflow-hidden rounded-md border bg-card transition-all',
+                  'hover:border-primary/50 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
                   selectedCatalogId === toLibraryMaterialRef(item.id)
-                    ? 'border-blue-500 ring-2 ring-blue-500/30'
-                    : 'border-gray-300 hover:border-gray-400'
-                }`}
+                    ? 'border-primary ring-2 ring-primary/20'
+                    : 'border-border/70',
+                )}
                 key={item.id}
                 onClick={() => handleCatalogSelect(item.id)}
                 title={item.label}
@@ -110,17 +114,20 @@ export function MaterialPicker({
                 ) : item.previewColor ? (
                   <div className="h-full w-full" style={{ backgroundColor: item.previewColor }} />
                 ) : (
-                  <div className="h-full w-full bg-gray-100" />
+                  <div className="h-full w-full bg-muted" />
                 )}
               </button>
             ))}
             {onChange ? (
               <button
-                className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border text-[10px] font-medium transition-all ${
+                aria-pressed={showCustom}
+                className={cn(
+                  'flex h-12 min-w-12 items-center justify-center rounded-md border px-1 text-[11px] font-semibold transition-all',
+                  'hover:border-primary/50 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
                   showCustom
-                    ? 'border-blue-500 bg-blue-50 text-blue-700 ring-2 ring-blue-500/30'
-                    : 'border-gray-300 bg-white text-gray-500 hover:border-gray-400'
-                }`}
+                    ? 'border-primary bg-primary/10 text-primary ring-2 ring-primary/20'
+                    : 'border-border/70 bg-card text-muted-foreground',
+                )}
                 onClick={handleCustomOpen}
                 title="Custom"
                 type="button"
@@ -133,17 +140,17 @@ export function MaterialPicker({
       )}
 
       {showCustom && onChange && (
-        <div className="space-y-2 pt-2">
+        <div className="space-y-2 rounded-md border border-border/60 bg-muted/30 p-2.5">
           <div className="flex items-center gap-2">
-            <label className="w-16 text-gray-500 text-xs">Color</label>
+            <label className="w-16 text-muted-foreground text-xs">Color</label>
             <input
-              className="h-7 w-12 cursor-pointer rounded border border-gray-300"
+              className="h-7 w-12 cursor-pointer rounded-md border border-border bg-background p-0.5"
               onChange={(e) => handlePropertyChange('color', e.target.value)}
               type="color"
               value={currentProps.color}
             />
             <input
-              className="h-7 flex-1 rounded border border-gray-300 px-2 text-xs"
+              className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-foreground text-xs outline-none transition-colors focus:border-primary focus:ring-1 focus:ring-primary/25"
               onChange={(e) => handlePropertyChange('color', e.target.value)}
               type="text"
               value={currentProps.color}
@@ -151,9 +158,9 @@ export function MaterialPicker({
           </div>
 
           <div className="flex items-center gap-2">
-            <label className="w-16 text-gray-500 text-xs">Roughness</label>
+            <label className="w-16 text-muted-foreground text-xs">Roughness</label>
             <input
-              className="h-1.5 flex-1 cursor-pointer appearance-none rounded-lg bg-gray-200"
+              className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-border accent-primary"
               max={1}
               min={0}
               onChange={(e) => handlePropertyChange('roughness', Number.parseFloat(e.target.value))}
@@ -161,15 +168,15 @@ export function MaterialPicker({
               type="range"
               value={currentProps.roughness}
             />
-            <span className="w-8 text-right text-gray-400 text-xs">
+            <span className="w-9 text-right font-mono text-muted-foreground text-xs tabular-nums">
               {currentProps.roughness.toFixed(2)}
             </span>
           </div>
 
           <div className="flex items-center gap-2">
-            <label className="w-16 text-gray-500 text-xs">Metalness</label>
+            <label className="w-16 text-muted-foreground text-xs">Metalness</label>
             <input
-              className="h-1.5 flex-1 cursor-pointer appearance-none rounded-lg bg-gray-200"
+              className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-border accent-primary"
               max={1}
               min={0}
               onChange={(e) => handlePropertyChange('metalness', Number.parseFloat(e.target.value))}
@@ -177,15 +184,15 @@ export function MaterialPicker({
               type="range"
               value={currentProps.metalness}
             />
-            <span className="w-8 text-right text-gray-400 text-xs">
+            <span className="w-9 text-right font-mono text-muted-foreground text-xs tabular-nums">
               {currentProps.metalness.toFixed(2)}
             </span>
           </div>
 
           <div className="flex items-center gap-2">
-            <label className="w-16 text-gray-500 text-xs">Opacity</label>
+            <label className="w-16 text-muted-foreground text-xs">Opacity</label>
             <input
-              className="h-1.5 flex-1 cursor-pointer appearance-none rounded-lg bg-gray-200"
+              className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-border accent-primary"
               max={1}
               min={0}
               onChange={(e) => {
@@ -199,16 +206,16 @@ export function MaterialPicker({
               type="range"
               value={currentProps.opacity}
             />
-            <span className="w-8 text-right text-gray-400 text-xs">
+            <span className="w-9 text-right font-mono text-muted-foreground text-xs tabular-nums">
               {currentProps.opacity.toFixed(2)}
             </span>
           </div>
 
           {!hideSideControl && (
             <div className="flex items-center gap-2">
-              <label className="w-16 text-gray-500 text-xs">Side</label>
+              <label className="w-16 text-muted-foreground text-xs">Side</label>
               <select
-                className="h-7 flex-1 rounded border border-gray-300 px-2 text-xs"
+                className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-foreground text-xs outline-none transition-colors focus:border-primary focus:ring-1 focus:ring-primary/25"
                 onChange={(e) =>
                   handlePropertyChange('side', e.target.value as 'front' | 'back' | 'double')
                 }

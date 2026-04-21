@@ -5,10 +5,13 @@ import {
   type AnyNode,
   type AnyNodeId,
   type BuildingNode,
+  CeilingNode as CeilingNodeSchema,
   type CeilingNode,
   calculateLevelMiters,
   DoorNode,
   emitter,
+  FenceNode as FenceNodeSchema,
+  type FenceNode,
   type GridEvent,
   type GuideNode,
   getScaledDimensions,
@@ -54,6 +57,11 @@ import { markToolCancelConsumed } from '../../hooks/use-keyboard'
 import { sfxEmitter } from '../../lib/sfx-bus'
 import { cn } from '../../lib/utils'
 import useEditor, { type FloorplanSelectionTool } from '../../store/use-editor'
+import {
+  createFenceOnCurrentLevel,
+  snapFenceDraftPoint,
+  type FencePlanPoint,
+} from '../tools/fence/fence-drafting'
 import { snapToHalf } from '../tools/item/placement-math'
 import {
   DEFAULT_STAIR_ATTACHMENT_SIDE,
@@ -78,9 +86,16 @@ import {
   buildOffsetWallPlan,
   buildSplitWallPlan,
   buildTrimExtendWallPlan,
+  getDefaultWallEditRadius,
+  getDefaultWallOffsetDistance,
   getWallFilletPreview,
+  getWallLength2D,
   getWallOffsetPreview,
+  getWallPointAtDistance,
+  getWallPreviewSegmentsFromResult,
   type WallEditOperation,
+  type WallEditPreviewSegment,
+  type WallEditResult,
   type WallFilletPreview,
   type WallOffsetPreview,
 } from '../tools/wall/wall-edit-geometry'
@@ -170,7 +185,7 @@ const FLOORPLAN_GUIDE_HANDLE_HINT_PADDING_X = 92
 const FLOORPLAN_GUIDE_HANDLE_HINT_PADDING_Y = 48
 const FLOORPLAN_GUIDE_ROTATION_SNAP_DEGREES = 45
 const FLOORPLAN_GUIDE_ROTATION_FINE_SNAP_DEGREES = 1
-const FLOORPLAN_SITE_COLOR = '#10b981'
+const FLOORPLAN_SITE_COLOR = 'var(--editor-floorplan-site)'
 const FLOORPLAN_NODE_FOOTPRINT_STROKE_WIDTH = FLOORPLAN_OPENING_STROKE_WIDTH / 2
 const FLOORPLAN_NODE_FOOTPRINT_CROSS_STROKE_WIDTH = FLOORPLAN_NODE_FOOTPRINT_STROKE_WIDTH * 0.7
 const FLOORPLAN_STAIR_OUTLINE_BAND_THICKNESS = FLOORPLAN_OPENING_STROKE_WIDTH
@@ -325,6 +340,19 @@ type WallEditFeedback = {
   message: string
 }
 
+type WallEditNumericInputState = {
+  operation: Extract<WallEditOperation, 'split' | 'offset' | 'fillet'>
+  value: string
+  wallId?: WallNode['id']
+  wallIds?: [WallNode['id'], WallNode['id']]
+}
+
+type FloorplanNumericInputState = {
+  label?: string
+  unitLabel: string
+  value: string
+}
+
 type SlabBoundaryDraft = {
   slabId: SlabNode['id']
   polygon: WallPlanPoint[]
@@ -334,6 +362,23 @@ type SlabVertexDragState = {
   pointerId: number
   slabId: SlabNode['id']
   vertexIndex: number
+}
+
+type CeilingBoundaryDraft = {
+  ceilingId: CeilingNode['id']
+  holes: WallPlanPoint[][]
+  polygon: WallPlanPoint[]
+}
+
+type CeilingVertexDragState = {
+  pointerId: number
+  ceilingId: CeilingNode['id']
+  vertexIndex: number
+}
+
+type FenceDraftState = {
+  start: FencePlanPoint
+  end: FencePlanPoint
 }
 
 type SiteBoundaryDraft = {
@@ -375,6 +420,19 @@ type SlabPolygonEntry = {
   polygon: Point2D[]
   holes: Point2D[][]
   path: string
+}
+
+type CeilingPolygonEntry = {
+  ceiling: CeilingNode
+  polygon: Point2D[]
+  holes: Point2D[][]
+  path: string
+}
+
+type FencePolygonEntry = {
+  fence: FenceNode
+  polygon: Point2D[]
+  points: string
 }
 
 type SitePolygonEntry = {
@@ -441,6 +499,12 @@ type FloorplanPalette = {
   slabFill: string
   slabStroke: string
   selectedSlabFill: string
+  ceilingFill: string
+  ceilingStroke: string
+  selectedCeilingFill: string
+  fenceFill: string
+  fenceStroke: string
+  fenceHoverStroke: string
   wallFill: string
   wallStroke: string
   wallHoverStroke: string
@@ -2090,6 +2154,10 @@ function getFloorplanWall(wall: WallNode): WallNode {
   }
 }
 
+function getFloorplanFenceThickness(fence: FenceNode): number {
+  return Math.max(fence.thickness ?? 0.08, 0.08)
+}
+
 type WallMeasurementOverlay = {
   wallId: WallNode['id']
   dimensionLineEnd: { x1: number; y1: number; x2: number; y2: number }
@@ -2112,6 +2180,52 @@ function formatMeasurement(value: number, unit: 'metric' | 'imperial') {
     return `${wholeFeet}'${inches}"`
   }
   return `${Number.parseFloat(value.toFixed(2))}m`
+}
+
+function formatLengthInputValue(valueMeters: number, unit: 'metric' | 'imperial') {
+  const value = unit === 'imperial' ? valueMeters * 3.280_84 : valueMeters
+  return String(Number.parseFloat(value.toFixed(2)))
+}
+
+function parseFloorplanLengthInput(
+  value: string,
+  unit: 'metric' | 'imperial',
+  options?: { allowSigned?: boolean },
+): number | null {
+  const normalized = value.trim().replace(',', '.')
+  if (!normalized) {
+    return null
+  }
+
+  const parsed = Number.parseFloat(normalized)
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+
+  if (options?.allowSigned) {
+    if (Math.abs(parsed) <= 1e-6) {
+      return null
+    }
+    return unit === 'imperial' ? parsed / 3.280_84 : parsed
+  }
+
+  if (parsed <= 0) {
+    return null
+  }
+
+  return unit === 'imperial' ? parsed / 3.280_84 : parsed
+}
+
+function getNumericInputLabel(operation: WallEditNumericInputState['operation']) {
+  if (operation === 'split') {
+    return 'Split'
+  }
+
+  if (operation === 'offset') {
+    return 'Offset'
+  }
+
+  return 'Radius'
 }
 
 function formatAngleLabel(start: WallPlanPoint, end: WallPlanPoint) {
@@ -2916,9 +3030,9 @@ function FloorplanGuideSelectionOverlay({
   const centerX = toSvgX(guide.position[0])
   const centerY = toSvgY(guide.position[2])
   const rotationDeg = (-guide.rotation[1] * 180) / Math.PI
-  const selectionStroke = isDarkMode ? '#ffffff' : '#09090b'
-  const handleFill = isDarkMode ? '#ffffff' : '#09090b'
-  const handleStroke = isDarkMode ? '#0a0e1b' : '#ffffff'
+  const selectionStroke = 'var(--editor-floorplan-selected-stroke)'
+  const handleFill = 'var(--editor-floorplan-handle-fill)'
+  const handleStroke = 'var(--editor-floorplan-handle-stroke)'
 
   return (
     <g transform={`translate(${centerX} ${centerY}) rotate(${rotationDeg})`}>
@@ -3001,8 +3115,8 @@ function FloorplanGuideHandleHint({
   }
 
   const primaryToneClass = isDarkMode
-    ? 'text-white drop-shadow-[0_1px_1.5px_rgba(0,0,0,0.5)]'
-    : 'text-[#09090b] drop-shadow-[0_1px_1.5px_rgba(255,255,255,0.8)]'
+    ? 'text-foreground drop-shadow-[0_1px_1.5px_rgba(0,0,0,0.5)]'
+    : 'text-foreground drop-shadow-[0_1px_1.5px_rgba(255,255,255,0.8)]'
 
   return (
     <div
@@ -4300,13 +4414,13 @@ function FloorplanZoneLabel({
     >
       <text
         dominantBaseline="central"
-        fill={isDeleteMode && hovered ? '#fecaca' : 'white'}
+        fill={isDeleteMode && hovered ? 'var(--destructive)' : 'var(--editor-floorplan-label-foreground)'}
         fontFamily="system-ui, -apple-system, sans-serif"
         fontSize={FLOORPLAN_ZONE_LABEL_FONT_SIZE}
         fontWeight="500"
         paintOrder="stroke"
         ref={textRef}
-        stroke={isDeleteMode && hovered ? '#dc2626' : zone.color}
+        stroke={isDeleteMode && hovered ? 'var(--destructive)' : zone.color}
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth={FLOORPLAN_ZONE_LABEL_FONT_SIZE * 0.35}
@@ -5092,9 +5206,8 @@ const FloorplanCursorIndicatorOverlay = memo(function FloorplanCursorIndicatorOv
 })
 
 type FloorplanWallLengthInputOverlayProps = {
-  input: WallSketchInputState | null
-  cursorPosition: SvgPoint | null
-  unit: 'metric' | 'imperial'
+  input: FloorplanNumericInputState | null
+  position: SvgPoint | null
   onCancel: () => void
   onChange: (value: string) => void
   onSubmit: (value: string) => void
@@ -5102,8 +5215,7 @@ type FloorplanWallLengthInputOverlayProps = {
 
 const FloorplanWallLengthInputOverlay = memo(function FloorplanWallLengthInputOverlay({
   input,
-  cursorPosition,
-  unit,
+  position,
   onCancel,
   onChange,
   onSubmit,
@@ -5120,23 +5232,28 @@ const FloorplanWallLengthInputOverlay = memo(function FloorplanWallLengthInputOv
     }
   }, [input])
 
-  if (!(input && cursorPosition)) {
+  if (!(input && position)) {
     return null
   }
 
   return (
     <form
-      className="pointer-events-auto absolute z-30 flex h-9 items-center gap-1 rounded-lg border border-border/70 bg-background/95 px-2 shadow-[0_10px_24px_-10px_rgba(15,23,42,0.45)]"
+      className="editor-floorplan-feedback pointer-events-auto absolute z-30 flex h-9 items-center gap-1 rounded-md px-2"
       onPointerDown={(event) => event.stopPropagation()}
       onSubmit={(event) => {
         event.preventDefault()
         onSubmit(input.value)
       }}
       style={{
-        left: cursorPosition.x + FLOORPLAN_CURSOR_BADGE_OFFSET_X,
-        top: cursorPosition.y + FLOORPLAN_CURSOR_BADGE_OFFSET_Y,
+        left: position.x + FLOORPLAN_CURSOR_BADGE_OFFSET_X,
+        top: position.y + FLOORPLAN_CURSOR_BADGE_OFFSET_Y,
       }}
     >
+      {input.label && (
+        <span className="select-none font-medium text-muted-foreground text-xs">
+          {input.label}
+        </span>
+      )}
       <input
         ref={inputRef}
         className="h-6 w-20 bg-transparent text-right font-medium font-mono text-foreground text-sm outline-none"
@@ -5152,7 +5269,7 @@ const FloorplanWallLengthInputOverlay = memo(function FloorplanWallLengthInputOv
         value={input.value}
       />
       <span className="select-none font-medium text-muted-foreground text-xs">
-        {unit === 'imperial' ? 'ft' : 'm'}
+        {input.unitLabel}
       </span>
     </form>
   )
@@ -5168,6 +5285,7 @@ export function FloorplanPanel() {
   const wallCurveDragRef = useRef<WallCurveDragState | null>(null)
   const siteBoundaryDraftRef = useRef<SiteBoundaryDraft | null>(null)
   const slabBoundaryDraftRef = useRef<SlabBoundaryDraft | null>(null)
+  const ceilingBoundaryDraftRef = useRef<CeilingBoundaryDraft | null>(null)
   const zoneBoundaryDraftRef = useRef<ZoneBoundaryDraft | null>(null)
   const gestureScaleRef = useRef(1)
   const panelInteractionRef = useRef<PanelInteractionState | null>(null)
@@ -5318,6 +5436,22 @@ export function FloorplanPanel() {
         .filter((node): node is CeilingNode => node?.type === 'ceiling')
     }),
   )
+  const fences = useScene(
+    useShallow((state) => {
+      if (!levelId) {
+        return [] as FenceNode[]
+      }
+
+      const nextLevelNode = state.nodes[levelId]
+      if (!nextLevelNode || nextLevelNode.type !== 'level') {
+        return [] as FenceNode[]
+      }
+
+      return nextLevelNode.children
+        .map((childId) => state.nodes[childId])
+        .filter((node): node is FenceNode => node?.type === 'fence')
+    }),
+  )
   const levelGuides = useScene(
     useShallow((state) => {
       if (!levelId) {
@@ -5372,11 +5506,18 @@ export function FloorplanPanel() {
   )
   const [wallLengthInput, setWallLengthInput] = useState<WallSketchInputState | null>(null)
   const [slabDraftPoints, setSlabDraftPoints] = useState<WallPlanPoint[]>([])
+  const [ceilingDraftPoints, setCeilingDraftPoints] = useState<WallPlanPoint[]>([])
   const [zoneDraftPoints, setZoneDraftPoints] = useState<WallPlanPoint[]>([])
+  const [fenceDraft, setFenceDraft] = useState<FenceDraftState | null>(null)
   const [siteBoundaryDraft, setSiteBoundaryDraft] = useState<SiteBoundaryDraft | null>(null)
   const [siteVertexDragState, setSiteVertexDragState] = useState<SiteVertexDragState | null>(null)
   const [slabBoundaryDraft, setSlabBoundaryDraft] = useState<SlabBoundaryDraft | null>(null)
   const [slabVertexDragState, setSlabVertexDragState] = useState<SlabVertexDragState | null>(null)
+  const [ceilingBoundaryDraft, setCeilingBoundaryDraft] = useState<CeilingBoundaryDraft | null>(
+    null,
+  )
+  const [ceilingVertexDragState, setCeilingVertexDragState] =
+    useState<CeilingVertexDragState | null>(null)
   const [zoneBoundaryDraft, setZoneBoundaryDraft] = useState<ZoneBoundaryDraft | null>(null)
   const [zoneVertexDragState, setZoneVertexDragState] = useState<ZoneVertexDragState | null>(null)
   const [guideTransformDraft, setGuideTransformDraft] = useState<GuideTransformDraft | null>(null)
@@ -5385,10 +5526,14 @@ export function FloorplanPanel() {
   const [wallEndpointDraft, setWallEndpointDraft] = useState<WallEndpointDraft | null>(null)
   const [wallCurveDraft, setWallCurveDraft] = useState<WallCurveDraft | null>(null)
   const [wallOffsetPreview, setWallOffsetPreview] = useState<WallOffsetPreview | null>(null)
+  const [wallEditNumericInput, setWallEditNumericInput] =
+    useState<WallEditNumericInputState | null>(null)
   const [wallEditFeedback, setWallEditFeedback] = useState<WallEditFeedback | null>(null)
   const [hoveredOpeningId, setHoveredOpeningId] = useState<OpeningNode['id'] | null>(null)
   const [hoveredWallId, setHoveredWallId] = useState<WallNode['id'] | null>(null)
   const [hoveredSlabId, setHoveredSlabId] = useState<SlabNode['id'] | null>(null)
+  const [hoveredCeilingId, setHoveredCeilingId] = useState<CeilingNode['id'] | null>(null)
+  const [hoveredFenceId, setHoveredFenceId] = useState<FenceNode['id'] | null>(null)
   const [hoveredItemId, setHoveredItemId] = useState<ItemNode['id'] | null>(null)
   const [hoveredStairId, setHoveredStairId] = useState<StairNode['id'] | null>(null)
   const [hoveredZoneId, setHoveredZoneId] = useState<ZoneNodeType['id'] | null>(null)
@@ -5396,6 +5541,7 @@ export function FloorplanPanel() {
   const [hoveredWallCurveHandleId, setHoveredWallCurveHandleId] = useState<string | null>(null)
   const [hoveredSiteHandleId, setHoveredSiteHandleId] = useState<string | null>(null)
   const [hoveredSlabHandleId, setHoveredSlabHandleId] = useState<string | null>(null)
+  const [hoveredCeilingHandleId, setHoveredCeilingHandleId] = useState<string | null>(null)
   const [hoveredZoneHandleId, setHoveredZoneHandleId] = useState<string | null>(null)
   const [hoveredGuideCorner, setHoveredGuideCorner] = useState<GuideCorner | null>(null)
   const floorplanSelectionTool = useEditor((s) => s.floorplanSelectionTool)
@@ -5694,6 +5840,47 @@ export function FloorplanPanel() {
       }),
     [ceilings],
   )
+  const displayCeilingPolygons = useMemo(() => {
+    if (!ceilingBoundaryDraft) {
+      return ceilingPolygons
+    }
+
+    return ceilingPolygons.map((entry) =>
+      entry.ceiling.id === ceilingBoundaryDraft.ceilingId
+        ? {
+            ...entry,
+            holes: ceilingBoundaryDraft.holes.map((hole) => hole.map(toPoint2D)),
+            polygon: ceilingBoundaryDraft.polygon.map(toPoint2D),
+            path: formatPolygonPath(
+              ceilingBoundaryDraft.polygon.map(toPoint2D),
+              ceilingBoundaryDraft.holes.map((hole) => hole.map(toPoint2D)),
+            ),
+          }
+        : entry,
+    )
+  }, [ceilingBoundaryDraft, ceilingPolygons])
+  const fencePolygons = useMemo<FencePolygonEntry[]>(
+    () =>
+      fences.flatMap((fence) => {
+        const line = {
+          start: toPoint2D(fence.start),
+          end: toPoint2D(fence.end),
+        }
+        if (getPlanPointDistance(line.start, line.end) <= Number.EPSILON) {
+          return []
+        }
+
+        const polygon = getThickPlanLinePolygon(line, getFloorplanFenceThickness(fence))
+        return [
+          {
+            fence,
+            polygon,
+            points: formatPolygonPoints(polygon),
+          },
+        ]
+      }),
+    [fences],
+  )
   const zonePolygons = useMemo(
     () =>
       zones.flatMap((zone) => {
@@ -5849,6 +6036,14 @@ export function FloorplanPanel() {
     return floorplanStairEntries.find(({ stair }) => stair.id === selectedIds[0]) ?? null
   }, [floorplanStairEntries, selectedIds])
   const slabById = useMemo(() => new Map(slabs.map((slab) => [slab.id, slab] as const)), [slabs])
+  const ceilingById = useMemo(
+    () => new Map(ceilings.map((ceiling) => [ceiling.id, ceiling] as const)),
+    [ceilings],
+  )
+  const fenceById = useMemo(
+    () => new Map(fences.map((fence) => [fence.id, fence] as const)),
+    [fences],
+  )
   const zoneById = useMemo(() => new Map(zones.map((zone) => [zone.id, zone] as const)), [zones])
   const selectedSlabEntry = useMemo(() => {
     if (selectedIds.length !== 1) {
@@ -5862,8 +6057,15 @@ export function FloorplanPanel() {
       return null
     }
 
-    return ceilingPolygons.find(({ ceiling }) => ceiling.id === selectedIds[0]) ?? null
-  }, [ceilingPolygons, selectedIds])
+    return displayCeilingPolygons.find(({ ceiling }) => ceiling.id === selectedIds[0]) ?? null
+  }, [displayCeilingPolygons, selectedIds])
+  const selectedFenceEntry = useMemo(() => {
+    if (selectedIds.length !== 1) {
+      return null
+    }
+
+    return fencePolygons.find(({ fence }) => fence.id === selectedIds[0]) ?? null
+  }, [fencePolygons, selectedIds])
   const selectedZoneEntry = useMemo(() => {
     if (!selectedZoneId) {
       return null
@@ -5890,10 +6092,12 @@ export function FloorplanPanel() {
   const isSiteEditActive = phase === 'site'
   const isWallBuildActive = phase === 'structure' && mode === 'build' && tool === 'wall'
   const isSlabBuildActive = phase === 'structure' && mode === 'build' && tool === 'slab'
+  const isCeilingBuildActive = phase === 'structure' && mode === 'build' && tool === 'ceiling'
+  const isFenceBuildActive = phase === 'structure' && mode === 'build' && tool === 'fence'
   const isZoneBuildActive = phase === 'structure' && mode === 'build' && tool === 'zone'
   const isDoorBuildActive = phase === 'structure' && mode === 'build' && tool === 'door'
   const isWindowBuildActive = phase === 'structure' && mode === 'build' && tool === 'window'
-  const isPolygonBuildActive = isSlabBuildActive || isZoneBuildActive
+  const isPolygonBuildActive = isSlabBuildActive || isCeilingBuildActive || isZoneBuildActive
   const isOpeningBuildActive = isDoorBuildActive || isWindowBuildActive
   const isOpeningMoveActive = movingOpeningType !== null
   const isOpeningPlacementActive = isOpeningBuildActive || isOpeningMoveActive
@@ -5901,6 +6105,7 @@ export function FloorplanPanel() {
   const isStairMoveActive = movingNode?.type === 'stair'
   const isSlabMoveActive = movingNode?.type === 'slab'
   const isCeilingMoveActive = movingNode?.type === 'ceiling'
+  const isFenceMoveActive = movingNode?.type === 'fence'
   const isWallMoveActive = movingNode?.type === 'wall'
   const isWallCurveActive = curvingWall?.type === 'wall'
   const isItemPlacementPreviewActive =
@@ -5912,6 +6117,7 @@ export function FloorplanPanel() {
     isStairMoveActive ||
     isSlabMoveActive ||
     isCeilingMoveActive ||
+    isFenceMoveActive ||
     isWallMoveActive ||
     isWallCurveActive ||
     isFloorItemBuildActive ||
@@ -5986,6 +6192,8 @@ export function FloorplanPanel() {
     structureLayer !== 'zones'
   const canInteractElementFloorplanGeometry = isDeleteMode || canSelectElementFloorplanGeometry
   const canInteractFloorplanSlabs = isDeleteMode || canSelectElementFloorplanGeometry
+  const canInteractFloorplanCeilings = isDeleteMode || canSelectElementFloorplanGeometry
+  const canInteractFloorplanFences = isDeleteMode || canSelectElementFloorplanGeometry
   const canInteractWithGuides = showGuides && canSelectElementFloorplanGeometry
   const canSelectFloorplanZones =
     mode === 'select' &&
@@ -6027,6 +6235,11 @@ export function FloorplanPanel() {
     !movingNode &&
     floorplanSelectionTool === 'click' &&
     selectedSlabEntry !== null
+  const shouldShowCeilingBoundaryHandles =
+    mode === 'select' &&
+    !movingNode &&
+    floorplanSelectionTool === 'click' &&
+    selectedCeilingEntry !== null
   const shouldShowZoneBoundaryHandles = canSelectFloorplanZones && selectedZoneEntry !== null
   const showZonePolygons = true // Zone polygons always visible (labels always clickable)
   const visibleZonePolygons = displayZonePolygons
@@ -6178,6 +6391,37 @@ export function FloorplanPanel() {
       }
     })
   }, [selectedSlabEntry, shouldShowSlabBoundaryHandles, slabVertexDragState])
+  const ceilingVertexHandles = useMemo(() => {
+    if (!shouldShowCeilingBoundaryHandles) {
+      return []
+    }
+
+    return selectedCeilingEntry.polygon.map((point, vertexIndex) => ({
+      nodeId: selectedCeilingEntry.ceiling.id,
+      vertexIndex,
+      point: toWallPlanPoint(point),
+      isActive:
+        ceilingVertexDragState?.ceilingId === selectedCeilingEntry.ceiling.id &&
+        ceilingVertexDragState.vertexIndex === vertexIndex,
+    }))
+  }, [ceilingVertexDragState, selectedCeilingEntry, shouldShowCeilingBoundaryHandles])
+  const ceilingMidpointHandles = useMemo(() => {
+    if (!(shouldShowCeilingBoundaryHandles && !ceilingVertexDragState)) {
+      return []
+    }
+
+    return selectedCeilingEntry.polygon.map((point, edgeIndex, polygon) => {
+      const nextPoint = polygon[(edgeIndex + 1) % polygon.length]
+      return {
+        nodeId: selectedCeilingEntry.ceiling.id,
+        edgeIndex,
+        point: [
+          (point.x + (nextPoint?.x ?? point.x)) / 2,
+          (point.y + (nextPoint?.y ?? point.y)) / 2,
+        ] as WallPlanPoint,
+      }
+    })
+  }, [ceilingVertexDragState, selectedCeilingEntry, shouldShowCeilingBoundaryHandles])
   const siteVertexHandles = useMemo(() => {
     if (!(shouldShowSiteBoundaryHandles && visibleSitePolygon)) {
       return []
@@ -6254,6 +6498,20 @@ export function FloorplanPanel() {
     () => (draftPolygon ? formatPolygonPoints(draftPolygon) : null),
     [draftPolygon],
   )
+  const fenceDraftPolygonPoints = useMemo(() => {
+    if (!fenceDraft) {
+      return null
+    }
+
+    const polygon = getThickPlanLinePolygon(
+      {
+        start: toPoint2D(fenceDraft.start),
+        end: toPoint2D(fenceDraft.end),
+      },
+      0.08,
+    )
+    return formatPolygonPoints(polygon)
+  }, [fenceDraft])
   const wallOffsetPreviewPolygon = useMemo(() => {
     if (!(levelId && wallOffsetPreview)) {
       return null
@@ -6275,9 +6533,82 @@ export function FloorplanPanel() {
         : null,
     [wallFilletPreview],
   )
+  const wallEditPreviewSegments = useMemo<WallEditPreviewSegment[]>(() => {
+    if (!(wallEditOperation && cursorPoint)) {
+      return []
+    }
+
+    const nodes = useScene.getState().nodes
+    const hoveredWall = hoveredWallId ? wallById.get(hoveredWallId) : null
+
+    if ((wallEditOperation === 'trim-extend' || wallEditOperation === 'split') && hoveredWall) {
+      const result =
+        wallEditOperation === 'trim-extend'
+          ? buildTrimExtendWallPlan({
+              wall: hoveredWall,
+              walls,
+              clickPoint: cursorPoint,
+              nodes,
+            })
+          : buildSplitWallPlan({ wall: hoveredWall, splitPoint: cursorPoint, nodes })
+
+      const validSegments = getWallPreviewSegmentsFromResult(result, nodes)
+      return result.ok && validSegments.length > 0
+        ? validSegments
+        : [
+            {
+              id: `invalid:${hoveredWall.id}`,
+              start: hoveredWall.start,
+              end: hoveredWall.end,
+              isValid: false,
+            },
+          ]
+    }
+
+    if (
+      (wallEditOperation === 'merge' || wallEditOperation === 'fillet') &&
+      selectedWallEntry &&
+      hoveredWall
+    ) {
+      if (hoveredWall.id === selectedWallEntry.wall.id) {
+        return []
+      }
+
+      const result =
+        wallEditOperation === 'merge'
+          ? buildMergeWallsPlan({
+              primary: selectedWallEntry.wall,
+              secondary: hoveredWall,
+              nodes,
+            })
+          : buildFilletWallsPlan({
+              primary: selectedWallEntry.wall,
+              secondary: hoveredWall,
+              nodes,
+            })
+
+      const validSegments = getWallPreviewSegmentsFromResult(result, nodes)
+      return result.ok && validSegments.length > 0
+        ? validSegments
+        : [
+            {
+              id: `invalid:${hoveredWall.id}`,
+              start: hoveredWall.start,
+              end: hoveredWall.end,
+              isValid: false,
+            },
+          ]
+    }
+
+    return []
+  }, [cursorPoint, hoveredWallId, selectedWallEntry, wallById, wallEditOperation, walls])
   const activePolygonDraftPoints = useMemo(() => {
     if (isZoneBuildActive) {
       return zoneDraftPoints
+    }
+
+    if (isCeilingBuildActive) {
+      return ceilingDraftPoints
     }
 
     if (isSlabBuildActive) {
@@ -6285,7 +6616,14 @@ export function FloorplanPanel() {
     }
 
     return [] as WallPlanPoint[]
-  }, [isSlabBuildActive, isZoneBuildActive, slabDraftPoints, zoneDraftPoints])
+  }, [
+    ceilingDraftPoints,
+    isCeilingBuildActive,
+    isSlabBuildActive,
+    isZoneBuildActive,
+    slabDraftPoints,
+    zoneDraftPoints,
+  ])
   const polygonDraftPolylinePoints = useMemo(() => {
     if (!(isPolygonBuildActive && cursorPoint && activePolygonDraftPoints.length > 0)) {
       return null
@@ -6324,6 +6662,8 @@ export function FloorplanPanel() {
     const allPoints = [
       ...(visibleSitePolygon ? visibleSitePolygon.polygon : []),
       ...displaySlabPolygons.flatMap((entry) => entry.polygon),
+      ...displayCeilingPolygons.flatMap((entry) => entry.polygon),
+      ...fencePolygons.flatMap((entry) => entry.polygon),
       ...floorplanItemEntries.flatMap((entry) => entry.polygon),
       ...floorplanStairEntries.flatMap((entry) =>
         entry.segments.flatMap((segmentEntry) => segmentEntry.polygon),
@@ -6367,7 +6707,9 @@ export function FloorplanPanel() {
       width,
     }
   }, [
+    displayCeilingPolygons,
     displaySlabPolygons,
+    fencePolygons,
     floorplanItemEntries,
     floorplanStairEntries,
     svgAspectRatio,
@@ -6491,6 +6833,13 @@ export function FloorplanPanel() {
         ? getFloorplanActionMenuPosition(selectedCeilingEntry.polygon, viewBox, surfaceSize)
         : null,
     [selectedCeilingEntry, surfaceSize, viewBox],
+  )
+  const selectedFenceActionMenuPosition = useMemo(
+    () =>
+      selectedFenceEntry
+        ? getFloorplanActionMenuPosition(selectedFenceEntry.polygon, viewBox, surfaceSize)
+        : null,
+    [selectedFenceEntry, surfaceSize, viewBox],
   )
   const selectedWallActionMenuPosition = useMemo(
     () =>
@@ -6642,68 +6991,80 @@ export function FloorplanPanel() {
     () =>
       theme === 'dark'
         ? {
-            surface: '#0a0e1b',
-            minorGrid: '#475569',
-            majorGrid: '#94a3b8',
+            surface: 'var(--editor-floorplan-surface)',
+            minorGrid: 'var(--editor-floorplan-grid-minor)',
+            majorGrid: 'var(--editor-floorplan-grid-major)',
             minorGridOpacity: 0.7,
             majorGridOpacity: 0.9,
-            slabFill: '#5f6483',
-            slabStroke: '#71717a',
-            selectedSlabFill: '#b7b5f7',
-            wallFill: '#fafafa',
-            wallStroke: '#38bdf8',
-            wallHoverStroke: '#a1a1aa',
-            deleteFill: '#f87171',
-            deleteStroke: '#ef4444',
-            deleteWallFill: '#ef4444',
-            deleteWallHoverStroke: '#fca5a5',
-            selectedFill: '#8381ed',
-            selectedStroke: '#8381ed',
-            draftFill: '#818cf8',
-            draftStroke: '#c7d2fe',
-            measurementStroke: '#cbd5e1',
-            cursor: '#818cf8',
-            editCursor: '#8381ed',
-            anchor: '#818cf8',
-            openingFill: '#0a0e1b',
-            openingStroke: '#fafafa',
-            endpointHandleFill: '#09090b',
-            endpointHandleStroke: '#a1a1aa',
-            endpointHandleHoverStroke: '#d4d4d8',
-            endpointHandleActiveFill: '#8381ed',
-            endpointHandleActiveStroke: '#8381ed',
+            slabFill: 'var(--editor-floorplan-slab-fill)',
+            slabStroke: 'var(--editor-floorplan-slab-stroke)',
+            selectedSlabFill: 'var(--editor-floorplan-selected-slab-fill)',
+            ceilingFill: 'var(--editor-floorplan-slab-fill)',
+            ceilingStroke: 'var(--editor-floorplan-measurement)',
+            selectedCeilingFill: 'var(--editor-floorplan-selected-slab-fill)',
+            fenceFill: 'var(--editor-floorplan-wall-fill)',
+            fenceStroke: 'var(--editor-floorplan-wall-hover)',
+            fenceHoverStroke: 'var(--editor-floorplan-draft-stroke)',
+            wallFill: 'var(--editor-floorplan-wall-fill)',
+            wallStroke: 'var(--editor-floorplan-wall-stroke)',
+            wallHoverStroke: 'var(--editor-floorplan-wall-hover)',
+            deleteFill: 'var(--destructive)',
+            deleteStroke: 'var(--destructive)',
+            deleteWallFill: 'var(--destructive)',
+            deleteWallHoverStroke: 'var(--destructive)',
+            selectedFill: 'var(--editor-floorplan-selected-fill)',
+            selectedStroke: 'var(--editor-floorplan-selected-stroke)',
+            draftFill: 'var(--editor-floorplan-draft-fill)',
+            draftStroke: 'var(--editor-floorplan-draft-stroke)',
+            measurementStroke: 'var(--editor-floorplan-measurement)',
+            cursor: 'var(--editor-control-active)',
+            editCursor: 'var(--editor-floorplan-selected-stroke)',
+            anchor: 'var(--editor-floorplan-draft-stroke)',
+            openingFill: 'var(--editor-floorplan-surface)',
+            openingStroke: 'var(--editor-floorplan-wall-fill)',
+            endpointHandleFill: 'var(--editor-floorplan-handle-fill)',
+            endpointHandleStroke: 'var(--editor-floorplan-handle-stroke)',
+            endpointHandleHoverStroke: 'var(--editor-floorplan-handle-hover)',
+            endpointHandleActiveFill: 'var(--editor-floorplan-selected-fill)',
+            endpointHandleActiveStroke: 'var(--editor-floorplan-selected-stroke)',
           }
         : {
-            surface: '#ffffff',
-            minorGrid: '#94a3b8',
-            majorGrid: '#475569',
+            surface: 'var(--editor-floorplan-surface)',
+            minorGrid: 'var(--editor-floorplan-grid-minor)',
+            majorGrid: 'var(--editor-floorplan-grid-major)',
             minorGridOpacity: 0.7,
             majorGridOpacity: 0.9,
-            slabFill: '#c4c4cc',
-            slabStroke: '#52525b',
-            selectedSlabFill: '#b7b5f7',
-            wallFill: '#171717',
-            wallStroke: '#0284c7',
-            wallHoverStroke: '#71717a',
-            deleteFill: '#fca5a5',
-            deleteStroke: '#dc2626',
-            deleteWallFill: '#ef4444',
-            deleteWallHoverStroke: '#f87171',
-            selectedFill: '#8381ed',
-            selectedStroke: '#8381ed',
-            draftFill: '#6366f1',
-            draftStroke: '#4338ca',
-            measurementStroke: '#334155',
-            cursor: '#6366f1',
-            editCursor: '#8381ed',
-            anchor: '#4338ca',
-            openingFill: '#ffffff',
-            openingStroke: '#171717',
-            endpointHandleFill: '#ffffff',
-            endpointHandleStroke: '#71717a',
-            endpointHandleHoverStroke: '#52525b',
-            endpointHandleActiveFill: '#8381ed',
-            endpointHandleActiveStroke: '#8381ed',
+            slabFill: 'var(--editor-floorplan-slab-fill)',
+            slabStroke: 'var(--editor-floorplan-slab-stroke)',
+            selectedSlabFill: 'var(--editor-floorplan-selected-slab-fill)',
+            ceilingFill: 'var(--editor-floorplan-slab-fill)',
+            ceilingStroke: 'var(--editor-floorplan-measurement)',
+            selectedCeilingFill: 'var(--editor-floorplan-selected-slab-fill)',
+            fenceFill: 'var(--editor-floorplan-wall-fill)',
+            fenceStroke: 'var(--editor-floorplan-wall-hover)',
+            fenceHoverStroke: 'var(--editor-floorplan-draft-stroke)',
+            wallFill: 'var(--editor-floorplan-wall-fill)',
+            wallStroke: 'var(--editor-floorplan-wall-stroke)',
+            wallHoverStroke: 'var(--editor-floorplan-wall-hover)',
+            deleteFill: 'var(--destructive)',
+            deleteStroke: 'var(--destructive)',
+            deleteWallFill: 'var(--destructive)',
+            deleteWallHoverStroke: 'var(--destructive)',
+            selectedFill: 'var(--editor-floorplan-selected-fill)',
+            selectedStroke: 'var(--editor-floorplan-selected-stroke)',
+            draftFill: 'var(--editor-floorplan-draft-fill)',
+            draftStroke: 'var(--editor-floorplan-draft-stroke)',
+            measurementStroke: 'var(--editor-floorplan-measurement)',
+            cursor: 'var(--editor-control-active)',
+            editCursor: 'var(--editor-floorplan-selected-stroke)',
+            anchor: 'var(--editor-floorplan-draft-stroke)',
+            openingFill: 'var(--editor-floorplan-surface)',
+            openingStroke: 'var(--editor-floorplan-wall-fill)',
+            endpointHandleFill: 'var(--editor-floorplan-handle-fill)',
+            endpointHandleStroke: 'var(--editor-floorplan-handle-stroke)',
+            endpointHandleHoverStroke: 'var(--editor-floorplan-handle-hover)',
+            endpointHandleActiveFill: 'var(--editor-floorplan-selected-fill)',
+            endpointHandleActiveStroke: 'var(--editor-floorplan-selected-stroke)',
           },
     [theme],
   )
@@ -6779,6 +7140,10 @@ export function FloorplanPanel() {
   useEffect(() => {
     slabBoundaryDraftRef.current = slabBoundaryDraft
   }, [slabBoundaryDraft])
+
+  useEffect(() => {
+    ceilingBoundaryDraftRef.current = ceilingBoundaryDraft
+  }, [ceilingBoundaryDraft])
 
   useEffect(() => {
     zoneBoundaryDraftRef.current = zoneBoundaryDraft
@@ -6985,6 +7350,12 @@ export function FloorplanPanel() {
   const clearSlabPlacementDraft = useCallback(() => {
     setSlabDraftPoints([])
   }, [])
+  const clearCeilingPlacementDraft = useCallback(() => {
+    setCeilingDraftPoints([])
+  }, [])
+  const clearFencePlacementDraft = useCallback(() => {
+    setFenceDraft(null)
+  }, [])
   const clearZonePlacementDraft = useCallback(() => {
     setZoneDraftPoints([])
   }, [])
@@ -7001,6 +7372,7 @@ export function FloorplanPanel() {
   }, [])
   const clearWallEditPreview = useCallback(() => {
     setWallOffsetPreview(null)
+    setWallEditNumericInput(null)
   }, [])
   const clearSiteBoundaryInteraction = useCallback(() => {
     setSiteVertexDragState(null)
@@ -7012,6 +7384,11 @@ export function FloorplanPanel() {
     setSlabBoundaryDraft(null)
     setHoveredSlabHandleId(null)
   }, [])
+  const clearCeilingBoundaryInteraction = useCallback(() => {
+    setCeilingVertexDragState(null)
+    setCeilingBoundaryDraft(null)
+    setHoveredCeilingHandleId(null)
+  }, [])
   const clearZoneBoundaryInteraction = useCallback(() => {
     setZoneVertexDragState(null)
     setZoneBoundaryDraft(null)
@@ -7021,17 +7398,23 @@ export function FloorplanPanel() {
   const clearDraft = useCallback(() => {
     clearWallPlacementDraft()
     clearSlabPlacementDraft()
+    clearCeilingPlacementDraft()
+    clearFencePlacementDraft()
     clearZonePlacementDraft()
     clearWallEndpointDrag()
     clearWallCurveDrag()
     clearWallEditPreview()
     clearSiteBoundaryInteraction()
     clearSlabBoundaryInteraction()
+    clearCeilingBoundaryInteraction()
     clearZoneBoundaryInteraction()
     setCursorPoint(null)
   }, [
     clearWallCurveDrag,
     clearWallEditPreview,
+    clearCeilingBoundaryInteraction,
+    clearCeilingPlacementDraft,
+    clearFencePlacementDraft,
     clearSiteBoundaryInteraction,
     clearSlabBoundaryInteraction,
     clearSlabPlacementDraft,
@@ -7042,16 +7425,21 @@ export function FloorplanPanel() {
   ])
 
   useEffect(() => {
-    if (isWallBuildActive || isPolygonBuildActive) {
+    if (isWallBuildActive || isPolygonBuildActive || isFenceBuildActive) {
       return
     }
 
     clearDraft()
-  }, [clearDraft, isPolygonBuildActive, isWallBuildActive])
+  }, [clearDraft, isFenceBuildActive, isPolygonBuildActive, isWallBuildActive])
 
   useEffect(() => {
     const handleCancel = () => {
-      if ((isWallBuildActive && (draftStart || wallLengthInput)) || wallEditOperation) {
+      if (
+        (isWallBuildActive && (draftStart || wallLengthInput)) ||
+        (isPolygonBuildActive && activePolygonDraftPoints.length > 0) ||
+        (isFenceBuildActive && fenceDraft) ||
+        wallEditOperation
+      ) {
         markToolCancelConsumed()
       }
 
@@ -7063,7 +7451,18 @@ export function FloorplanPanel() {
     return () => {
       emitter.off('tool:cancel', handleCancel)
     }
-  }, [clearDraft, draftStart, isWallBuildActive, setWallEditOperation, wallEditOperation, wallLengthInput])
+  }, [
+    activePolygonDraftPoints.length,
+    clearDraft,
+    draftStart,
+    fenceDraft,
+    isFenceBuildActive,
+    isPolygonBuildActive,
+    isWallBuildActive,
+    setWallEditOperation,
+    wallEditOperation,
+    wallLengthInput,
+  ])
 
   const commitWallPreviewAndEndSketch = useCallback(() => {
     if (!(draftStart && draftEnd && isWallLongEnough(draftStart, draftEnd))) {
@@ -7166,6 +7565,26 @@ export function FloorplanPanel() {
     },
     [levelId, setSelection],
   )
+  const createCeilingOnCurrentLevel = useCallback(
+    (points: WallPlanPoint[]) => {
+      if (!levelId) {
+        return null
+      }
+
+      const { createNode, nodes } = useScene.getState()
+      const ceilingCount = Object.values(nodes).filter((node) => node.type === 'ceiling').length
+      const ceiling = CeilingNodeSchema.parse({
+        name: `Ceiling ${ceilingCount + 1}`,
+        polygon: points.map(([x, z]) => [x, z] as [number, number]),
+      })
+
+      createNode(ceiling, levelId)
+      sfxEmitter.emit('sfx:structure-build')
+      setSelection({ selectedIds: [ceiling.id] })
+      return ceiling.id
+    },
+    [levelId, setSelection],
+  )
   const createZoneOnCurrentLevel = useCallback(
     (points: WallPlanPoint[]) => {
       if (!levelId) {
@@ -7195,10 +7614,11 @@ export function FloorplanPanel() {
   const finishWallEditOperation = useCallback(() => {
     setWallEditOperation(null)
     setWallOffsetPreview(null)
+    setWallEditNumericInput(null)
   }, [setWallEditOperation])
 
   const runWallEditResult = useCallback(
-    (result: ReturnType<typeof buildSplitWallPlan>) => {
+    (result: WallEditResult) => {
       if (!result.ok) {
         showWallEditFeedback(result.reason)
         return false
@@ -7228,14 +7648,26 @@ export function FloorplanPanel() {
       clearWallPlacementDraft()
       clearWallEndpointDrag()
       clearWallCurveDrag()
+      setWallEditNumericInput(null)
 
       const nextOperation = wallEditOperation === operation ? null : operation
       setWallEditOperation(nextOperation)
-      setWallOffsetPreview(
+      const offsetPreview =
         nextOperation === 'offset' && selectedWallEntry
           ? getWallOffsetPreview({ wall: selectedWallEntry.wall })
-          : null,
-      )
+          : null
+      setWallOffsetPreview(offsetPreview)
+
+      if (nextOperation === 'offset' && selectedWallEntry) {
+        setWallEditNumericInput({
+          operation: 'offset',
+          wallId: selectedWallEntry.wall.id,
+          value: formatLengthInputValue(
+            offsetPreview?.distance ?? getDefaultWallOffsetDistance(),
+            unit,
+          ),
+        })
+      }
 
       if (!nextOperation) {
         return
@@ -7261,6 +7693,7 @@ export function FloorplanPanel() {
       setTool,
       setWallEditOperation,
       showWallEditFeedback,
+      unit,
       wallEditOperation,
     ],
   )
@@ -7373,6 +7806,101 @@ export function FloorplanPanel() {
     ],
   )
 
+  const handleWallEditNumericInputCancel = useCallback(() => {
+    finishWallEditOperation()
+  }, [finishWallEditOperation])
+
+  const handleWallEditNumericInputChange = useCallback(
+    (value: string) => {
+      setWallEditNumericInput((current) => (current ? { ...current, value } : current))
+
+      const current = wallEditNumericInput
+      if (current?.operation !== 'offset' || !current.wallId) {
+        return
+      }
+
+      const wall = wallById.get(current.wallId)
+      const distance = parseFloorplanLengthInput(value, unit, { allowSigned: true })
+      if (!(wall && distance !== null)) {
+        return
+      }
+
+      setWallOffsetPreview(getWallOffsetPreview({ wall, distance }))
+    },
+    [unit, wallById, wallEditNumericInput],
+  )
+
+  const handleWallEditNumericInputSubmit = useCallback(
+    (value: string) => {
+      const current = wallEditNumericInput
+      if (!current) {
+        return
+      }
+
+      const nodes = useScene.getState().nodes
+
+      if (current.operation === 'split') {
+        const wall = current.wallId ? wallById.get(current.wallId) : selectedWallEntry?.wall
+        const distanceFromStart = parseFloorplanLengthInput(value, unit)
+        if (!(wall && distanceFromStart !== null)) {
+          showWallEditFeedback('Enter a valid split distance.')
+          return
+        }
+
+        const splitPoint = getWallPointAtDistance(wall, distanceFromStart)
+        if (!splitPoint) {
+          showWallEditFeedback('Split distance must be inside the wall length.')
+          return
+        }
+
+        runWallEditResult(buildSplitWallPlan({ wall, splitPoint, nodes }))
+        return
+      }
+
+      if (current.operation === 'offset') {
+        const wall = current.wallId ? wallById.get(current.wallId) : selectedWallEntry?.wall
+        const distance = parseFloorplanLengthInput(value, unit, { allowSigned: true })
+        if (!(wall && distance !== null)) {
+          showWallEditFeedback('Enter a valid offset distance.')
+          return
+        }
+
+        const preview = getWallOffsetPreview({ wall, distance })
+        if (!preview) {
+          showWallEditFeedback('Only straight walls can be offset.')
+          return
+        }
+
+        runWallEditResult(buildOffsetWallPlan({ wall, preview }))
+        return
+      }
+
+      const wallIds = current.wallIds
+      const radius = parseFloorplanLengthInput(value, unit)
+      if (!(wallIds && radius !== null)) {
+        showWallEditFeedback('Enter a valid fillet radius.')
+        return
+      }
+
+      const primary = wallById.get(wallIds[0])
+      const secondary = wallById.get(wallIds[1])
+      if (!(primary && secondary)) {
+        showWallEditFeedback('Select two walls to fillet.')
+        return
+      }
+
+      runWallEditResult(buildFilletWallsPlan({ primary, secondary, nodes, radius }))
+    },
+    [
+      runWallEditResult,
+      selectedWallEntry,
+      showWallEditFeedback,
+      unit,
+      wallById,
+      wallEditNumericInput,
+    ],
+  )
+
   const handleSelectedWallTrimExtend = useCallback(
     (event: ReactMouseEvent<HTMLButtonElement>) => {
       event.stopPropagation()
@@ -7390,19 +7918,22 @@ export function FloorplanPanel() {
         return
       }
 
-      const splitPoint: WallPlanPoint = [
-        (wall.start[0] + wall.end[0]) / 2,
-        (wall.start[1] + wall.end[1]) / 2,
-      ]
-      runWallEditResult(
-        buildSplitWallPlan({
-          wall,
-          splitPoint,
-          nodes: useScene.getState().nodes,
-        }),
-      )
+      setWallEditOperation('split')
+      setWallOffsetPreview(null)
+      setWallEditNumericInput({
+        operation: 'split',
+        wallId: wall.id,
+        value: formatLengthInputValue(getWallLength2D(wall) / 2, unit),
+      })
+      showWallEditFeedback('Enter distance from wall start, or click the wall to split.')
     },
-    [activateWallEditOperation, runWallEditResult, selectedWallEntry],
+    [
+      activateWallEditOperation,
+      setWallEditOperation,
+      selectedWallEntry,
+      showWallEditFeedback,
+      unit,
+    ],
   )
 
   const handleSelectedWallMerge = useCallback(
@@ -7446,15 +7977,22 @@ export function FloorplanPanel() {
         return
       }
 
-      runWallEditResult(
-        buildFilletWallsPlan({
-          primary: pair[0],
-          secondary: pair[1],
-          nodes: useScene.getState().nodes,
-        }),
-      )
+      setWallEditOperation('fillet')
+      setWallOffsetPreview(null)
+      setWallEditNumericInput({
+        operation: 'fillet',
+        wallIds: [pair[0].id, pair[1].id],
+        value: formatLengthInputValue(getDefaultWallEditRadius(), unit),
+      })
+      showWallEditFeedback('Enter a fillet radius, or press Enter for the default.')
     },
-    [activateWallEditOperation, getSelectedWallPair, runWallEditResult],
+    [
+      activateWallEditOperation,
+      getSelectedWallPair,
+      setWallEditOperation,
+      showWallEditFeedback,
+      unit,
+    ],
   )
 
   useEffect(() => {
@@ -7864,6 +8402,14 @@ export function FloorplanPanel() {
   }, [clearSlabBoundaryInteraction, shouldShowSlabBoundaryHandles])
 
   useEffect(() => {
+    if (shouldShowCeilingBoundaryHandles) {
+      return
+    }
+
+    clearCeilingBoundaryInteraction()
+  }, [clearCeilingBoundaryInteraction, shouldShowCeilingBoundaryHandles])
+
+  useEffect(() => {
     if (shouldShowZoneBoundaryHandles) {
       return
     }
@@ -8069,6 +8615,104 @@ export function FloorplanPanel() {
     getPlanPointFromClientPoint,
     slabById,
     slabVertexDragState,
+    updateNode,
+  ])
+
+  useEffect(() => {
+    const dragState = ceilingVertexDragState
+    if (!dragState) {
+      return
+    }
+
+    const handleWindowPointerMove = (event: PointerEvent) => {
+      if (event.pointerId !== dragState.pointerId) {
+        return
+      }
+
+      event.preventDefault()
+
+      const planPoint = getPlanPointFromClientPoint(event.clientX, event.clientY)
+      if (!planPoint) {
+        return
+      }
+
+      const snappedPoint: WallPlanPoint = [snapToHalf(planPoint[0]), snapToHalf(planPoint[1])]
+      setCursorPoint(snappedPoint)
+
+      setCeilingBoundaryDraft((currentDraft) => {
+        if (!currentDraft || currentDraft.ceilingId !== dragState.ceilingId) {
+          return currentDraft
+        }
+
+        const currentPoint = currentDraft.polygon[dragState.vertexIndex]
+        if (currentPoint && pointsEqual(currentPoint, snappedPoint)) {
+          return currentDraft
+        }
+
+        sfxEmitter.emit('sfx:grid-snap')
+
+        const nextPolygon = [...currentDraft.polygon]
+        nextPolygon[dragState.vertexIndex] = snappedPoint
+
+        return {
+          ...currentDraft,
+          polygon: nextPolygon,
+        }
+      })
+    }
+
+    const commitCeilingVertexDrag = (event: PointerEvent) => {
+      if (event.pointerId !== dragState.pointerId) {
+        return
+      }
+
+      const draft = ceilingBoundaryDraftRef.current
+      const ceiling = ceilingById.get(dragState.ceilingId)
+      if (draft && ceiling && !polygonsEqual(draft.polygon, ceiling.polygon)) {
+        const suppressClick = (clickEvent: MouseEvent) => {
+          clickEvent.stopImmediatePropagation()
+          clickEvent.preventDefault()
+          window.removeEventListener('click', suppressClick, true)
+        }
+        window.addEventListener('click', suppressClick, true)
+        requestAnimationFrame(() => {
+          window.removeEventListener('click', suppressClick, true)
+        })
+
+        updateNode(draft.ceilingId, {
+          holes: draft.holes,
+          polygon: draft.polygon,
+        })
+        sfxEmitter.emit('sfx:structure-build')
+      }
+
+      clearCeilingBoundaryInteraction()
+      setCursorPoint(null)
+    }
+
+    const cancelCeilingVertexDrag = (event: PointerEvent) => {
+      if (event.pointerId !== dragState.pointerId) {
+        return
+      }
+
+      clearCeilingBoundaryInteraction()
+      setCursorPoint(null)
+    }
+
+    window.addEventListener('pointermove', handleWindowPointerMove)
+    window.addEventListener('pointerup', commitCeilingVertexDrag)
+    window.addEventListener('pointercancel', cancelCeilingVertexDrag)
+
+    return () => {
+      window.removeEventListener('pointermove', handleWindowPointerMove)
+      window.removeEventListener('pointerup', commitCeilingVertexDrag)
+      window.removeEventListener('pointercancel', cancelCeilingVertexDrag)
+    }
+  }, [
+    ceilingById,
+    ceilingVertexDragState,
+    clearCeilingBoundaryInteraction,
+    getPlanPointFromClientPoint,
     updateNode,
   ])
 
@@ -8324,6 +8968,31 @@ export function FloorplanPanel() {
         return
       }
 
+      if (isFenceBuildActive) {
+        const snappedPoint = snapFenceDraftPoint({
+          point: planPoint,
+          walls,
+          fences,
+          start: fenceDraft?.start,
+          angleSnap: Boolean(fenceDraft) && !shiftPressed,
+        })
+
+        setCursorPoint((previousPoint) => {
+          const hasChanged = !(previousPoint && pointsEqual(previousPoint, snappedPoint))
+          if (hasChanged && fenceDraft) {
+            sfxEmitter.emit('sfx:grid-snap')
+          }
+          return snappedPoint
+        })
+
+        if (fenceDraft) {
+          setFenceDraft((currentDraft) =>
+            currentDraft ? { ...currentDraft, end: snappedPoint } : currentDraft,
+          )
+        }
+        return
+      }
+
       if (isOpeningPlacementActive) {
         const closest = findClosestWallPoint(planPoint, walls, {
           canUseWall: (wall) => !isCurvedWall(wall),
@@ -8410,10 +9079,13 @@ export function FloorplanPanel() {
       emitFloorplanWallLeave,
       emitFloorplanGridEvent,
       floorplanOpeningLocalY,
+      fences,
+      fenceDraft,
       fittedViewport,
       getPlanPointFromClientPoint,
       activePolygonDraftPoints,
       isFloorplanGridInteractionActive,
+      isFenceBuildActive,
       isMarqueeSelectionToolActive,
       isOpeningPlacementActive,
       isPolygonBuildActive,
@@ -8480,6 +9152,51 @@ export function FloorplanPanel() {
     },
     [clearDraft, createSlabOnCurrentLevel, slabDraftPoints],
   )
+  const handleCeilingPlacementPoint = useCallback(
+    (point: WallPlanPoint) => {
+      const lastPoint = ceilingDraftPoints[ceilingDraftPoints.length - 1]
+      if (lastPoint && pointsEqual(lastPoint, point)) {
+        return
+      }
+
+      const firstPoint = ceilingDraftPoints[0]
+      if (firstPoint && ceilingDraftPoints.length >= 3 && isPointNearPlanPoint(point, firstPoint)) {
+        createCeilingOnCurrentLevel(ceilingDraftPoints)
+        clearDraft()
+        return
+      }
+
+      setCeilingDraftPoints((currentPoints) => [...currentPoints, point])
+      setCursorPoint(point)
+    },
+    [ceilingDraftPoints, clearDraft, createCeilingOnCurrentLevel],
+  )
+  const handleCeilingPlacementConfirm = useCallback(
+    (point?: WallPlanPoint) => {
+      const firstPoint = ceilingDraftPoints[0]
+      const lastPoint = ceilingDraftPoints[ceilingDraftPoints.length - 1]
+
+      let nextPoints = ceilingDraftPoints
+      if (point) {
+        const isClosingExistingPolygon = Boolean(
+          firstPoint && ceilingDraftPoints.length >= 3 && isPointNearPlanPoint(point, firstPoint),
+        )
+        const isDuplicatePoint = Boolean(lastPoint && pointsEqual(lastPoint, point))
+
+        if (!(isClosingExistingPolygon || isDuplicatePoint)) {
+          nextPoints = [...ceilingDraftPoints, point]
+        }
+      }
+
+      if (nextPoints.length < 3) {
+        return
+      }
+
+      createCeilingOnCurrentLevel(nextPoints)
+      clearDraft()
+    },
+    [ceilingDraftPoints, clearDraft, createCeilingOnCurrentLevel],
+  )
   const handleZonePlacementPoint = useCallback(
     (point: WallPlanPoint) => {
       const lastPoint = zoneDraftPoints[zoneDraftPoints.length - 1]
@@ -8526,6 +9243,29 @@ export function FloorplanPanel() {
     [clearDraft, createZoneOnCurrentLevel, zoneDraftPoints],
   )
 
+  const handleFencePlacementPoint = useCallback(
+    (point: FencePlanPoint) => {
+      if (!fenceDraft) {
+        setFenceDraft({ start: point, end: point })
+        setCursorPoint(point)
+        return
+      }
+
+      if (!isWallLongEnough(fenceDraft.start, point)) {
+        return
+      }
+
+      const fence = createFenceOnCurrentLevel(fenceDraft.start, point)
+      if (!fence) {
+        return
+      }
+
+      setFenceDraft({ start: point, end: point })
+      setCursorPoint(point)
+    },
+    [fenceDraft],
+  )
+
   const handleWallPlacementPoint = useCallback(
     (point: WallPlanPoint) => {
       if (!draftStart) {
@@ -8561,6 +9301,18 @@ export function FloorplanPanel() {
       }
 
       if (wallEditOperation === 'offset' && commitWallOffsetAtPoint(planPoint)) {
+        return
+      }
+
+      if (isFenceBuildActive) {
+        const snappedPoint = snapFenceDraftPoint({
+          point: planPoint,
+          walls,
+          fences,
+          start: fenceDraft?.start,
+          angleSnap: Boolean(fenceDraft) && !shiftPressed,
+        })
+        handleFencePlacementPoint(snappedPoint)
         return
       }
 
@@ -8600,6 +9352,8 @@ export function FloorplanPanel() {
 
         if (isZoneBuildActive) {
           handleZonePlacementPoint(snappedPoint)
+        } else if (isCeilingBuildActive) {
+          handleCeilingPlacementPoint(snappedPoint)
         } else {
           handleSlabPlacementPoint(snappedPoint)
         }
@@ -8646,13 +9400,19 @@ export function FloorplanPanel() {
       commitWallOffsetAtPoint,
       draftStart,
       emitFloorplanGridEvent,
+      fences,
+      fenceDraft,
       floorplanOpeningLocalY,
       getPlanPointFromClientPoint,
       activePolygonDraftPoints,
+      handleCeilingPlacementPoint,
+      handleFencePlacementPoint,
       canSelectFloorplanZones,
       handleSlabPlacementPoint,
       handleZonePlacementPoint,
       handleWallPlacementPoint,
+      isCeilingBuildActive,
+      isFenceBuildActive,
       isFloorplanGridInteractionActive,
       isOpeningPlacementActive,
       isPolygonBuildActive,
@@ -8688,6 +9448,8 @@ export function FloorplanPanel() {
 
       if (isZoneBuildActive) {
         handleZonePlacementConfirm(snappedPoint)
+      } else if (isCeilingBuildActive) {
+        handleCeilingPlacementConfirm(snappedPoint)
       } else {
         handleSlabPlacementConfirm(snappedPoint)
       }
@@ -8695,8 +9457,10 @@ export function FloorplanPanel() {
     [
       activePolygonDraftPoints,
       getPlanPointFromClientPoint,
+      handleCeilingPlacementConfirm,
       handleSlabPlacementConfirm,
       handleZonePlacementConfirm,
+      isCeilingBuildActive,
       isPolygonBuildActive,
       isZoneBuildActive,
       shiftPressed,
@@ -8830,13 +9594,31 @@ export function FloorplanPanel() {
         if (slabHit) {
           return slabHit.slab.id
         }
+
+        const ceilingHit = displayCeilingPolygons.find(({ polygon, holes }) =>
+          isPointInsidePolygonWithHoles(point, polygon, holes),
+        )
+        if (ceilingHit) {
+          return ceilingHit.ceiling.id
+        }
+
+        const fenceHit = fencePolygons.find(
+          ({ fence, polygon }) =>
+            isPointInsidePolygon(point, polygon) ||
+            getDistanceToWallSegment(point, fence.start, fence.end) <= floorplanWallHitTolerance,
+        )
+        if (fenceHit) {
+          return fenceHit.fence.id
+        }
       }
 
       return getItemHitId()
     },
     [
+      displayCeilingPolygons,
       displaySlabPolygons,
       displayWallPolygons,
+      fencePolygons,
       floorplanItemEntries,
       floorplanOpeningHitTolerance,
       floorplanStairEntries,
@@ -8868,17 +9650,35 @@ export function FloorplanPanel() {
       const slabIds = displaySlabPolygons
         .filter(({ polygon }) => doesPolygonIntersectSelectionBounds(polygon, bounds))
         .map(({ slab }) => slab.id)
+      const ceilingIds = displayCeilingPolygons
+        .filter(({ polygon }) => doesPolygonIntersectSelectionBounds(polygon, bounds))
+        .map(({ ceiling }) => ceiling.id)
+      const fenceIds = fencePolygons
+        .filter(({ polygon }) => doesPolygonIntersectSelectionBounds(polygon, bounds))
+        .map(({ fence }) => fence.id)
       const stairIds = floorplanStairEntries
         .filter(({ segments }) =>
           segments.some(({ polygon }) => doesPolygonIntersectSelectionBounds(polygon, bounds)),
         )
         .map(({ stair }) => stair.id)
 
-      return Array.from(new Set([...itemIds, ...wallIds, ...openingIds, ...slabIds, ...stairIds]))
+      return Array.from(
+        new Set([
+          ...itemIds,
+          ...wallIds,
+          ...openingIds,
+          ...slabIds,
+          ...ceilingIds,
+          ...fenceIds,
+          ...stairIds,
+        ]),
+      )
     },
     [
+      displayCeilingPolygons,
       displaySlabPolygons,
       displayWallPolygons,
+      fencePolygons,
       floorplanItemEntries,
       floorplanStairEntries,
       isFloorplanItemContextActive,
@@ -8934,6 +9734,22 @@ export function FloorplanPanel() {
     [syncDeleteHoveredId],
   )
 
+  const handleCeilingHoverChange = useCallback(
+    (ceilingId: CeilingNode['id'] | null) => {
+      setHoveredCeilingId(ceilingId)
+      syncDeleteHoveredId(ceilingId)
+    },
+    [syncDeleteHoveredId],
+  )
+
+  const handleFenceHoverChange = useCallback(
+    (fenceId: FenceNode['id'] | null) => {
+      setHoveredFenceId(fenceId)
+      syncDeleteHoveredId(fenceId)
+    },
+    [syncDeleteHoveredId],
+  )
+
   const handleItemHoverChange = useCallback(
     (itemId: ItemNode['id'] | null) => {
       setHoveredItemId(itemId)
@@ -8962,12 +9778,16 @@ export function FloorplanPanel() {
       handleOpeningHoverChange(null)
       handleWallHoverChange(null)
       handleSlabHoverChange(null)
+      handleCeilingHoverChange(null)
+      handleFenceHoverChange(null)
       handleStairHoverChange(null)
       handleZoneHoverChange(null)
       handleItemHoverChange(itemId)
     },
     [
       handleItemHoverChange,
+      handleCeilingHoverChange,
+      handleFenceHoverChange,
       handleOpeningHoverChange,
       handleSlabHoverChange,
       handleStairHoverChange,
@@ -8980,12 +9800,16 @@ export function FloorplanPanel() {
       handleItemHoverChange(null)
       handleOpeningHoverChange(null)
       handleSlabHoverChange(null)
+      handleCeilingHoverChange(null)
+      handleFenceHoverChange(null)
       handleWallHoverChange(null)
       handleZoneHoverChange(null)
       handleStairHoverChange(stairId)
     },
     [
       handleItemHoverChange,
+      handleCeilingHoverChange,
+      handleFenceHoverChange,
       handleOpeningHoverChange,
       handleSlabHoverChange,
       handleStairHoverChange,
@@ -9059,6 +9883,8 @@ export function FloorplanPanel() {
         | ItemNode['id']
         | OpeningNode['id']
         | SlabNode['id']
+        | CeilingNode['id']
+        | FenceNode['id']
         | StairNode['id']
         | ZoneNodeType['id'],
       eventType: 'click' | 'double-click',
@@ -9069,6 +9895,8 @@ export function FloorplanPanel() {
         !(
           node &&
           (node.type === 'slab' ||
+            node.type === 'ceiling' ||
+            node.type === 'fence' ||
             node.type === 'door' ||
             node.type === 'window' ||
             node.type === 'item' ||
@@ -9258,6 +10086,18 @@ export function FloorplanPanel() {
     },
     [emitFloorplanNodeClick],
   )
+  const handleCeilingSelect = useCallback(
+    (ceilingId: CeilingNode['id'], event: ReactMouseEvent<SVGElement>) => {
+      emitFloorplanNodeClick(ceilingId, 'click', event)
+    },
+    [emitFloorplanNodeClick],
+  )
+  const handleFenceSelect = useCallback(
+    (fenceId: FenceNode['id'], event: ReactMouseEvent<SVGElement>) => {
+      emitFloorplanNodeClick(fenceId, 'click', event)
+    },
+    [emitFloorplanNodeClick],
+  )
   const handleZoneSelect = useCallback(
     (zoneId: ZoneNodeType['id'], event: ReactMouseEvent<SVGElement>) => {
       emitFloorplanNodeClick(zoneId, 'click', event)
@@ -9294,6 +10134,12 @@ export function FloorplanPanel() {
   )
   const handleSlabDoubleClick = useCallback((slab: SlabNode) => {
     emitter.emit('camera-controls:focus', { nodeId: slab.id })
+  }, [])
+  const handleCeilingDoubleClick = useCallback((ceiling: CeilingNode) => {
+    emitter.emit('camera-controls:focus', { nodeId: ceiling.id })
+  }, [])
+  const handleFenceDoubleClick = useCallback((fence: FenceNode) => {
+    emitter.emit('camera-controls:focus', { nodeId: fence.id })
   }, [])
   const handleOpeningDoubleClick = useCallback((opening: OpeningNode) => {
     emitter.emit('camera-controls:focus', { nodeId: opening.id })
@@ -9487,6 +10333,36 @@ export function FloorplanPanel() {
       setSelection({ selectedIds: [] })
     },
     [deleteNode, selectedCeilingEntry, setSelection],
+  )
+  const handleSelectedFenceMove = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation()
+
+      const fence = selectedFenceEntry?.fence
+      if (!fence) {
+        return
+      }
+
+      sfxEmitter.emit('sfx:item-pick')
+      setMovingNode(fence)
+      setSelection({ selectedIds: [] })
+    },
+    [selectedFenceEntry, setMovingNode, setSelection],
+  )
+  const handleSelectedFenceDelete = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation()
+
+      const fence = selectedFenceEntry?.fence
+      if (!fence) {
+        return
+      }
+
+      sfxEmitter.emit('sfx:item-delete')
+      deleteNode(fence.id as AnyNodeId)
+      setSelection({ selectedIds: [] })
+    },
+    [deleteNode, selectedFenceEntry, setSelection],
   )
   const handleStairDoubleClick = useCallback(
     (stair: StairNode, event: ReactMouseEvent<SVGElement>) => {
@@ -9828,6 +10704,118 @@ export function FloorplanPanel() {
     },
     [displaySlabPolygons],
   )
+  const handleCeilingVertexPointerDown = useCallback(
+    (
+      ceilingId: CeilingNode['id'],
+      vertexIndex: number,
+      event: ReactPointerEvent<SVGCircleElement>,
+    ) => {
+      if (event.button !== 0) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+      setHoveredCeilingHandleId(null)
+
+      const ceilingEntry = displayCeilingPolygons.find(({ ceiling }) => ceiling.id === ceilingId)
+      const vertexPoint = ceilingEntry?.polygon[vertexIndex]
+      if (!(ceilingEntry && vertexPoint)) {
+        return
+      }
+
+      setCeilingBoundaryDraft({
+        ceilingId,
+        holes: ceilingEntry.holes.map((hole) => hole.map(toWallPlanPoint)),
+        polygon: ceilingEntry.polygon.map(toWallPlanPoint),
+      })
+      setCeilingVertexDragState({
+        pointerId: event.pointerId,
+        ceilingId,
+        vertexIndex,
+      })
+      setCursorPoint(toWallPlanPoint(vertexPoint))
+    },
+    [displayCeilingPolygons],
+  )
+  const handleCeilingVertexDoubleClick = useCallback(
+    (
+      ceilingId: CeilingNode['id'],
+      vertexIndex: number,
+      event: ReactPointerEvent<SVGCircleElement>,
+    ) => {
+      if (event.button !== 0) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+
+      const ceiling = ceilingById.get(ceilingId)
+      if (!(ceiling && ceiling.polygon.length > 3)) {
+        return
+      }
+
+      ceilingBoundaryDraftRef.current = null
+      clearCeilingBoundaryInteraction()
+
+      updateNode(ceilingId, {
+        polygon: ceiling.polygon.filter((_, index) => index !== vertexIndex),
+      })
+    },
+    [ceilingById, clearCeilingBoundaryInteraction, updateNode],
+  )
+  const handleCeilingMidpointPointerDown = useCallback(
+    (
+      ceilingId: CeilingNode['id'],
+      edgeIndex: number,
+      event: ReactPointerEvent<SVGCircleElement>,
+    ) => {
+      if (event.button !== 0) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+      setHoveredCeilingHandleId(null)
+
+      const ceilingEntry = displayCeilingPolygons.find(({ ceiling }) => ceiling.id === ceilingId)
+      if (!ceilingEntry) {
+        return
+      }
+
+      const basePolygon = ceilingEntry.polygon.map(toWallPlanPoint)
+      const startPoint = basePolygon[edgeIndex]
+      const endPoint = basePolygon[(edgeIndex + 1) % basePolygon.length]
+      if (!(startPoint && endPoint)) {
+        return
+      }
+
+      const insertedPoint: WallPlanPoint = [
+        (startPoint[0] + endPoint[0]) / 2,
+        (startPoint[1] + endPoint[1]) / 2,
+      ]
+      const insertIndex = edgeIndex + 1
+      const nextPolygon = [
+        ...basePolygon.slice(0, insertIndex),
+        insertedPoint,
+        ...basePolygon.slice(insertIndex),
+      ]
+
+      setCeilingBoundaryDraft({
+        ceilingId,
+        holes: ceilingEntry.holes.map((hole) => hole.map(toWallPlanPoint)),
+        polygon: nextPolygon,
+      })
+      setCeilingVertexDragState({
+        pointerId: event.pointerId,
+        ceilingId,
+        vertexIndex: insertIndex,
+      })
+      setCursorPoint(insertedPoint)
+    },
+    [displayCeilingPolygons],
+  )
   const handleSiteVertexPointerDown = useCallback(
     (siteId: SiteNode['id'], vertexIndex: number, event: ReactPointerEvent<SVGCircleElement>) => {
       if (event.button !== 0) {
@@ -10053,6 +11041,8 @@ export function FloorplanPanel() {
     handleItemHoverChange(null)
     handleWallHoverChange(null)
     handleSlabHoverChange(null)
+    handleCeilingHoverChange(null)
+    handleFenceHoverChange(null)
     handleStairHoverChange(null)
     handleZoneHoverChange(null)
     setHoveredEndpointId(null)
@@ -10066,6 +11056,8 @@ export function FloorplanPanel() {
   }, [
     emitFloorplanWallLeave,
     handleItemHoverChange,
+    handleCeilingHoverChange,
+    handleFenceHoverChange,
     handleOpeningHoverChange,
     handleSlabHoverChange,
     handleStairHoverChange,
@@ -10339,9 +11331,13 @@ export function FloorplanPanel() {
     handleOpeningHoverChange(null)
     handleWallHoverChange(null)
     handleSlabHoverChange(null)
+    handleCeilingHoverChange(null)
+    handleFenceHoverChange(null)
     handleZoneHoverChange(null)
     setHoveredEndpointId(null)
   }, [
+    handleCeilingHoverChange,
+    handleFenceHoverChange,
     handleOpeningHoverChange,
     handleSlabHoverChange,
     handleWallHoverChange,
@@ -10570,7 +11566,7 @@ export function FloorplanPanel() {
           : palette.cursor
   return (
     <div
-      className="pointer-events-auto flex h-full w-full flex-col overflow-hidden bg-background/95"
+      className="editor-floorplan-panel pointer-events-auto flex h-full w-full flex-col overflow-hidden"
       onPointerEnter={() => setFloorplanHovered(true)}
       onPointerLeave={() => {
         setFloorplanHovered(false)
@@ -10593,16 +11589,42 @@ export function FloorplanPanel() {
           movingOpeningType={movingOpeningType}
         />
         <FloorplanWallLengthInputOverlay
-          cursorPosition={floorplanCursorPosition}
-          input={wallLengthInput}
+          input={
+            wallLengthInput
+              ? {
+                  value: wallLengthInput.value,
+                  unitLabel: unit === 'imperial' ? 'ft' : 'm',
+                }
+              : null
+          }
           onCancel={() => setWallLengthInput(null)}
           onChange={(value) => setWallLengthInput({ value })}
           onSubmit={handleWallLengthInputSubmit}
-          unit={unit}
+          position={floorplanCursorPosition}
+        />
+        <FloorplanWallLengthInputOverlay
+          input={
+            wallEditNumericInput
+              ? {
+                  label: getNumericInputLabel(wallEditNumericInput.operation),
+                  unitLabel: unit === 'imperial' ? 'ft' : 'm',
+                  value: wallEditNumericInput.value,
+                }
+              : null
+          }
+          onCancel={handleWallEditNumericInputCancel}
+          onChange={handleWallEditNumericInputChange}
+          onSubmit={handleWallEditNumericInputSubmit}
+          position={
+            floorplanCursorPosition ??
+            selectedWallActionMenuPosition ??
+            floorplanCursorAnchorPosition ??
+            { x: 16, y: 16 }
+          }
         />
         {wallEditFeedback && (
           <div
-            className="pointer-events-none absolute z-30 max-w-64 rounded-lg border border-border/70 bg-background/95 px-3 py-2 font-medium text-foreground text-xs shadow-[0_10px_24px_-10px_rgba(15,23,42,0.45)]"
+            className="editor-floorplan-feedback pointer-events-none absolute z-30 max-w-64 rounded-md px-3 py-2 font-medium text-foreground text-xs"
             style={{
               left: floorplanCursorAnchorPosition?.x ?? 16,
               top: floorplanCursorAnchorPosition?.y ?? 16,
@@ -10884,6 +11906,23 @@ export function FloorplanPanel() {
                   vectorEffect="non-scaling-stroke"
                 />
               )}
+
+              {wallEditPreviewSegments.map((segment) => (
+                <line
+                  key={segment.id}
+                  pointerEvents="none"
+                  stroke={segment.isValid ? palette.draftStroke : palette.deleteStroke}
+                  strokeDasharray={segment.isValid ? '0.18 0.1' : '0.08 0.08'}
+                  strokeLinecap="round"
+                  strokeOpacity={segment.isValid ? 0.85 : 0.72}
+                  strokeWidth={segment.isValid ? '0.08' : '0.07'}
+                  vectorEffect="non-scaling-stroke"
+                  x1={toSvgX(segment.start[0])}
+                  x2={toSvgX(segment.end[0])}
+                  y1={toSvgY(segment.start[1])}
+                  y2={toSvgY(segment.end[1])}
+                />
+              ))}
 
               <FloorplanWallSketchFeedbackLayer
                 draftEnd={draftEnd}

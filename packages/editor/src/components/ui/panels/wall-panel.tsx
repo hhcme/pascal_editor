@@ -20,6 +20,7 @@ import { useCallback, useMemo } from 'react'
 import { sfxEmitter } from '../../../lib/sfx-bus'
 import useEditor from '../../../store/use-editor'
 import { ActionButton, ActionGroup } from '../controls/action-button'
+import { InspectorStat, InspectorSummary } from '../controls/inspector-summary'
 import { MaterialPicker } from '../controls/material-picker'
 import { PanelSection } from '../controls/panel-section'
 import { SliderControl } from '../controls/slider-control'
@@ -190,8 +191,15 @@ export function WallPanel() {
       icon="/icons/wall.png"
       onClose={handleClose}
       title={node.name || 'Wall'}
-      width={280}
+      width={340}
     >
+      <InspectorSummary>
+        <InspectorStat label="Length" value={`${length.toFixed(2)} m`} />
+        <InspectorStat label="Height" value={`${height.toFixed(2)} m`} />
+        <InspectorStat label="Thickness" value={`${thickness.toFixed(3)} m`} />
+        <InspectorStat label="Curve" value={`${curveOffset.toFixed(2)} m`} />
+      </InspectorSummary>
+
       <PanelSection title="Dimensions">
         <SliderControl
           label="Length"
@@ -239,7 +247,7 @@ export function WallPanel() {
 
       <PanelSection title="Material">
         {!materialTargetSide ? (
-          <div className="mb-3 rounded-lg border border-border/50 bg-background px-3 py-2 text-[11px] text-muted-foreground">
+          <div className="mb-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
             Click the wall face you want to edit. Materials now apply to one side at a time.
           </div>
         ) : null}

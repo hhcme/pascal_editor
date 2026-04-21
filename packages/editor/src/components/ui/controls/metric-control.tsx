@@ -211,8 +211,8 @@ export function MetricControl({
   return (
     <div
       className={cn(
-        'group flex h-10 w-full items-center justify-between rounded-lg border border-border/50 px-3 text-sm transition-colors',
-        isDragging ? 'bg-accent' : 'bg-background hover:bg-accent/70',
+        'group flex h-10 w-full items-center justify-between gap-3 rounded-md border border-border/55 px-3 text-sm transition-colors',
+        isDragging ? 'bg-primary/10 ring-1 ring-primary/20' : 'bg-card hover:bg-accent/55',
         className,
       )}
       onMouseEnter={() => setIsHovered(true)}
@@ -236,7 +236,7 @@ export function MetricControl({
           <div className="flex items-center">
             <input
               autoFocus
-              className="w-full bg-transparent p-0 text-right font-mono text-foreground outline-none selection:bg-primary/30"
+            className="w-full bg-transparent p-0 text-right font-mono text-foreground outline-none selection:bg-primary/30"
               onBlur={handleInputBlur}
               onChange={handleInputChange}
               onKeyDown={handleInputKeyDown}
@@ -250,7 +250,7 @@ export function MetricControl({
             className="flex w-full cursor-text items-center justify-end text-foreground transition-colors hover:text-primary"
             onClick={handleValueClick}
           >
-            <span className="font-mono tabular-nums tracking-tight">
+            <span className="font-mono tabular-nums">
               {Number(displayValue.toFixed(precision)).toFixed(precision)}
             </span>
             {displayUnit && <span className="ml-[1px] text-muted-foreground">{displayUnit}</span>}

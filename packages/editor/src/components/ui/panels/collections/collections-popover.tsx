@@ -100,7 +100,7 @@ export function CollectionsPopover({ nodeId, collectionIds, children }: Collecti
         <div className="flex items-center justify-between border-border/50 border-b px-3 py-2.5">
           <div className="flex items-center gap-1.5">
             <Layers className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="font-semibold text-foreground text-xs tracking-tight">
+            <span className="font-semibold text-foreground text-xs">
               Collections
             </span>
           </div>
@@ -175,7 +175,7 @@ export function CollectionsPopover({ nodeId, collectionIds, children }: Collecti
                 if (isDeleting) {
                   return (
                     <li
-                      className="flex items-center justify-between gap-2 bg-red-500/10 px-3 py-2.5"
+                      className="flex items-center justify-between gap-2 bg-destructive/5 px-3 py-2.5"
                       key={collection.id}
                     >
                       <span className="truncate text-foreground/80 text-xs">
@@ -183,7 +183,7 @@ export function CollectionsPopover({ nodeId, collectionIds, children }: Collecti
                       </span>
                       <div className="flex shrink-0 items-center gap-1">
                         <button
-                          className="rounded-md bg-red-500/20 px-2 py-0.5 font-medium text-[11px] text-red-400 transition-colors hover:bg-red-500/30"
+                          className="rounded-md bg-destructive/10 px-2 py-0.5 font-medium text-[11px] text-destructive transition-colors hover:bg-destructive/15"
                           onClick={() => {
                             deleteCollection(collection.id)
                             setDeletingId(null)

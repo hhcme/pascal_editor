@@ -333,7 +333,7 @@ export function DropIndicatorLine() {
   return (
     <motion.div
       animate={{ height: 2, opacity: 1 }}
-      className="pointer-events-none mx-3 rounded-full bg-blue-500"
+      className="pointer-events-none mx-3 rounded-full bg-primary"
       exit={{ height: 0, opacity: 0 }}
       initial={{ height: 0, opacity: 0 }}
       transition={{ type: 'spring', bounce: 0.3, duration: 0.25 }}

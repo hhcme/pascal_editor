@@ -169,11 +169,11 @@ export const TreeNodeWrapper = forwardRef<HTMLDivElement, TreeNodeWrapperProps>(
       <div data-treenode-id={nodeId} ref={ref}>
         <div
           className={cn(
-            'group/row relative flex h-8 cursor-pointer select-none items-center border-border/50 border-r border-r-transparent border-b text-sm transition-all duration-200',
+            'group/row relative flex h-9 cursor-pointer select-none items-center border-border/50 border-r border-r-transparent border-b text-sm transition-all duration-200',
             isSelected
-              ? 'border-r-3 border-r-white bg-accent/50 text-foreground'
+              ? 'border-r-[3px] border-r-primary bg-primary/10 text-foreground'
               : isDropTarget
-                ? 'bg-blue-500/15 text-foreground ring-1 ring-blue-500/40 ring-inset'
+                ? 'bg-primary/15 text-foreground ring-1 ring-primary/40 ring-inset'
                 : isHovered
                   ? 'bg-accent/30 text-foreground'
                   : 'text-muted-foreground hover:bg-accent/30 hover:text-foreground',
@@ -210,11 +210,12 @@ export const TreeNodeWrapper = forwardRef<HTMLDivElement, TreeNodeWrapperProps>(
           )}
 
           <button
-            className="z-10 flex h-4 w-4 shrink-0 items-center justify-center bg-inherit"
+            className="z-10 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-inherit text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             onClick={(e) => {
               e.stopPropagation()
               onToggle()
             }}
+            type="button"
           >
             {hasChildren ? (
               <motion.div
@@ -230,7 +231,7 @@ export const TreeNodeWrapper = forwardRef<HTMLDivElement, TreeNodeWrapperProps>(
             <span
               className={cn(
                 'flex h-4 w-4 shrink-0 items-center justify-center transition-all duration-200',
-                !isSelected && 'opacity-60 grayscale',
+                isSelected ? 'opacity-100' : 'opacity-70 grayscale group-hover/row:opacity-90',
               )}
             >
               {icon}

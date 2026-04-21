@@ -57,6 +57,7 @@ function useLevelScans(): ScanNode[] {
 function UploadButton() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const levelId = useViewer((s) => s.selection.levelId)
+  const projectId = useViewer((s) => s.projectId)
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -76,13 +77,16 @@ function UploadButton() {
 
       const type = isScan ? 'scan' : 'guide'
 
-      const projectId = window.location.pathname.split('/editor/')[1]?.split('/')[0]
-      if (!projectId) return
+      if (!projectId) {
+        useUploadStore.getState().startUpload(levelId, type, file.name)
+        useUploadStore.getState().setError(levelId, 'No active project. Please open a project first.')
+        return
+      }
 
       useUploadStore.getState().clearUpload(levelId)
       uploadHandler(projectId, levelId, file, type)
     },
-    [levelId],
+    [levelId, projectId],
   )
 
   return (
@@ -133,8 +137,8 @@ function GuidesControl() {
           className={cn(
             'rounded-r-none p-0',
             showGuides
-              ? 'bg-white/15'
-              : 'opacity-60 grayscale hover:bg-white/5 hover:opacity-100 hover:grayscale-0',
+              ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
+              : 'opacity-70 grayscale hover:bg-accent hover:opacity-100 hover:grayscale-0',
           )}
           label={`Guides: ${showGuides ? 'Visible' : 'Hidden'}`}
           onClick={() => setShowGuides(!showGuides)}
@@ -147,7 +151,7 @@ function GuidesControl() {
               className="h-[28px] w-[28px] object-contain"
               src="/icons/floorplan.png"
             />
-            <span className="absolute -right-1.5 -bottom-1 min-w-[14px] rounded-full bg-white/20 px-[3px] text-center font-medium text-[9px] text-white/70 leading-[14px]">
+            <span className="absolute -right-1.5 -bottom-1 min-w-[14px] rounded-full bg-primary/15 px-[3px] text-center font-medium text-[9px] text-primary leading-[14px]">
               {guides.length}
             </span>
           </div>
@@ -159,14 +163,14 @@ function GuidesControl() {
             aria-expanded={isOpen}
             aria-label="Guide image settings"
             className={cn(
-              'flex h-11 w-6 items-center justify-center rounded-r-lg transition-colors',
+              'flex h-10 w-6 items-center justify-center rounded-r-md transition-colors',
               showGuides
                 ? isOpen
-                  ? 'bg-white/10'
-                  : 'bg-white/5 hover:bg-white/8'
+                  ? 'bg-primary/10 text-primary'
+                  : 'bg-primary/5 hover:bg-primary/10'
                 : isOpen
-                  ? 'bg-white/8'
-                  : 'opacity-60 hover:bg-white/5 hover:opacity-100',
+                  ? 'bg-accent'
+                  : 'opacity-70 hover:bg-accent hover:opacity-100',
             )}
             type="button"
           >
@@ -177,7 +181,7 @@ function GuidesControl() {
 
       <PopoverContent
         align="center"
-        className="w-72 rounded-xl border-border/45 bg-background/96 p-3 shadow-[0_14px_28px_-18px_rgba(15,23,42,0.55),0_6px_16px_-10px_rgba(15,23,42,0.2)] backdrop-blur-xl"
+        className="w-72 rounded-lg border-border/45 bg-background/96 p-3 shadow-[0_14px_28px_-18px_rgba(15,23,42,0.55),0_6px_16px_-10px_rgba(15,23,42,0.2)] backdrop-blur-xl"
         side="top"
         sideOffset={14}
       >
@@ -273,8 +277,8 @@ function ScansControl() {
           className={cn(
             'rounded-r-none p-0',
             showScans
-              ? 'bg-white/15'
-              : 'opacity-60 grayscale hover:bg-white/5 hover:opacity-100 hover:grayscale-0',
+              ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
+              : 'opacity-70 grayscale hover:bg-accent hover:opacity-100 hover:grayscale-0',
           )}
           label={`Scans: ${showScans ? 'Visible' : 'Hidden'}`}
           onClick={() => setShowScans(!showScans)}
@@ -283,7 +287,7 @@ function ScansControl() {
         >
           <div className="relative">
             <img alt="Scans" className="h-[28px] w-[28px] object-contain" src="/icons/mesh.png" />
-            <span className="absolute -right-1.5 -bottom-1 min-w-[14px] rounded-full bg-white/20 px-[3px] text-center font-medium text-[9px] text-white/70 leading-[14px]">
+            <span className="absolute -right-1.5 -bottom-1 min-w-[14px] rounded-full bg-primary/15 px-[3px] text-center font-medium text-[9px] text-primary leading-[14px]">
               {scans.length}
             </span>
           </div>
@@ -295,14 +299,14 @@ function ScansControl() {
             aria-expanded={isOpen}
             aria-label="Scan settings"
             className={cn(
-              'flex h-11 w-6 items-center justify-center rounded-r-lg transition-colors',
+              'flex h-10 w-6 items-center justify-center rounded-r-md transition-colors',
               showScans
                 ? isOpen
-                  ? 'bg-white/10'
-                  : 'bg-white/5 hover:bg-white/8'
+                  ? 'bg-primary/10 text-primary'
+                  : 'bg-primary/5 hover:bg-primary/10'
                 : isOpen
-                  ? 'bg-white/8'
-                  : 'opacity-60 hover:bg-white/5 hover:opacity-100',
+                  ? 'bg-accent'
+                  : 'opacity-70 hover:bg-accent hover:opacity-100',
             )}
             type="button"
           >
@@ -313,7 +317,7 @@ function ScansControl() {
 
       <PopoverContent
         align="center"
-        className="w-72 rounded-xl border-border/45 bg-background/96 p-3 shadow-[0_14px_28px_-18px_rgba(15,23,42,0.55),0_6px_16px_-10px_rgba(15,23,42,0.2)] backdrop-blur-xl"
+        className="w-72 rounded-lg border-border/45 bg-background/96 p-3 shadow-[0_14px_28px_-18px_rgba(15,23,42,0.55),0_6px_16px_-10px_rgba(15,23,42,0.2)] backdrop-blur-xl"
         side="top"
         sideOffset={14}
       >

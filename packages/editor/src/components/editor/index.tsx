@@ -22,8 +22,8 @@ import {
 } from '../../lib/scene'
 import { initSFXBus } from '../../lib/sfx-bus'
 import useEditor from '../../store/use-editor'
-import { CeilingSystem } from '../systems/ceiling/ceiling-system'
 import { CeilingSelectionAffordanceSystem } from '../systems/ceiling/ceiling-selection-affordance-system'
+import { CeilingSystem } from '../systems/ceiling/ceiling-system'
 import { RoofEditSystem } from '../systems/roof/roof-edit-system'
 import { StairEditSystem } from '../systems/stair/stair-edit-system'
 import { ZoneLabelEditorSystem } from '../systems/zone/zone-label-editor-system'
@@ -140,7 +140,7 @@ export interface EditorProps {
 function EditorSceneCrashFallback() {
   return (
     <div className="fixed inset-0 z-80 flex items-center justify-center bg-background/95 p-4 text-foreground">
-      <div className="w-full max-w-md rounded-2xl border border-border/60 bg-background p-6 shadow-xl">
+      <div className="w-full max-w-md rounded-lg border border-border/60 bg-background p-6 shadow-xl">
         <h2 className="font-semibold text-lg">The editor scene failed to render</h2>
         <p className="mt-2 text-muted-foreground text-sm">
           You can retry the scene or return home without reloading the whole app shell.
@@ -441,7 +441,7 @@ function ViewerCanvasControlsHint({
     <div className="pointer-events-none absolute top-14 left-1/2 z-40 max-w-[calc(100%-2rem)] -translate-x-1/2">
       <section
         aria-label="Camera controls hint"
-        className="pointer-events-auto flex items-start gap-3 rounded-2xl border border-border/35 bg-background/90 px-3.5 py-2.5 shadow-[0_22px_40px_-28px_rgba(15,23,42,0.65),0_10px_24px_-20px_rgba(15,23,42,0.55)] backdrop-blur-xl"
+        className="editor-floating-panel pointer-events-auto flex items-start gap-3 rounded-lg px-3.5 py-2.5"
       >
         <div className="grid min-w-0 flex-1 grid-cols-3 items-start divide-x divide-border/18">
           {hints.map((hint) => (
@@ -485,7 +485,7 @@ function DeleteCursorBadge({ position }: { position: { x: number; y: number } })
       }}
     >
       <div
-        className="flex h-8 w-8 items-center justify-center rounded-xl border border-border/60 bg-background/95 shadow-[0_8px_16px_-4px_rgba(15,23,42,0.16),0_4px_8px_-4px_rgba(15,23,42,0.12)]"
+        className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-background/95 shadow-[0_8px_16px_-4px_rgba(15,23,42,0.16),0_4px_8px_-4px_rgba(15,23,42,0.12)]"
         style={{
           boxShadow: `0 8px 16px -4px rgba(0,0,0,0.3), 0 4px 8px -4px rgba(0,0,0,0.2), 0 0 18px ${DELETE_CURSOR_BADGE_COLOR}22`,
         }}

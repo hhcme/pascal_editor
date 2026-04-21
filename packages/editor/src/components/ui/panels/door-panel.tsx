@@ -15,6 +15,7 @@ import { usePresetsAdapter } from '../../../contexts/presets-context'
 import { sfxEmitter } from '../../../lib/sfx-bus'
 import useEditor from '../../../store/use-editor'
 import { ActionButton, ActionGroup } from '../controls/action-button'
+import { InspectorStat, InspectorSummary } from '../controls/inspector-summary'
 import { MaterialPicker } from '../controls/material-picker'
 import { MetricControl } from '../controls/metric-control'
 import { PanelSection } from '../controls/panel-section'
@@ -194,8 +195,15 @@ export function DoorPanel() {
       icon="/icons/door.png"
       onClose={handleClose}
       title={node.name || 'Door'}
-      width={320}
+      width={340}
     >
+      <InspectorSummary>
+        <InspectorStat label="Width" value={`${node.width.toFixed(2)} m`} />
+        <InspectorStat label="Height" value={`${node.height.toFixed(2)} m`} />
+        <InspectorStat label="Frames" value={node.segments.length} />
+        <InspectorStat label="Side" value={node.side} />
+      </InspectorSummary>
+
       {/* Presets strip */}
       <div className="border-border/30 border-b px-3 pt-2.5 pb-1.5">
         <PresetsPopover
@@ -210,7 +218,7 @@ export function DoorPanel() {
           tabs={adapter.tabs}
           type="door"
         >
-          <button className="flex w-full items-center gap-2 rounded-lg border border-border/50 bg-background px-3 py-2 font-medium text-muted-foreground text-xs transition-colors hover:bg-accent/70 hover:text-foreground">
+          <button className="flex w-full items-center gap-2 rounded-md border border-border/55 bg-card px-3 py-2 font-medium text-muted-foreground text-xs transition-colors hover:bg-accent/55 hover:text-foreground">
             <BookMarked className="h-3.5 w-3.5 shrink-0" />
             <span>Presets</span>
           </button>
@@ -316,7 +324,7 @@ export function DoorPanel() {
       <PanelSection title="Swing">
         <div className="flex flex-col gap-2 px-1 pb-1">
           <div className="space-y-1">
-            <span className="font-medium text-[10px] text-muted-foreground/80 uppercase tracking-wider">
+            <span className="font-semibold text-[11px] text-muted-foreground">
               Hinges Side
             </span>
             <SegmentedControl
@@ -329,7 +337,7 @@ export function DoorPanel() {
             />
           </div>
           <div className="space-y-1">
-            <span className="font-medium text-[10px] text-muted-foreground/80 uppercase tracking-wider">
+            <span className="font-semibold text-[11px] text-muted-foreground">
               Direction
             </span>
             <SegmentedControl
@@ -385,7 +393,7 @@ export function DoorPanel() {
               value={Math.round(node.handleHeight * 100) / 100}
             />
             <div className="space-y-1">
-              <span className="font-medium text-[10px] text-muted-foreground/80 uppercase tracking-wider">
+              <span className="font-semibold text-[11px] text-muted-foreground">
                 Handle Side
               </span>
               <SegmentedControl
@@ -587,10 +595,10 @@ export function DoorPanel() {
             onClick={handleDuplicate}
           />
           <ActionButton
-            className="hover:bg-red-500/20"
-            icon={<Trash2 className="h-3.5 w-3.5 text-red-400" />}
+            icon={<Trash2 className="h-3.5 w-3.5" />}
             label="Delete"
             onClick={handleDelete}
+            tone="danger"
           />
         </ActionGroup>
       </PanelSection>

@@ -8,6 +8,7 @@ import { sfxEmitter } from '../../../lib/sfx-bus'
 import { cn } from '../../../lib/utils'
 import useEditor from '../../../store/use-editor'
 import { ActionButton, ActionGroup } from '../controls/action-button'
+import { InspectorStat, InspectorSummary } from '../controls/inspector-summary'
 import { PanelSection } from '../controls/panel-section'
 import { SliderControl } from '../controls/slider-control'
 import { CollectionsPopover } from './collections/collections-popover'
@@ -76,14 +77,22 @@ export function ItemPanel() {
   }, [selectedId, deleteNode, setSelection])
 
   if (!(node && node.type === 'item' && selectedId)) return null
+  const [itemWidth, itemHeight, itemDepth] = getScaledDimensions(node)
 
   return (
     <PanelWrapper
       icon={node.asset.thumbnail || '/icons/furniture.png'}
       onClose={handleClose}
       title={node.name || node.asset.name}
-      width={300}
+      width={340}
     >
+      <InspectorSummary>
+        <InspectorStat label="Width" value={`${itemWidth.toFixed(2)} m`} />
+        <InspectorStat label="Height" value={`${itemHeight.toFixed(2)} m`} />
+        <InspectorStat label="Depth" value={`${itemDepth.toFixed(2)} m`} />
+        <InspectorStat label="Attach" value={node.asset.attachTo ?? 'free'} />
+      </InspectorSummary>
+
       <PanelSection title="Position">
         <SliderControl
           label={
@@ -177,7 +186,7 @@ export function ItemPanel() {
 
       <PanelSection title="Scale">
         <div className="flex items-center justify-between px-2 pb-2">
-          <span className="font-medium text-[10px] text-muted-foreground/80 uppercase tracking-wider">
+          <span className="font-semibold text-[11px] text-muted-foreground">
             Uniform Scale
           </span>
           <button
@@ -263,14 +272,10 @@ export function ItemPanel() {
       <PanelSection title="Info">
         <div className="flex items-center justify-between px-2 py-1 text-muted-foreground text-sm">
           <span>Dimensions</span>
-          {(() => {
-            const [w, h, d] = getScaledDimensions(node)
-            return (
-              <span className="font-mono text-foreground">
-                {Math.round(w * 100) / 100}×{Math.round(h * 100) / 100}×{Math.round(d * 100) / 100}
-              </span>
-            )
-          })()}
+          <span className="font-mono text-foreground">
+            {Math.round(itemWidth * 100) / 100}×{Math.round(itemHeight * 100) / 100}×
+            {Math.round(itemDepth * 100) / 100}
+          </span>
         </div>
       </PanelSection>
 
@@ -294,10 +299,10 @@ export function ItemPanel() {
             onClick={handleDuplicate}
           />
           <ActionButton
-            className="hover:bg-red-500/20"
-            icon={<Trash2 className="h-3.5 w-3.5 text-red-400" />}
+            icon={<Trash2 className="h-3.5 w-3.5" />}
             label="Delete"
             onClick={handleDelete}
+            tone="danger"
           />
         </ActionGroup>
       </PanelSection>

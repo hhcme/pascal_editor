@@ -19,6 +19,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { sfxEmitter } from '../../../lib/sfx-bus'
 import useEditor from '../../../store/use-editor'
 import { ActionButton, ActionGroup } from '../controls/action-button'
+import { InspectorStat, InspectorSummary } from '../controls/inspector-summary'
 import { MaterialPicker } from '../controls/material-picker'
 import { PanelSection } from '../controls/panel-section'
 import { SliderControl } from '../controls/slider-control'
@@ -196,13 +197,20 @@ export function RoofPanel() {
       icon="/icons/roof.png"
       onClose={handleClose}
       title={node.name || 'Roof'}
-      width={300}
+      width={340}
     >
+      <InspectorSummary>
+        <InspectorStat label="Segments" value={segments.length} />
+        <InspectorStat label="Type" value={segments[0]?.roofType ?? 'mixed'} />
+        <InspectorStat label="Width" value={`${(segments[0]?.width ?? 0).toFixed(2)} m`} />
+        <InspectorStat label="Depth" value={`${(segments[0]?.depth ?? 0).toFixed(2)} m`} />
+      </InspectorSummary>
+
       <PanelSection title="Segments">
         <div className="flex flex-col gap-1">
           {segments.map((seg, i) => (
             <button
-              className="flex items-center justify-between rounded-lg border border-border/50 bg-background px-3 py-2 text-foreground text-sm transition-colors hover:bg-accent/70"
+              className="flex items-center justify-between rounded-md border border-border/55 bg-card px-3 py-2 text-foreground text-sm transition-colors hover:bg-accent/55"
               key={seg.id}
               onClick={() => handleSelectSegment(seg.id)}
               type="button"
@@ -303,16 +311,16 @@ export function RoofPanel() {
             onClick={handleDuplicate}
           />
           <ActionButton
-            className="hover:bg-red-500/20"
-            icon={<Trash2 className="h-3.5 w-3.5 text-red-400" />}
+            icon={<Trash2 className="h-3.5 w-3.5" />}
             label="Delete"
             onClick={handleDelete}
+            tone="danger"
           />
         </ActionGroup>
       </PanelSection>
       <PanelSection title="Material">
         {!materialTargetRole ? (
-          <div className="mb-3 rounded-lg border border-border/50 bg-background px-3 py-2 text-[11px] text-muted-foreground">
+          <div className="mb-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
             Click the roof surface you want to edit. Materials apply to one target at a time.
           </div>
         ) : null}

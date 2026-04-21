@@ -26,8 +26,8 @@ export function ActionMenu({ className }: { className?: string }) {
     <TooltipProvider>
       <motion.div
         className={cn(
-          'fixed bottom-6 left-1/2 z-50 -translate-x-1/2',
-          'rounded-2xl border border-border bg-background/90 shadow-2xl backdrop-blur-md',
+          'editor-command-bar fixed bottom-5 left-1/2 z-50 -translate-x-1/2 overflow-hidden rounded-lg',
+          'max-[700px]:right-3 max-[700px]:bottom-20 max-[700px]:left-3 max-[700px]:w-[calc(100dvw-24px)] max-[700px]:max-w-[calc(100dvw-24px)] max-[700px]:translate-x-0 max-[700px]:overflow-x-auto',
           'transition-colors duration-200 ease-out',
           className,
         )}
@@ -78,8 +78,7 @@ export function ActionMenu({ className }: { className?: string }) {
                 borderBottomWidth: 1,
               }}
               className={cn(
-                'overflow-hidden border-border',
-                'max-h-20 border-b px-2 py-2 opacity-100',
+                'max-h-20 overflow-hidden border-border border-b bg-muted/60 px-2 py-2 opacity-100',
               )}
               exit={{
                 opacity: 0,
@@ -115,7 +114,9 @@ export function ActionMenu({ className }: { className?: string }) {
                 paddingBottom: 8,
                 borderBottomWidth: 1,
               }}
-              className={cn('max-h-20 overflow-hidden border-border border-b px-2 py-2')}
+              className={cn(
+                'max-h-20 overflow-hidden border-border border-b bg-muted/60 px-2 py-2',
+              )}
               exit={{
                 opacity: 0,
                 maxHeight: 0,
@@ -139,11 +140,11 @@ export function ActionMenu({ className }: { className?: string }) {
           )}
         </AnimatePresence>
         {/* Control Mode Row - Always visible, centered */}
-        <div className="flex items-center justify-center gap-1 px-2 py-1.5">
+        <div className="flex items-center justify-center gap-1 px-2 py-2">
           <ControlModes />
-          <div className="mx-1 h-5 w-px bg-border" />
+          <div className="mx-1 h-6 w-px bg-border" />
           <ViewToggles />
-          <div className="mx-1 h-5 w-px bg-border" />
+          <div className="mx-1 h-6 w-px bg-border" />
           <CameraActions />
         </div>
       </motion.div>

@@ -21,7 +21,7 @@ export function CameraActions() {
     <div className="flex items-center gap-1">
       {/* Orbit CCW */}
       <ActionButton
-        className="group hover:bg-white/5"
+        className="group hover:bg-accent"
         label="Orbit Left"
         onClick={orbitCCW}
         size="icon"
@@ -38,7 +38,7 @@ export function CameraActions() {
 
       {/* Orbit CW */}
       <ActionButton
-        className="group hover:bg-white/5"
+        className="group hover:bg-accent"
         label="Orbit Right"
         onClick={orbitCW}
         size="icon"
@@ -55,7 +55,7 @@ export function CameraActions() {
 
       {/* Top View */}
       <ActionButton
-        className="group hover:bg-white/5"
+        className="group hover:bg-accent"
         label="Top View"
         onClick={goToTopView}
         size="icon"

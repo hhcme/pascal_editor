@@ -15,6 +15,7 @@ import { usePresetsAdapter } from '../../../contexts/presets-context'
 import { sfxEmitter } from '../../../lib/sfx-bus'
 import useEditor from '../../../store/use-editor'
 import { ActionButton, ActionGroup } from '../controls/action-button'
+import { InspectorStat, InspectorSummary } from '../controls/inspector-summary'
 import { MaterialPicker } from '../controls/material-picker'
 import { MetricControl } from '../controls/metric-control'
 import { PanelSection } from '../controls/panel-section'
@@ -192,8 +193,15 @@ export function WindowPanel() {
       icon="/icons/window.png"
       onClose={handleClose}
       title={node.name || 'Window'}
-      width={320}
+      width={340}
     >
+      <InspectorSummary>
+        <InspectorStat label="Width" value={`${node.width.toFixed(2)} m`} />
+        <InspectorStat label="Height" value={`${node.height.toFixed(2)} m`} />
+        <InspectorStat label="Grid" value={`${numCols}×${numRows}`} />
+        <InspectorStat label="Sill" value={node.sill ? 'on' : 'off'} />
+      </InspectorSummary>
+
       {/* Presets strip */}
       <div className="border-border/30 border-b px-3 pt-2.5 pb-1.5">
         <PresetsPopover
@@ -208,7 +216,7 @@ export function WindowPanel() {
           tabs={adapter.tabs}
           type="window"
         >
-          <button className="flex w-full items-center gap-2 rounded-lg border border-border/50 bg-background px-3 py-2 font-medium text-muted-foreground text-xs transition-colors hover:bg-accent/70 hover:text-foreground">
+          <button className="flex w-full items-center gap-2 rounded-md border border-border/55 bg-card px-3 py-2 font-medium text-muted-foreground text-xs transition-colors hover:bg-accent/55 hover:text-foreground">
             <BookMarked className="h-3.5 w-3.5 shrink-0" />
             <span>Presets</span>
           </button>
@@ -320,7 +328,7 @@ export function WindowPanel() {
 
         {numCols > 1 && (
           <div className="mt-2 flex flex-col gap-1">
-            <div className="mb-1 px-1 font-medium text-[10px] text-muted-foreground/80 uppercase tracking-wider">
+            <div className="mb-1 px-1 font-semibold text-[11px] text-muted-foreground">
               Col Widths
             </div>
             {normCols.map((ratio, i) => (
@@ -353,7 +361,7 @@ export function WindowPanel() {
 
         {numRows > 1 && (
           <div className="mt-2 flex flex-col gap-1">
-            <div className="mb-1 px-1 font-medium text-[10px] text-muted-foreground/80 uppercase tracking-wider">
+            <div className="mb-1 px-1 font-semibold text-[11px] text-muted-foreground">
               Row Heights
             </div>
             {normRows.map((ratio, i) => (
@@ -424,10 +432,10 @@ export function WindowPanel() {
             onClick={handleDuplicate}
           />
           <ActionButton
-            className="hover:bg-red-500/20"
-            icon={<Trash2 className="h-3.5 w-3.5 text-red-400" />}
+            icon={<Trash2 className="h-3.5 w-3.5" />}
             label="Delete"
             onClick={handleDelete}
+            tone="danger"
           />
         </ActionGroup>
       </PanelSection>

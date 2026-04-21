@@ -193,8 +193,8 @@ export function SliderControl({
   return (
     <div
       className={cn(
-        'group flex h-7 w-full select-none items-center rounded-lg px-2 transition-colors',
-        isDragging ? 'bg-white/5' : 'hover:bg-white/5',
+        'group flex h-7 w-full select-none items-center rounded-md px-2 transition-colors',
+        isDragging ? 'bg-accent' : 'hover:bg-accent/70',
         className,
       )}
       onMouseEnter={() => setIsHovered(true)}
@@ -247,7 +247,7 @@ export function SliderControl({
             className="flex cursor-text items-center text-foreground/60 transition-colors hover:text-foreground"
             onClick={handleValueClick}
           >
-            <span className="font-mono tabular-nums tracking-tight" suppressHydrationWarning>
+            <span className="font-mono tabular-nums" suppressHydrationWarning>
               {Number(value.toFixed(precision)).toFixed(precision)}
             </span>
             {unit && <span className="ml-[1px] text-muted-foreground">{unit}</span>}

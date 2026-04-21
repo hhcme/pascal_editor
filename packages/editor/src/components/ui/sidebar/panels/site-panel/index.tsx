@@ -80,6 +80,33 @@ function useSiteNode(): SiteNode | null {
   )
 }
 
+function TreeEmptyState({
+  title,
+  actionLabel,
+  onAction,
+}: {
+  title: string
+  actionLabel?: string
+  onAction?: () => void
+}) {
+  return (
+    <div className="px-3 py-3">
+      <div className="rounded-md border border-dashed border-border/70 bg-muted/30 px-3 py-4 text-center text-muted-foreground text-xs">
+        <span>{title}</span>
+        {actionLabel && onAction ? (
+          <button
+            className="ml-1 cursor-pointer font-medium text-primary hover:underline"
+            onClick={onAction}
+            type="button"
+          >
+            {actionLabel}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 const PropertyLineSection = memo(function PropertyLineSection() {
   const siteNode = useSiteNode()
   const updateNode = useScene((state) => state.updateNode)
@@ -387,6 +414,14 @@ interface LevelReferencesProps {
   onDeleteAsset?: (projectId: string, url: string) => void
 }
 
+function isDeletableAssetUrl(projectId: string, url: string): boolean {
+  return (
+    url.startsWith(`/__findtop__/projects/${encodeURIComponent(projectId)}/assets/`) ||
+    url.startsWith('http://') ||
+    url.startsWith('https://')
+  )
+}
+
 const LevelReferences = memo(function LevelReferences({
   levelId,
   isLastLevel,
@@ -425,6 +460,14 @@ const LevelReferences = memo(function LevelReferences({
     if (!projectId) {
       useUploadStore.getState().startUpload(levelId, 'scan', file.name)
       useUploadStore.getState().setError(levelId, 'No active project. Please open a project first.')
+      return
+    }
+
+    if (!onUploadAsset) {
+      useUploadStore.getState().startUpload(levelId, 'scan', file.name)
+      useUploadStore
+        .getState()
+        .setError(levelId, 'Uploads are unavailable in this environment.')
       return
     }
 
@@ -468,7 +511,7 @@ const LevelReferences = memo(function LevelReferences({
     if (
       projectId &&
       refNode?.url &&
-      (refNode.url.startsWith('http://') || refNode.url.startsWith('https://'))
+      isDeletableAssetUrl(projectId, refNode.url)
     ) {
       onDeleteAsset?.(projectId, refNode.url)
     }
@@ -606,7 +649,7 @@ const LevelItem = memo(function LevelItem({
         className={cn(
           'group/level relative flex h-8 cursor-pointer select-none items-center border-border/50 border-b pr-2 transition-all duration-200',
           isSelected
-            ? 'bg-accent/50 text-foreground'
+            ? 'bg-primary/10 text-foreground'
             : 'text-muted-foreground hover:bg-accent/30 hover:text-foreground',
         )}
         onClick={handleSelect}
@@ -625,7 +668,7 @@ const LevelItem = memo(function LevelItem({
         <div
           className={cn(
             'pointer-events-none absolute top-[10px] left-[32px] z-10 h-[12px] w-4 transition-colors duration-200',
-            isSelected ? 'bg-accent/50' : 'bg-background group-hover/level:bg-accent/30',
+            isSelected ? 'bg-primary/10' : 'bg-background group-hover/level:bg-accent/30',
           )}
         />
         {/* Line down to children */}
@@ -846,12 +889,14 @@ const LevelsSection = memo(function LevelsSection({
           <span className="truncate">Add level</span>
         </button>
         {levels.length === 0 && (
-          <div className="relative flex h-8 select-none items-center border-border/50 border-b py-0 pr-2 pl-[38px] text-muted-foreground text-xs">
+          <div className="relative flex h-9 select-none items-center border-border/50 border-b py-0 pr-2 pl-[38px] text-muted-foreground text-xs">
             {/* Vertical tree line */}
             <div className="pointer-events-none absolute top-0 bottom-1/2 left-[21px] w-px bg-border/50" />
             {/* Horizontal branch line */}
             <div className="pointer-events-none absolute top-1/2 left-[21px] h-px w-[11px] bg-border/50" />
-            No levels yet
+            <span className="rounded-md border border-dashed border-border/70 bg-muted/30 px-2 py-1">
+              No levels yet
+            </span>
           </div>
         )}
         {[...levels].reverse().map((level, index) => (
@@ -888,12 +933,12 @@ const LayerToggle = memo(function LayerToggle() {
           : 'none'
 
   return (
-    <div className="relative flex items-center gap-1 border-border/50 border-b bg-muted/70 p-1">
+    <div className="relative flex items-center gap-1 border-border/50 border-b bg-muted/70 p-1.5">
       <button
         className={cn(
-          'relative flex flex-1 cursor-pointer flex-col items-center justify-center rounded-md py-2 font-medium text-[10px] transition-all duration-200',
+          'relative flex flex-1 cursor-pointer flex-col items-center justify-center rounded-md py-2 font-semibold text-[10px] transition-all duration-200',
           activeTab === 'structure'
-            ? 'text-foreground'
+            ? 'text-primary'
             : 'text-muted-foreground hover:bg-background/80 hover:text-foreground',
         )}
         onClick={() => {
@@ -903,7 +948,7 @@ const LayerToggle = memo(function LayerToggle() {
       >
         {activeTab === 'structure' && (
           <motion.div
-            className="absolute inset-0 rounded-md bg-background shadow-sm ring-1 ring-border/50"
+            className="absolute inset-0 rounded-md bg-background shadow-sm ring-1 ring-primary/20"
             layoutId="layerToggleActiveBg"
             transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }}
           />
@@ -928,9 +973,9 @@ const LayerToggle = memo(function LayerToggle() {
 
       <button
         className={cn(
-          'relative flex flex-1 cursor-pointer flex-col items-center justify-center rounded-md py-2 font-medium text-[10px] transition-all duration-200',
+          'relative flex flex-1 cursor-pointer flex-col items-center justify-center rounded-md py-2 font-semibold text-[10px] transition-all duration-200',
           activeTab === 'furnish'
-            ? 'text-foreground'
+            ? 'text-primary'
             : 'text-muted-foreground hover:bg-background/80 hover:text-foreground',
         )}
         onClick={() => {
@@ -939,7 +984,7 @@ const LayerToggle = memo(function LayerToggle() {
       >
         {activeTab === 'furnish' && (
           <motion.div
-            className="absolute inset-0 rounded-md bg-background shadow-sm ring-1 ring-border/50"
+            className="absolute inset-0 rounded-md bg-background shadow-sm ring-1 ring-primary/20"
             layoutId="layerToggleActiveBg"
             transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }}
           />
@@ -964,9 +1009,9 @@ const LayerToggle = memo(function LayerToggle() {
 
       <button
         className={cn(
-          'relative flex flex-1 cursor-pointer flex-col items-center justify-center rounded-md py-2 font-medium text-[10px] transition-all duration-200',
+          'relative flex flex-1 cursor-pointer flex-col items-center justify-center rounded-md py-2 font-semibold text-[10px] transition-all duration-200',
           activeTab === 'zones'
-            ? 'text-foreground'
+            ? 'text-primary'
             : 'text-muted-foreground hover:bg-background/80 hover:text-foreground',
         )}
         onClick={() => {
@@ -976,7 +1021,7 @@ const LayerToggle = memo(function LayerToggle() {
       >
         {activeTab === 'zones' && (
           <motion.div
-            className="absolute inset-0 rounded-md bg-background shadow-sm ring-1 ring-border/50"
+            className="absolute inset-0 rounded-md bg-background shadow-sm ring-1 ring-primary/20"
             layoutId="layerToggleActiveBg"
             transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }}
           />
@@ -1055,7 +1100,7 @@ const ZoneItem = memo(function ZoneItem({ zone, isLast }: { zone: ZoneNode; isLa
       className={cn(
         'group/row relative flex h-8 cursor-pointer select-none items-center border-border/50 border-b px-3 text-sm transition-all duration-200',
         isSelected
-          ? 'bg-accent/50 text-foreground'
+          ? 'bg-primary/10 text-foreground'
           : isHovered
             ? 'bg-accent/30 text-foreground'
             : 'text-muted-foreground hover:bg-accent/30 hover:text-foreground',
@@ -1216,9 +1261,7 @@ const ContentSection = memo(function ContentSection() {
   )
 
   if (!level) {
-    return (
-      <div className="px-3 py-4 text-muted-foreground text-sm">Select a level to view content</div>
-    )
+    return <TreeEmptyState title="Select a level" />
   }
 
   if (structureLayer === 'zones') {
@@ -1229,14 +1272,7 @@ const ContentSection = memo(function ContentSection() {
     }
 
     if (levelZones.length === 0) {
-      return (
-        <div className="px-3 py-4 text-muted-foreground text-sm">
-          No zones on this level.{' '}
-          <button className="cursor-pointer text-primary hover:underline" onClick={handleAddZone}>
-            Add one
-          </button>
-        </div>
-      )
+      return <TreeEmptyState actionLabel="Add one" onAction={handleAddZone} title="No zones" />
     }
 
     return (
@@ -1249,7 +1285,7 @@ const ContentSection = memo(function ContentSection() {
   }
 
   if (elementChildren.length === 0) {
-    return <div className="px-3 py-4 text-muted-foreground text-sm">No elements on this level</div>
+    return <TreeEmptyState title="No elements" />
   }
   return (
     <TreeNodeDragProvider>
@@ -1313,16 +1349,16 @@ const BuildingItem = memo(function BuildingItem({
     >
       <div
         className={cn(
-          'group/building flex h-10 shrink-0 cursor-pointer items-center border-border/50 border-b pr-2 transition-all duration-200',
+          'group/building flex h-11 shrink-0 cursor-pointer items-center border-border/50 border-b pr-2 transition-all duration-200',
           isBuildingActive
-            ? 'bg-accent/50 text-foreground'
+            ? 'bg-primary/10 text-foreground'
             : 'text-muted-foreground hover:bg-accent/30 hover:text-foreground',
         )}
         onClick={handleSelect}
         onDoubleClick={handleDoubleClick}
         ref={itemRef}
       >
-        <div className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 py-2 pl-3">
+        <div className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2.5 py-2 pl-3.5">
           <img
             alt="Building"
             className={cn(
@@ -1331,7 +1367,7 @@ const BuildingItem = memo(function BuildingItem({
             )}
             src="/icons/building.png"
           />
-          <span className="truncate font-medium text-sm">{building.name || 'Building'}</span>
+          <span className="truncate font-semibold text-sm">{building.name || 'Building'}</span>
         </div>
         <Popover
           onOpenChange={(open) => setBuildingCameraOpen(open ? building.id : null)}
@@ -1468,20 +1504,20 @@ export function SitePanel({ projectId, onUploadAsset, onDeleteAsset }: SitePanel
 
   return (
     <LayoutGroup>
-      <div className="flex h-full flex-col">
+      <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
         {/* Site Header */}
         {siteNode && (
           <motion.div
             className={cn(
-              'flex shrink-0 cursor-pointer items-center justify-between border-border/50 border-b px-3 py-3 transition-colors',
+              'flex shrink-0 cursor-pointer items-center justify-between border-border/50 border-b px-3.5 py-3.5 transition-colors',
               phase === 'site'
-                ? 'bg-accent/50 text-foreground'
+                ? 'bg-primary/10 text-foreground'
                 : 'text-muted-foreground hover:bg-accent/30 hover:text-foreground',
             )}
             layout="position"
             onClick={() => setPhase('site')}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 items-center gap-2.5">
               <img
                 alt="Site"
                 className={cn(
@@ -1490,7 +1526,7 @@ export function SitePanel({ projectId, onUploadAsset, onDeleteAsset }: SitePanel
                 )}
                 src="/icons/site.png"
               />
-              <span className="font-medium text-sm">{siteNode.name || 'Site'}</span>
+              <span className="truncate font-semibold text-sm">{siteNode.name || 'Site'}</span>
             </div>
             <CameraPopover
               buttonClassName={cn(
@@ -1527,8 +1563,8 @@ export function SitePanel({ projectId, onUploadAsset, onDeleteAsset }: SitePanel
 
           {/* Buildings List */}
           {buildings.length === 0 ? (
-            <motion.div className="px-3 py-4 text-muted-foreground text-sm" layout="position">
-              No buildings yet
+            <motion.div layout="position">
+              <TreeEmptyState title="No buildings yet" />
             </motion.div>
           ) : (
             <div className="flex min-h-0 flex-1 flex-col">

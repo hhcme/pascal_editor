@@ -36,15 +36,15 @@ const controls: ControlConfig[] = [
     id: 'box-select',
     iconifyIcon: 'mdi:select-drag',
     label: 'Box select',
-    color: 'hover:bg-white/5',
-    activeColor: 'bg-white/10 hover:bg-white/10',
+    color: 'hover:bg-accent',
+    activeColor: 'bg-primary/10 text-primary ring-1 ring-primary/20 hover:bg-primary/15',
   },
   {
     id: 'site-edit',
     imageSrc: '/icons/site.png',
     label: 'Edit site',
-    color: 'hover:bg-white/5',
-    activeColor: 'bg-white/10 hover:bg-white/10',
+    color: 'hover:bg-accent',
+    activeColor: 'bg-primary/10 text-primary ring-1 ring-primary/20 hover:bg-primary/15',
   },
   {
     id: 'build',
@@ -190,14 +190,17 @@ export function ControlModes() {
               'group text-muted-foreground',
               isSiteButton
                 ? isActive
-                  ? c.activeColor
+                  ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
                   : canEnterSiteEdit
-                    ? 'opacity-60 grayscale hover:bg-white/5 hover:opacity-100 hover:grayscale-0'
+                    ? 'opacity-70 grayscale hover:bg-accent hover:opacity-100 hover:grayscale-0'
                     : 'cursor-not-allowed opacity-35 grayscale'
                 : !(isImageMode || isActive) && c.color,
               !(isSiteButton || isImageMode) && isActive && c.activeColor,
-              !isSiteButton && isImageMode && isActive && 'bg-white/10 hover:bg-white/10',
-              !isSiteButton && isImageMode && !isActive && 'hover:bg-white/5',
+              !isSiteButton &&
+                isImageMode &&
+                isActive &&
+                'bg-primary/10 text-primary ring-1 ring-primary/20 hover:bg-primary/15',
+              !isSiteButton && isImageMode && !isActive && 'hover:bg-accent',
             )}
             disabled={isDisabled}
             key={c.id}

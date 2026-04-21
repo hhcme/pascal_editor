@@ -92,7 +92,7 @@ export function FencePanel() {
       icon="/icons/build.png"
       onClose={handleClose}
       title={node.name || 'Fence'}
-      width={300}
+      width={340}
     >
       <PanelSection title="Style">
         <SegmentedControl

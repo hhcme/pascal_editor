@@ -3,6 +3,7 @@
 import NumberFlow from '@number-flow/react'
 import { useScene } from '@pascal-app/core'
 import { useCallback, useRef, useState } from 'react'
+import { cn } from '../../../lib/utils'
 
 interface NumberInputProps {
   label: string
@@ -132,19 +133,25 @@ export function NumberInput({
   )
 
   return (
-    <div className={`${className} group/input relative`}>
+    <div className={cn('group/input relative', className)}>
       <div
         className={`pointer-events-none absolute inset-y-0 left-0 bg-primary/10 transition-all duration-75 dark:bg-primary/20 ${isDragging ? 'opacity-100' : 'opacity-0'}`}
         style={{
           width: `${Math.min(100, Math.max(0, ((value - (min ?? Math.min(0, value))) / ((max ?? Math.max(10, value)) - (min ?? Math.min(0, value)))) * 100))}%`,
-          borderTopRightRadius: value >= (max ?? Math.max(10, value)) ? '0.5rem' : '0',
-          borderBottomRightRadius: value >= (max ?? Math.max(10, value)) ? '0.5rem' : '0',
-          borderTopLeftRadius: '0.5rem',
-          borderBottomLeftRadius: '0.5rem',
+          borderTopRightRadius: value >= (max ?? Math.max(10, value)) ? '0.375rem' : '0',
+          borderBottomRightRadius: value >= (max ?? Math.max(10, value)) ? '0.375rem' : '0',
+          borderTopLeftRadius: '0.375rem',
+          borderBottomLeftRadius: '0.375rem',
         }}
       />
       <div
-        className={`relative z-10 flex items-center overflow-hidden rounded-lg border shadow-[0_1px_2px_0px_rgba(0,0,0,0.05)] transition-all focus-within:border-primary focus-within:ring-1 focus-within:ring-primary ${isDragging ? 'border-neutral-300 bg-transparent ring-1 ring-neutral-200/60 dark:border-border dark:ring-border/50' : 'border-neutral-200/60 bg-white hover:border-neutral-300 dark:border-border/50 dark:bg-accent/30 dark:hover:border-border/80'}`}
+        className={cn(
+          'relative z-10 flex items-center overflow-hidden rounded-md border transition-all',
+          'focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/30',
+          isDragging
+            ? 'border-primary/35 bg-transparent ring-1 ring-primary/20'
+            : 'border-border/55 bg-card hover:border-border',
+        )}
       >
         <div
           className={`z-10 select-none truncate py-1.5 pr-1 pl-2 font-barlow font-medium text-muted-foreground text-xs ${
@@ -171,7 +178,7 @@ export function NumberInput({
         ) : (
           <div
             className={
-              'z-10 min-w-0 flex-1 cursor-text truncate px-2 py-1.5 text-right font-medium font-mono text-foreground text-sm tabular-nums tracking-tight transition-colors hover:bg-black/5 dark:hover:bg-white/5'
+              'z-10 min-w-0 flex-1 cursor-text truncate px-2 py-1.5 text-right font-medium font-mono text-foreground text-sm tabular-nums transition-colors hover:bg-accent/55'
             }
             onClick={handleValueClick}
           >

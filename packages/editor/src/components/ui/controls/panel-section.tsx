@@ -30,14 +30,14 @@ export function PanelSection({
         className={cn(
           'group/section flex h-10 shrink-0 items-center justify-between px-3 transition-all duration-200',
           isExpanded
-            ? 'bg-accent/50 text-foreground'
+            ? 'bg-muted/55 text-foreground'
             : 'text-muted-foreground hover:bg-accent/30 hover:text-foreground',
         )}
         layout="position"
         onClick={() => setIsExpanded(!isExpanded)}
         type="button"
       >
-        <span className="truncate font-medium text-sm">{title}</span>
+        <span className="truncate font-semibold text-sm">{title}</span>
         <ChevronDown
           className={cn(
             'h-4 w-4 transition-transform duration-200',
@@ -56,7 +56,7 @@ export function PanelSection({
             initial={{ height: 0, opacity: 0 }}
             transition={{ type: 'spring', bounce: 0, duration: 0.4 }}
           >
-            <div className="flex flex-col gap-1.5 p-3 pt-2">{children}</div>
+            <div className="flex flex-col gap-2 p-3 pt-2.5">{children}</div>
           </motion.div>
         )}
       </AnimatePresence>

@@ -68,10 +68,10 @@ export function FurnishTools() {
         return (
           <ActionButton
             className={cn(
-              'rounded-lg duration-300',
+              'rounded-md duration-200',
               isActive
-                ? 'z-10 scale-110 bg-accent shadow-sm hover:bg-accent'
-                : 'scale-95 bg-transparent opacity-60 grayscale hover:bg-accent/70 hover:opacity-100 hover:grayscale-0',
+                ? 'bg-primary/10 text-primary ring-1 ring-primary/20 hover:bg-primary/15'
+                : 'bg-transparent opacity-70 grayscale hover:bg-accent hover:opacity-100 hover:grayscale-0',
             )}
             key={`${tool.id}-${tool.catalogCategory ?? index}`}
             label={tool.label}
@@ -89,7 +89,7 @@ export function FurnishTools() {
           >
             <NextImage
               alt={tool.label}
-              className="size-full object-contain"
+              className="h-7 w-7 object-contain"
               height={28}
               src={tool.iconSrc}
               width={28}

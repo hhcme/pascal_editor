@@ -3,6 +3,7 @@
 import { Icon } from '@iconify/react'
 import { Copy, Move, Spline, Trash2 } from 'lucide-react'
 import type { MouseEventHandler, PointerEventHandler, ReactNode } from 'react'
+import { cn } from '../../lib/utils'
 
 export type NodeActionMenuExtraAction = {
   id: string
@@ -37,9 +38,12 @@ export function NodeActionMenu({
   onPointerEnter,
   onPointerLeave,
 }: NodeActionMenuProps) {
+  const buttonClass =
+    'tooltip-trigger flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/55 hover:text-foreground'
+
   return (
     <div
-      className="pointer-events-auto flex items-center gap-1 rounded-lg border border-border bg-background/95 p-1 shadow-xl backdrop-blur-md"
+      className="editor-floorplan-feedback pointer-events-auto flex items-center gap-1 rounded-lg p-1"
       onPointerDown={onPointerDown}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
@@ -48,7 +52,7 @@ export function NodeActionMenu({
       {onMove && (
         <button
           aria-label="Move"
-          className="tooltip-trigger rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className={buttonClass}
           onClick={onMove}
           title="Move"
           type="button"
@@ -59,7 +63,7 @@ export function NodeActionMenu({
       {onCurve && (
         <button
           aria-label="Curve"
-          className="tooltip-trigger rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className={buttonClass}
           onClick={onCurve}
           title="Curve"
           type="button"
@@ -70,11 +74,7 @@ export function NodeActionMenu({
       {extraActions?.map((action) => (
         <button
           aria-label={action.label}
-          className={
-            action.active
-              ? 'tooltip-trigger rounded-md bg-accent p-1.5 text-foreground transition-colors hover:bg-accent'
-              : 'tooltip-trigger rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground'
-          }
+          className={cn(buttonClass, action.active && 'bg-primary/10 text-primary hover:bg-primary/15')}
           key={action.id}
           onClick={action.onClick}
           title={action.label}
@@ -86,7 +86,7 @@ export function NodeActionMenu({
       {onDuplicate && (
         <button
           aria-label="Duplicate"
-          className="tooltip-trigger rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className={buttonClass}
           onClick={onDuplicate}
           title="Duplicate"
           type="button"
@@ -97,7 +97,7 @@ export function NodeActionMenu({
       {onAddHole && (
         <button
           aria-label="Cut Out"
-          className="tooltip-trigger rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className={buttonClass}
           onClick={onAddHole}
           title="Cut Out"
           type="button"
@@ -108,7 +108,7 @@ export function NodeActionMenu({
       {onDelete && (
         <button
           aria-label="Delete"
-          className="tooltip-trigger rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+          className={cn(buttonClass, 'hover:bg-destructive/10 hover:text-destructive')}
           onClick={onDelete}
           title="Delete"
           type="button"

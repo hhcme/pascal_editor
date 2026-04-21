@@ -1,17 +1,23 @@
 'use client'
 
-import { emitter, useScene } from '@pascal-app/core'
+import { emitter, GuideNode, type LevelNode, ScanNode, useScene } from '@pascal-app/core'
 import {
   Editor,
   type SaveStatus,
   type SceneGraph,
   type SidebarTab,
+  type SitePanelProps,
+  useUploadStore,
   ViewerToolbarLeft,
   ViewerToolbarRight,
 } from '@pascal-app/editor'
 import { useViewer } from '@pascal-app/viewer'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { exportFilters, saveCanvasAsPng, saveJsonExport } from '../../../packages/editor/src/lib/export'
+import {
+  exportFilters,
+  saveCanvasAsPng,
+  saveJsonExport,
+} from '../../../packages/editor/src/lib/export'
 
 const RECOVERY_DEBOUNCE_MS = 1500
 
@@ -39,12 +45,82 @@ type HostCommand = {
   payload?: unknown
 }
 
-function getProjectApiPath(projectId: string, action: 'bootstrap' | 'scene' | 'thumbnail' | 'recovery') {
+type ProjectAssetKind = 'scan' | 'guide'
+
+type UploadedProjectAsset = {
+  kind: ProjectAssetKind
+  originalFileName: string
+  fileName: string
+  url: string
+}
+
+function getProjectApiPath(
+  projectId: string,
+  action: 'bootstrap' | 'scene' | 'thumbnail' | 'recovery',
+) {
   return `/__findtop__/projects/${encodeURIComponent(projectId)}/${action}`
+}
+
+function getProjectAssetsApiPath(projectId: string) {
+  return `/__findtop__/projects/${encodeURIComponent(projectId)}/assets`
 }
 
 function postToHost(type: string, payload?: unknown) {
   window.parent.postMessage({ source: 'findtop-editor', type, payload }, '*')
+}
+
+function getFileDisplayName(fileName: string): string {
+  return fileName.replace(/\.[^.]+$/, '').trim() || fileName
+}
+
+function isUploadedProjectAsset(value: unknown): value is UploadedProjectAsset {
+  const candidate = value && typeof value === 'object' ? (value as Record<string, unknown>) : null
+  return (
+    !!candidate &&
+    (candidate.kind === 'scan' || candidate.kind === 'guide') &&
+    typeof candidate.originalFileName === 'string' &&
+    typeof candidate.fileName === 'string' &&
+    typeof candidate.url === 'string'
+  )
+}
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: unknown }
+    return typeof body.error === 'string' ? body.error : fallback
+  } catch {
+    return fallback
+  }
+}
+
+async function uploadProjectAsset(
+  projectId: string,
+  file: File,
+  kind: ProjectAssetKind,
+): Promise<UploadedProjectAsset> {
+  const params = new URLSearchParams({
+    fileName: file.name,
+    kind,
+  })
+
+  const response = await fetch(`${getProjectAssetsApiPath(projectId)}?${params.toString()}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': file.type || 'application/octet-stream',
+    },
+    body: file,
+  })
+
+  if (!response.ok) {
+    throw new Error(await readApiError(response, `Asset upload failed: ${response.status}`))
+  }
+
+  const payload = await response.json()
+  if (!isUploadedProjectAsset(payload)) {
+    throw new Error('Asset upload returned an invalid response')
+  }
+
+  return payload
 }
 
 async function readCanvasAsPng(canvas: HTMLCanvasElement): Promise<{
@@ -278,6 +354,92 @@ export default function Home() {
     [uploadThumbnail],
   )
 
+  const handleUploadAsset = useCallback<NonNullable<SitePanelProps['onUploadAsset']>>(
+    async (projectId, levelId, file, type) => {
+      const uploadStore = useUploadStore.getState()
+      uploadStore.startUpload(levelId, type, file.name)
+
+      try {
+        uploadStore.setStatus(levelId, 'uploading')
+        uploadStore.setProgress(levelId, 20)
+
+        const asset = await uploadProjectAsset(projectId, file, type)
+
+        uploadStore.setProgress(levelId, 85)
+        uploadStore.setStatus(levelId, 'confirming')
+
+        const node =
+          asset.kind === 'scan'
+            ? ScanNode.parse({
+                name: getFileDisplayName(asset.originalFileName),
+                url: asset.url,
+              })
+            : GuideNode.parse({
+                name: getFileDisplayName(asset.originalFileName),
+                url: asset.url,
+              })
+
+        useScene.getState().createNode(node, levelId as LevelNode['id'])
+        useViewer.getState().setSelection({
+          levelId: levelId as LevelNode['id'],
+          selectedIds: [node.id],
+        })
+
+        if (asset.kind === 'scan') {
+          useViewer.getState().setShowScans(true)
+        } else {
+          useViewer.getState().setShowGuides(true)
+        }
+
+        uploadStore.setProgress(levelId, 100)
+        uploadStore.setResult(levelId, asset.url)
+      } catch (error) {
+        uploadStore.setError(
+          levelId,
+          error instanceof Error ? error.message : 'Asset upload failed.',
+        )
+      }
+    },
+    [],
+  )
+
+  const handleDeleteAsset = useCallback<NonNullable<SitePanelProps['onDeleteAsset']>>(
+    (projectId, url) => {
+      if (!url.startsWith(`${getProjectAssetsApiPath(projectId)}/`)) return
+
+      void fetch(url, { method: 'DELETE' })
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(await readApiError(response, `Asset delete failed: ${response.status}`))
+          }
+        })
+        .catch((error) => {
+          postToHost('error', {
+            message: error instanceof Error ? error.message : 'Failed to delete project asset',
+          })
+        })
+    },
+    [],
+  )
+
+  useEffect(() => {
+    const uploadStore = useUploadStore.getState()
+    uploadStore.registerUploadHandler(handleUploadAsset)
+
+    return () => {
+      useUploadStore.getState().unregisterUploadHandler()
+    }
+  }, [handleUploadAsset])
+
+  const sitePanelProps = useMemo<SitePanelProps>(
+    () => ({
+      projectId: context.projectId || undefined,
+      onUploadAsset: handleUploadAsset,
+      onDeleteAsset: handleDeleteAsset,
+    }),
+    [context.projectId, handleDeleteAsset, handleUploadAsset],
+  )
+
   useEffect(() => {
     async function saveFromHost() {
       if (!bootstrapLoadedRef.current) return
@@ -375,11 +537,13 @@ export default function Home() {
       }
 
       if (event.data.type === 'export-model') {
-        const payload = event.data.payload as {
-          format?: 'glb' | 'stl' | 'obj'
-          filename?: string
-          directoryPath?: string
-        } | undefined
+        const payload = event.data.payload as
+          | {
+              format?: 'glb' | 'stl' | 'obj'
+              filename?: string
+              directoryPath?: string
+            }
+          | undefined
         const format = payload?.format
         if (!format) return
 
@@ -399,7 +563,8 @@ export default function Home() {
             postToHost('export-result', {
               status: 'error',
               format,
-              message: error instanceof Error ? error.message : `Host-triggered ${format} export failed`,
+              message:
+                error instanceof Error ? error.message : `Host-triggered ${format} export failed`,
             })
           })
         return
@@ -408,7 +573,8 @@ export default function Home() {
       if (event.data.type === 'export-screenshot') {
         void exportScreenshotFromHost().catch((error) => {
           postToHost('error', {
-            message: error instanceof Error ? error.message : 'Host-triggered screenshot export failed',
+            message:
+              error instanceof Error ? error.message : 'Host-triggered screenshot export failed',
           })
         })
         return
@@ -422,9 +588,7 @@ export default function Home() {
                 renderType?: 'exterior' | 'interior' | 'garden'
               })
             : {}
-        void captureAiRenderSourceFromHost(
-          payload,
-        )
+        void captureAiRenderSourceFromHost(payload)
       }
     }
 
@@ -438,7 +602,13 @@ export default function Home() {
     return () => {
       window.removeEventListener('message', onMessage)
     }
-  }, [clearScheduledRecoveryPersist, context.host, context.language, context.projectId, persistCurrentScene])
+  }, [
+    clearScheduledRecoveryPersist,
+    context.host,
+    context.language,
+    context.projectId,
+    persistCurrentScene,
+  ])
 
   useEffect(() => {
     return () => {
@@ -452,8 +622,9 @@ export default function Home() {
     <div className="h-screen w-screen">
       <Editor
         layoutVersion="v2"
-        projectId={context.projectId || 'findtop'}
+        projectId={context.projectId || null}
         autoSaveEnabled={autoSaveEnabled}
+        sitePanelProps={sitePanelProps}
         sidebarTabs={SIDEBAR_TABS}
         viewerToolbarLeft={<ViewerToolbarLeft />}
         viewerToolbarRight={<ViewerToolbarRight />}

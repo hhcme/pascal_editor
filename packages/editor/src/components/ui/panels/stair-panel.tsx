@@ -25,6 +25,7 @@ import { sfxEmitter } from '../../../lib/sfx-bus'
 import useEditor from '../../../store/use-editor'
 import { DEFAULT_SPIRAL_STAIR_SWEEP_ANGLE } from '../../tools/stair/stair-defaults'
 import { ActionButton, ActionGroup } from '../controls/action-button'
+import { InspectorStat, InspectorSummary } from '../controls/inspector-summary'
 import { MaterialPicker } from '../controls/material-picker'
 import { MetricControl } from '../controls/metric-control'
 import { PanelSection } from '../controls/panel-section'
@@ -279,8 +280,15 @@ export function StairPanel() {
       icon="/icons/stairs.png"
       onClose={handleClose}
       title={node.name || 'Staircase'}
-      width={300}
+      width={340}
     >
+      <InspectorSummary>
+        <InspectorStat label="Type" value={node.stairType ?? 'straight'} />
+        <InspectorStat label="Segments" value={segments.length} />
+        <InspectorStat label="Width" value={`${(node.width ?? 1).toFixed(2)} m`} />
+        <InspectorStat label="Steps" value={node.stepCount ?? 10} />
+      </InspectorSummary>
+
       <PanelSection title="Type">
         <SegmentedControl
           onChange={(value) =>
@@ -312,11 +320,11 @@ export function StairPanel() {
           />
 
           <div className="space-y-1.5">
-            <div className="px-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+            <div className="px-1 font-semibold text-[11px] text-muted-foreground">
               From Level
             </div>
             <select
-              className="h-9 w-full rounded-lg border border-border/50 bg-background px-3 text-sm text-foreground"
+              className="h-9 w-full rounded-md border border-border/55 bg-card px-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-1 focus:ring-primary/25"
               onChange={(event) => handleUpdate({ fromLevelId: event.target.value })}
               value={resolvedFromLevelId ?? ''}
             >
@@ -329,11 +337,11 @@ export function StairPanel() {
           </div>
 
           <div className="space-y-1.5">
-            <div className="px-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+            <div className="px-1 font-semibold text-[11px] text-muted-foreground">
               To Level
             </div>
             <select
-              className="h-9 w-full rounded-lg border border-border/50 bg-background px-3 text-sm text-foreground"
+              className="h-9 w-full rounded-md border border-border/55 bg-card px-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-1 focus:ring-primary/25"
               onChange={(event) => handleUpdate({ toLevelId: event.target.value })}
               value={resolvedToLevelId ?? ''}
             >
@@ -371,7 +379,7 @@ export function StairPanel() {
           <div className="flex flex-col gap-1">
             {segments.map((seg, i) => (
               <button
-                className="flex items-center justify-between rounded-lg border border-border/50 bg-background px-3 py-2 text-foreground text-sm transition-colors hover:bg-accent/70"
+                className="flex items-center justify-between rounded-md border border-border/55 bg-card px-3 py-2 text-foreground text-sm transition-colors hover:bg-accent/55"
                 key={seg.id}
                 onClick={() => handleSelectSegment(seg.id)}
                 type="button"
@@ -603,16 +611,16 @@ export function StairPanel() {
             onClick={handleDuplicate}
           />
           <ActionButton
-            className="hover:bg-red-500/20"
-            icon={<Trash2 className="h-3.5 w-3.5 text-red-400" />}
+            icon={<Trash2 className="h-3.5 w-3.5" />}
             label="Delete"
             onClick={handleDelete}
+            tone="danger"
           />
         </ActionGroup>
       </PanelSection>
       <PanelSection title="Material">
         {!materialTargetRole ? (
-          <div className="mb-3 rounded-lg border border-border/50 bg-background px-3 py-2 text-[11px] text-muted-foreground">
+          <div className="mb-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
             Click the stair surface you want to edit. Materials apply to one target at a time.
           </div>
         ) : null}

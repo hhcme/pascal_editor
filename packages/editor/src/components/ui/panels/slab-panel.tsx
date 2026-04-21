@@ -7,6 +7,7 @@ import { useCallback, useEffect } from 'react'
 import { sfxEmitter } from '../../../lib/sfx-bus'
 import useEditor from '../../../store/use-editor'
 import { ActionButton, ActionGroup } from '../controls/action-button'
+import { InspectorStat, InspectorSummary } from '../controls/inspector-summary'
 import { MaterialPicker } from '../controls/material-picker'
 import { PanelSection } from '../controls/panel-section'
 import { SliderControl } from '../controls/slider-control'
@@ -151,8 +152,15 @@ export function SlabPanel() {
       icon="/icons/floor.png"
       onClose={handleClose}
       title={node.name || 'Slab'}
-      width={320}
+      width={340}
     >
+      <InspectorSummary>
+        <InspectorStat label="Area" value={`${area.toFixed(2)} m²`} />
+        <InspectorStat label="Elevation" value={`${node.elevation.toFixed(3)} m`} />
+        <InspectorStat label="Points" value={node.polygon.length} />
+        <InspectorStat label="Holes" value={node.holes?.length ?? 0} />
+      </InspectorSummary>
+
       <PanelSection title="Elevation">
         <SliderControl
           label="Height"
@@ -191,10 +199,10 @@ export function SlabPanel() {
               const isAutoHole = source === 'stair'
               return (
                 <div
-                  className={`flex items-center justify-between rounded-lg border p-2 transition-colors ${
+                  className={`flex items-center justify-between rounded-md border p-2 transition-colors ${
                     isEditing
-                      ? 'border-primary/50 bg-primary/10'
-                      : 'border-transparent hover:bg-accent/30'
+                      ? 'border-primary/45 bg-primary/10'
+                      : 'border-border/50 bg-card hover:bg-accent/45'
                   }`}
                   key={index}
                 >
@@ -217,7 +225,7 @@ export function SlabPanel() {
                         onClick={() => setEditingHole(null)}
                       />
                     ) : isAutoHole ? (
-                      <div className="rounded-md bg-background px-2 py-1 text-[10px] text-muted-foreground">
+                      <div className="rounded-md bg-muted px-2 py-1 text-[10px] text-muted-foreground">
                         Auto
                       </div>
                     ) : (
@@ -230,7 +238,7 @@ export function SlabPanel() {
                           <Edit className="h-3.5 w-3.5" />
                         </button>
                         <button
-                          className="flex h-7 w-7 items-center justify-center rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300"
+                          className="flex h-7 w-7 items-center justify-center rounded-md bg-destructive/10 text-destructive transition-colors hover:bg-destructive/15"
                           onClick={() => handleDeleteHole(index)}
                           type="button"
                         >
@@ -244,7 +252,9 @@ export function SlabPanel() {
             })}
           </div>
         ) : (
-          <div className="px-2 py-3 text-center text-muted-foreground text-xs">No holes</div>
+          <div className="rounded-md border border-dashed border-border/70 bg-muted/30 px-3 py-4 text-center text-muted-foreground text-xs">
+            No holes
+          </div>
         )}
 
         <div className="px-1 pt-1 pb-1">

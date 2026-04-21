@@ -129,7 +129,7 @@ export function RoofSegmentPanel() {
       onBack={handleBack}
       onClose={handleClose}
       title={node.name || 'Roof Segment'}
-      width={300}
+      width={340}
     >
       <PanelSection title="Roof Type">
         <SegmentedControl
@@ -315,10 +315,10 @@ export function RoofSegmentPanel() {
             onClick={handleDuplicate}
           />
           <ActionButton
-            className="hover:bg-red-500/20"
-            icon={<Trash2 className="h-3.5 w-3.5 text-red-400" />}
+            icon={<Trash2 className="h-3.5 w-3.5" />}
             label="Delete"
             onClick={handleDelete}
+            tone="danger"
           />
         </ActionGroup>
       </PanelSection>

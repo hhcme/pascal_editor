@@ -42,6 +42,13 @@ export type WallFilletPreview = {
   points: WallPlanPoint[]
 }
 
+export type WallEditPreviewSegment = {
+  id: string
+  start: WallPlanPoint
+  end: WallPlanPoint
+  isValid: boolean
+}
+
 export type WallEditPlan = {
   created?: Array<{ node: WallNode; parentId?: AnyNodeId }>
   updated?: Array<{ id: AnyNodeId; data: Partial<AnyNode> }>
@@ -103,6 +110,22 @@ function pointsEqual(a: WallPlanPoint, b: WallPlanPoint, tolerance = EPSILON): b
 
 function wallLength(wall: Pick<WallNode, 'start' | 'end'>): number {
   return distance(wall.start, wall.end)
+}
+
+export function getWallLength2D(wall: Pick<WallNode, 'start' | 'end'>): number {
+  return wallLength(wall)
+}
+
+export function getWallPointAtDistance(
+  wall: Pick<WallNode, 'start' | 'end'>,
+  distanceFromStart: number,
+): WallPlanPoint | null {
+  const length = wallLength(wall)
+  if (length <= EPSILON || distanceFromStart <= 0 || distanceFromStart >= length) {
+    return null
+  }
+
+  return pointAtWallParam(wall, distanceFromStart / length)
 }
 
 function getWallDirection(wall: Pick<WallNode, 'start' | 'end'>): WallPlanPoint | null {
@@ -1336,6 +1359,45 @@ export function applyWallEditPlan(plan: WallEditPlan): boolean {
 
 export function applyWallEditResult(result: WallEditResult): boolean {
   return result.ok ? applyWallEditPlan(result.plan) : false
+}
+
+export function getWallPreviewSegmentsFromResult(
+  result: WallEditResult,
+  nodes: Record<AnyNodeId, AnyNode>,
+): WallEditPreviewSegment[] {
+  if (!result.ok) {
+    return []
+  }
+
+  const updatedSegments =
+    result.plan.updated?.flatMap((update) => {
+      const node = nodes[update.id]
+      if (node?.type !== 'wall') {
+        return []
+      }
+
+      const data = update.data as Partial<WallNode>
+      return [
+        {
+          id: `updated:${update.id}`,
+          start: data.start ?? node.start,
+          end: data.end ?? node.end,
+          isValid: true,
+        },
+      ]
+    }) ?? []
+
+  const createdSegments =
+    result.plan.created?.map(({ node }) => ({
+      id: `created:${node.id}`,
+      start: node.start,
+      end: node.end,
+      isValid: true,
+    })) ?? []
+
+  return [...updatedSegments, ...createdSegments].filter(
+    (segment) => wallLength(segment) > WALL_MIN_LENGTH,
+  )
 }
 
 export function getDefaultWallEditRadius() {

@@ -65,7 +65,7 @@ function LevelInlineRename({
 
   return (
     <input
-      className="m-0 h-full w-full min-w-0 rounded-lg bg-transparent px-2.5 py-1.5 font-medium text-foreground text-xs outline-none ring-1 ring-primary/50"
+      className="m-0 h-full w-full min-w-0 rounded-md bg-transparent px-2.5 py-1.5 font-medium text-foreground text-xs outline-none ring-1 ring-primary/50"
       onBlur={handleSave}
       onChange={(e) => setValue(e.target.value)}
       onClick={(e) => e.stopPropagation()}
@@ -112,10 +112,10 @@ function LevelRow({
       ) : (
         <div
           className={cn(
-            'flex items-center rounded-lg transition-colors',
+            'flex items-center rounded-md transition-colors',
             isSelected
-              ? 'bg-white/10 text-foreground'
-              : 'text-muted-foreground/70 hover:bg-white/5 hover:text-muted-foreground',
+              ? 'bg-primary/10 text-primary'
+              : 'text-muted-foreground/70 hover:bg-accent hover:text-foreground',
           )}
         >
           <button
@@ -144,7 +144,7 @@ function LevelRow({
             </PopoverTrigger>
             <PopoverContent align="start" className="w-36 p-1" side="right" sideOffset={8}>
               <button
-                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-muted-foreground text-xs transition-colors hover:bg-white/10 hover:text-red-400"
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-muted-foreground text-xs transition-colors hover:bg-destructive/10 hover:text-destructive"
                 onClick={(e) => {
                   e.stopPropagation()
                   onRequestDelete()
@@ -256,7 +256,7 @@ export function FloatingLevelSelector() {
   const reversedLevels = [...levels].reverse()
 
   const addButtonClass =
-  'absolute left-1/2 z-10 flex h-4 w-4 -translate-x-1/2 items-center justify-center rounded-full border border-border/80 bg-background text-muted-foreground/60 shadow-md transition-colors hover:bg-accent/70 hover:text-foreground'
+    'absolute left-1/2 z-10 flex h-4 w-4 -translate-x-1/2 items-center justify-center rounded-full border border-border/80 bg-background text-muted-foreground/60 shadow-md transition-colors hover:bg-accent hover:text-foreground'
 
   return (
     <>
@@ -283,7 +283,7 @@ export function FloatingLevelSelector() {
           </button>
 
           {/* Level list */}
-          <div className="flex flex-col gap-0.5 rounded-xl border border-border bg-background/90 p-1 shadow-2xl backdrop-blur-md">
+          <div className="editor-floating-panel flex flex-col gap-0.5 rounded-lg p-1">
             {reversedLevels.map((level, i) => {
               const isSelected = level.id === levelId
               const sortedIndex = levels.indexOf(level)
@@ -334,14 +334,14 @@ export function FloatingLevelSelector() {
           </DialogHeader>
           <DialogFooter>
             <button
-              className="rounded-full border border-border px-4 py-2 text-sm transition-colors hover:bg-accent"
+              className="rounded-md border border-border px-4 py-2 text-sm transition-colors hover:bg-accent"
               onClick={() => setDeletingLevel(null)}
               type="button"
             >
               Cancel
             </button>
             <button
-              className="rounded-full bg-red-600 px-4 py-2 text-sm text-white transition-colors hover:bg-red-700"
+              className="rounded-md bg-red-600 px-4 py-2 text-sm text-white transition-colors hover:bg-red-700"
               onClick={handleConfirmDelete}
               type="button"
             >
