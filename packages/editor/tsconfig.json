@@ -2,6 +2,7 @@
   "extends": "@pascal/typescript-config/react-library.json",
   "compilerOptions": {
     "rootDir": "src",
+    "types": ["@react-three/fiber", "node"],
     "noEmit": true
   },
   "include": ["src"],

@@ -1,6 +1,6 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Color, Layers, UnsignedByteType } from 'three'
+import { Color, Layers, type Object3D, UnsignedByteType } from 'three'
 import { ssgi } from 'three/addons/tsl/display/SSGINode.js'
 import { denoise } from 'three/examples/jsm/tsl/display/DenoiseNode.js'
 import {
@@ -61,6 +61,21 @@ function BasicRenderPass() {
   }, 1)
 
   return null
+}
+
+function sanitizeOutlineObjects(objects: Object3D[]) {
+  let nextIndex = 0
+
+  for (const object of objects) {
+    if (!(object && typeof object.id === 'number' && object.parent)) {
+      continue
+    }
+
+    objects[nextIndex] = object
+    nextIndex++
+  }
+
+  objects.length = nextIndex
 }
 
 const PostProcessingPasses = () => {
@@ -152,7 +167,7 @@ const PostProcessingPasses = () => {
     // loop fights the direct-render fallback path. Short-circuit here so
     // `useFrame` uses the direct `renderer.render(scene, camera)` path
     // exclusively and never attempts the TSL pipeline.
-    const hasWebGPU = typeof navigator !== 'undefined' && typeof navigator.gpu !== 'undefined'
+    const hasWebGPU = typeof navigator !== 'undefined' && 'gpu' in navigator
     if (!hasWebGPU) {
       console.warn(
         '[viewer] WebGPU unavailable — rendering without post-processing (SSGI, outlines, denoise).',
@@ -165,6 +180,8 @@ const PostProcessingPasses = () => {
     // Clear outliner arrays synchronously to prevent stale Object3D refs
     // from the previous project leaking into the new pipeline's outline passes.
     const outliner = useViewer.getState().outliner
+    sanitizeOutlineObjects(outliner.selectedObjects)
+    sanitizeOutlineObjects(outliner.hoveredObjects)
     outliner.selectedObjects.length = 0
     outliner.hoveredObjects.length = 0
 
@@ -315,6 +332,10 @@ const PostProcessingPasses = () => {
     bgTarget.current.set(useViewer.getState().theme === 'dark' ? DARK_BG : LIGHT_BG)
     bgCurrent.current.lerp(bgTarget.current, Math.min(delta, 0.1) * 4)
     bgUniform.current.value.copy(bgCurrent.current)
+
+    const outliner = useViewer.getState().outliner
+    sanitizeOutlineObjects(outliner.selectedObjects)
+    sanitizeOutlineObjects(outliner.hoveredObjects)
 
     if (hasPipelineErrorRef.current || !renderPipelineRef.current) {
       try {
