@@ -221,7 +221,7 @@ export function StairSegmentPanel() {
           <span className="text-muted-foreground text-xs">Fill to floor</span>
           <button
             className={`relative h-5 w-10 rounded-full transition-colors ${
-              node.fillToFloor ? 'bg-blue-500' : 'bg-[#3e3e3e]'
+              node.fillToFloor ? 'bg-blue-500' : 'bg-accent'
             }`}
             onClick={() => handleUpdate({ fillToFloor: !node.fillToFloor })}
             type="button"

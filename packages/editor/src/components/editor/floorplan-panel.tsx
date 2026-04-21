@@ -50,6 +50,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useShallow } from 'zustand/react/shallow'
+import { markToolCancelConsumed } from '../../hooks/use-keyboard'
 import { sfxEmitter } from '../../lib/sfx-bus'
 import { cn } from '../../lib/utils'
 import useEditor, { type FloorplanSelectionTool } from '../../store/use-editor'
@@ -70,13 +71,34 @@ import {
   WALL_GRID_STEP,
   type WallPlanPoint,
 } from '../tools/wall/wall-drafting'
+import {
+  applyWallEditResult,
+  buildFilletWallsPlan,
+  buildMergeWallsPlan,
+  buildOffsetWallPlan,
+  buildSplitWallPlan,
+  buildTrimExtendWallPlan,
+  getWallFilletPreview,
+  getWallOffsetPreview,
+  type WallEditOperation,
+  type WallFilletPreview,
+  type WallOffsetPreview,
+} from '../tools/wall/wall-edit-geometry'
+import {
+  getPointAtWallSketchLength,
+  getWallSketchDirection,
+  parseWallSketchLengthInput,
+  resolveWallSketchSnap,
+  type WallSketchInputState,
+  type WallSketchSnapResult,
+} from '../tools/wall/wall-sketch'
 import { furnishTools } from '../ui/action-menu/furnish-tools'
 import { tools as structureTools } from '../ui/action-menu/structure-tools'
 
 import { PALETTE_COLORS } from '../ui/primitives/color-dot'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/primitives/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/primitives/tooltip'
-import { NodeActionMenu } from './node-action-menu'
+import { NodeActionMenu, type NodeActionMenuExtraAction } from './node-action-menu'
 
 const FALLBACK_VIEW_SIZE = 12
 const FLOORPLAN_PADDING = 2
@@ -127,6 +149,11 @@ const FLOORPLAN_MEASUREMENT_LABEL_OPACITY = 0.82
 const FLOORPLAN_MEASUREMENT_LABEL_STROKE_WIDTH = 0.05
 const FLOORPLAN_MEASUREMENT_LABEL_GAP = 0.56
 const FLOORPLAN_MEASUREMENT_LABEL_LINE_PADDING = 0.14
+const FLOORPLAN_WALL_SKETCH_LABEL_FONT_SIZE = 0.15
+const FLOORPLAN_WALL_SKETCH_LABEL_PADDING_X = 0.16
+const FLOORPLAN_WALL_SKETCH_LABEL_PADDING_Y = 0.08
+const FLOORPLAN_WALL_SKETCH_TARGET_RADIUS = 0.11
+const FLOORPLAN_WALL_EDIT_FEEDBACK_TIMEOUT_MS = 1800
 const FLOORPLAN_ACTION_MENU_HORIZONTAL_PADDING = 60
 const FLOORPLAN_ACTION_MENU_MIN_ANCHOR_Y = 56
 const FLOORPLAN_ACTION_MENU_OFFSET_Y = 10
@@ -291,6 +318,11 @@ type WallEndpointDraft = {
 type WallCurveDraft = {
   wallId: WallNode['id']
   curveOffset: number
+}
+
+type WallEditFeedback = {
+  id: number
+  message: string
 }
 
 type SlabBoundaryDraft = {
@@ -2081,6 +2113,125 @@ function formatMeasurement(value: number, unit: 'metric' | 'imperial') {
   }
   return `${Number.parseFloat(value.toFixed(2))}m`
 }
+
+function formatAngleLabel(start: WallPlanPoint, end: WallPlanPoint) {
+  const dx = end[0] - start[0]
+  const dz = end[1] - start[1]
+  const angle = Math.atan2(dz, dx)
+  const degrees = ((angle * 180) / Math.PI + 360) % 360
+  return `${Number.parseFloat(degrees.toFixed(1))} deg`
+}
+
+type FloorplanWallSketchFeedbackLayerProps = {
+  draftStart: WallPlanPoint | null
+  draftEnd: WallPlanPoint | null
+  snapResult: WallSketchSnapResult | null
+  palette: FloorplanPalette
+  unit: 'metric' | 'imperial'
+}
+
+const FloorplanWallSketchFeedbackLayer = memo(function FloorplanWallSketchFeedbackLayer({
+  draftStart,
+  draftEnd,
+  snapResult,
+  palette,
+  unit,
+}: FloorplanWallSketchFeedbackLayerProps) {
+  if (!draftStart) {
+    return null
+  }
+
+  const previewEnd = draftEnd ?? snapResult?.point ?? null
+  const previewLength = previewEnd
+    ? Math.hypot(previewEnd[0] - draftStart[0], previewEnd[1] - draftStart[1])
+    : 0
+  const hasPreview = previewEnd !== null && isWallLongEnough(draftStart, previewEnd)
+  const label =
+    hasPreview && previewEnd
+      ? `${formatMeasurement(previewLength, unit)}  ${formatAngleLabel(draftStart, previewEnd)}`
+      : null
+  const labelX = hasPreview && previewEnd ? (toSvgX(draftStart[0]) + toSvgX(previewEnd[0])) / 2 : 0
+  const labelY = hasPreview && previewEnd ? (toSvgY(draftStart[1]) + toSvgY(previewEnd[1])) / 2 : 0
+  const labelWidth = label
+    ? Math.max(0.9, label.length * FLOORPLAN_WALL_SKETCH_LABEL_FONT_SIZE * 0.58)
+    : 0
+  const labelHeight =
+    FLOORPLAN_WALL_SKETCH_LABEL_FONT_SIZE + FLOORPLAN_WALL_SKETCH_LABEL_PADDING_Y * 2
+
+  return (
+    <g className="wall-sketch-feedback" pointerEvents="none">
+      {snapResult?.guideLines.map((guide, index) => (
+        <line
+          key={`wall-sketch-guide-${index}`}
+          stroke={palette.draftStroke}
+          strokeDasharray={guide.kind === 'alignment' ? '0.08 0.1' : '0.2 0.14'}
+          strokeLinecap="round"
+          strokeOpacity={guide.kind === 'alignment' ? 0.36 : 0.5}
+          strokeWidth={guide.kind === 'alignment' ? '0.04' : '0.05'}
+          vectorEffect="non-scaling-stroke"
+          x1={toSvgX(guide.start[0])}
+          x2={toSvgX(guide.end[0])}
+          y1={toSvgY(guide.start[1])}
+          y2={toSvgY(guide.end[1])}
+        />
+      ))}
+
+      <circle
+        cx={toSvgX(draftStart[0])}
+        cy={toSvgY(draftStart[1])}
+        fill={palette.anchor}
+        fillOpacity={0.95}
+        r={FLOORPLAN_WALL_SKETCH_TARGET_RADIUS}
+        stroke={palette.surface}
+        strokeOpacity={0.9}
+        strokeWidth="0.04"
+        vectorEffect="non-scaling-stroke"
+      />
+
+      {snapResult?.target && (
+        <circle
+          cx={toSvgX(snapResult.target.point[0])}
+          cy={toSvgY(snapResult.target.point[1])}
+          fill="none"
+          r={FLOORPLAN_WALL_SKETCH_TARGET_RADIUS * 1.45}
+          stroke={palette.draftStroke}
+          strokeOpacity={0.9}
+          strokeWidth="0.05"
+          vectorEffect="non-scaling-stroke"
+        />
+      )}
+
+      {label && hasPreview && (
+        <g transform={`translate(${labelX} ${labelY})`}>
+          <rect
+            fill={palette.surface}
+            fillOpacity={0.92}
+            height={labelHeight}
+            rx={0.08}
+            stroke={palette.draftStroke}
+            strokeOpacity={0.35}
+            strokeWidth="0.02"
+            vectorEffect="non-scaling-stroke"
+            width={labelWidth + FLOORPLAN_WALL_SKETCH_LABEL_PADDING_X * 2}
+            x={-(labelWidth / 2 + FLOORPLAN_WALL_SKETCH_LABEL_PADDING_X)}
+            y={-(labelHeight + 0.14)}
+          />
+          <text
+            dominantBaseline="middle"
+            fill={palette.measurementStroke}
+            fontSize={FLOORPLAN_WALL_SKETCH_LABEL_FONT_SIZE}
+            fontWeight={700}
+            textAnchor="middle"
+            x={0}
+            y={-(labelHeight / 2 + 0.14)}
+          >
+            {label}
+          </text>
+        </g>
+      )}
+    </g>
+  )
+})
 
 function getPolygonAreaAndCentroid(polygon: Point2D[]) {
   let cx = 0
@@ -4750,6 +4901,7 @@ type FloorplanActionMenuEntry = {
   onDelete: FloorplanActionMenuHandler
   onMove: FloorplanActionMenuHandler
   onDuplicate?: FloorplanActionMenuHandler
+  extraActions?: NodeActionMenuExtraAction[]
 }
 
 type FloorplanActionMenuLayerProps = {
@@ -4795,6 +4947,7 @@ const FloorplanActionMenuLayer = memo(function FloorplanActionMenuLayer({
             <NodeActionMenu
               onDelete={entry.onDelete}
               onDuplicate={entry.onDuplicate}
+              extraActions={entry.extraActions}
               onMove={entry.onMove}
               onPointerDown={(event) => event.stopPropagation()}
               onPointerUp={(event) => event.stopPropagation()}
@@ -4874,7 +5027,7 @@ const FloorplanCursorIndicatorOverlay = memo(function FloorplanCursorIndicatorOv
     >
       {mode === 'delete' ? (
         <div
-          className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/5 bg-zinc-900/95 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.3),0_4px_8px_-4px_rgba(0,0,0,0.2)]"
+          className="flex h-8 w-8 items-center justify-center rounded-xl border border-border/60 bg-background/95 shadow-[0_8px_16px_-4px_rgba(15,23,42,0.16),0_4px_8px_-4px_rgba(15,23,42,0.12)]"
           style={{
             boxShadow: `0 8px 16px -4px rgba(0,0,0,0.3), 0 4px 8px -4px rgba(0,0,0,0.2), 0 0 18px ${cursorColor}22`,
             transform: `translate(${FLOORPLAN_CURSOR_BADGE_OFFSET_X}px, ${FLOORPLAN_CURSOR_BADGE_OFFSET_Y}px)`,
@@ -4909,7 +5062,7 @@ const FloorplanCursorIndicatorOverlay = memo(function FloorplanCursorIndicatorOv
             }}
           />
           <div
-            className="absolute top-0 left-1/2 flex h-8 w-8 items-center justify-center rounded-xl border border-white/5 bg-zinc-900/95 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.3),0_4px_8px_-4px_rgba(0,0,0,0.2)]"
+            className="absolute top-0 left-1/2 flex h-8 w-8 items-center justify-center rounded-xl border border-border/60 bg-background/95 shadow-[0_8px_16px_-4px_rgba(15,23,42,0.16),0_4px_8px_-4px_rgba(15,23,42,0.12)]"
             style={{
               transform: `translate(-50%, calc(-100% - ${FLOORPLAN_CURSOR_INDICATOR_LINE_HEIGHT}px))`,
             }}
@@ -4935,6 +5088,73 @@ const FloorplanCursorIndicatorOverlay = memo(function FloorplanCursorIndicatorOv
         </>
       )}
     </div>
+  )
+})
+
+type FloorplanWallLengthInputOverlayProps = {
+  input: WallSketchInputState | null
+  cursorPosition: SvgPoint | null
+  unit: 'metric' | 'imperial'
+  onCancel: () => void
+  onChange: (value: string) => void
+  onSubmit: (value: string) => void
+}
+
+const FloorplanWallLengthInputOverlay = memo(function FloorplanWallLengthInputOverlay({
+  input,
+  cursorPosition,
+  unit,
+  onCancel,
+  onChange,
+  onSubmit,
+}: FloorplanWallLengthInputOverlayProps) {
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (input) {
+      requestAnimationFrame(() => {
+        const element = inputRef.current
+        element?.focus()
+        element?.setSelectionRange(element.value.length, element.value.length)
+      })
+    }
+  }, [input])
+
+  if (!(input && cursorPosition)) {
+    return null
+  }
+
+  return (
+    <form
+      className="pointer-events-auto absolute z-30 flex h-9 items-center gap-1 rounded-lg border border-border/70 bg-background/95 px-2 shadow-[0_10px_24px_-10px_rgba(15,23,42,0.45)]"
+      onPointerDown={(event) => event.stopPropagation()}
+      onSubmit={(event) => {
+        event.preventDefault()
+        onSubmit(input.value)
+      }}
+      style={{
+        left: cursorPosition.x + FLOORPLAN_CURSOR_BADGE_OFFSET_X,
+        top: cursorPosition.y + FLOORPLAN_CURSOR_BADGE_OFFSET_Y,
+      }}
+    >
+      <input
+        ref={inputRef}
+        className="h-6 w-20 bg-transparent text-right font-medium font-mono text-foreground text-sm outline-none"
+        inputMode="decimal"
+        onChange={(event) => onChange(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            onCancel()
+          }
+        }}
+        type="text"
+        value={input.value}
+      />
+      <span className="select-none font-medium text-muted-foreground text-xs">
+        {unit === 'imperial' ? 'ft' : 'm'}
+      </span>
+    </form>
   )
 })
 
@@ -4984,6 +5204,8 @@ export function FloorplanPanel() {
   const setStructureLayer = useEditor((state) => state.setStructureLayer)
   const setTool = useEditor((state) => state.setTool)
   const tool = useEditor((state) => state.tool)
+  const wallEditOperation = useEditor((state) => state.wallEditOperation)
+  const setWallEditOperation = useEditor((state) => state.setWallEditOperation)
   const deleteNode = useScene((state) => state.deleteNode)
   const updateNode = useScene((state) => state.updateNode)
   const levelNode = useScene((state) =>
@@ -5145,6 +5367,10 @@ export function FloorplanPanel() {
 
   const [draftStart, setDraftStart] = useState<WallPlanPoint | null>(null)
   const [draftEnd, setDraftEnd] = useState<WallPlanPoint | null>(null)
+  const [wallSketchSnapResult, setWallSketchSnapResult] = useState<WallSketchSnapResult | null>(
+    null,
+  )
+  const [wallLengthInput, setWallLengthInput] = useState<WallSketchInputState | null>(null)
   const [slabDraftPoints, setSlabDraftPoints] = useState<WallPlanPoint[]>([])
   const [zoneDraftPoints, setZoneDraftPoints] = useState<WallPlanPoint[]>([])
   const [siteBoundaryDraft, setSiteBoundaryDraft] = useState<SiteBoundaryDraft | null>(null)
@@ -5158,6 +5384,8 @@ export function FloorplanPanel() {
   const [floorplanCursorPosition, setFloorplanCursorPosition] = useState<SvgPoint | null>(null)
   const [wallEndpointDraft, setWallEndpointDraft] = useState<WallEndpointDraft | null>(null)
   const [wallCurveDraft, setWallCurveDraft] = useState<WallCurveDraft | null>(null)
+  const [wallOffsetPreview, setWallOffsetPreview] = useState<WallOffsetPreview | null>(null)
+  const [wallEditFeedback, setWallEditFeedback] = useState<WallEditFeedback | null>(null)
   const [hoveredOpeningId, setHoveredOpeningId] = useState<OpeningNode['id'] | null>(null)
   const [hoveredWallId, setHoveredWallId] = useState<WallNode['id'] | null>(null)
   const [hoveredSlabId, setHoveredSlabId] = useState<SlabNode['id'] | null>(null)
@@ -5603,6 +5831,16 @@ export function FloorplanPanel() {
 
     return displayWallPolygons.find(({ wall }) => wall.id === selectedIds[0]) ?? null
   }, [displayWallPolygons, selectedIds])
+  const selectedWallPair = useMemo(() => {
+    if (selectedIds.length !== 2) {
+      return null
+    }
+
+    const [firstId, secondId] = selectedIds
+    const first = firstId ? wallById.get(firstId as WallNode['id']) : null
+    const second = secondId ? wallById.get(secondId as WallNode['id']) : null
+    return first && second ? ([first, second] as const) : null
+  }, [selectedIds, wallById])
   const selectedStairEntry = useMemo(() => {
     if (selectedIds.length !== 1) {
       return null
@@ -5633,6 +5871,21 @@ export function FloorplanPanel() {
 
     return displayZonePolygons.find(({ zone }) => zone.id === selectedZoneId) ?? null
   }, [displayZonePolygons, selectedZoneId])
+  const wallFilletPreview = useMemo<WallFilletPreview | null>(() => {
+    if (!(wallEditOperation === 'fillet' && selectedWallEntry && hoveredWallId)) {
+      return null
+    }
+
+    const hoveredWall = wallById.get(hoveredWallId)
+    if (!hoveredWall || hoveredWall.id === selectedWallEntry.wall.id) {
+      return null
+    }
+
+    return getWallFilletPreview({
+      primary: selectedWallEntry.wall,
+      secondary: hoveredWall,
+    })
+  }, [hoveredWallId, selectedWallEntry, wallById, wallEditOperation])
 
   const isSiteEditActive = phase === 'site'
   const isWallBuildActive = phase === 'structure' && mode === 'build' && tool === 'wall'
@@ -6001,6 +6254,27 @@ export function FloorplanPanel() {
     () => (draftPolygon ? formatPolygonPoints(draftPolygon) : null),
     [draftPolygon],
   )
+  const wallOffsetPreviewPolygon = useMemo(() => {
+    if (!(levelId && wallOffsetPreview)) {
+      return null
+    }
+
+    const previewWall = getFloorplanWall(
+      buildDraftWall(levelId, wallOffsetPreview.start, wallOffsetPreview.end),
+    )
+    return getWallPlanFootprint(previewWall, EMPTY_WALL_MITER_DATA)
+  }, [levelId, wallOffsetPreview])
+  const wallOffsetPreviewPoints = useMemo(
+    () => (wallOffsetPreviewPolygon ? formatPolygonPoints(wallOffsetPreviewPolygon) : null),
+    [wallOffsetPreviewPolygon],
+  )
+  const wallFilletPreviewPoints = useMemo(
+    () =>
+      wallFilletPreview?.points
+        ? formatPolygonPoints(wallFilletPreview.points.map(toPoint2D))
+        : null,
+    [wallFilletPreview],
+  )
   const activePolygonDraftPoints = useMemo(() => {
     if (isZoneBuildActive) {
       return zoneDraftPoints
@@ -6265,6 +6539,18 @@ export function FloorplanPanel() {
   useEffect(() => {
     setHoveredGuideCorner(null)
   }, [selectedGuide?.id])
+
+  useEffect(() => {
+    if (!wallEditFeedback) {
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setWallEditFeedback((current) => (current?.id === wallEditFeedback.id ? null : current))
+    }, FLOORPLAN_WALL_EDIT_FEEDBACK_TIMEOUT_MS)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [wallEditFeedback])
 
   useEffect(() => {
     if (!(selectedGuide && showGuides && canInteractWithGuides)) {
@@ -6693,6 +6979,8 @@ export function FloorplanPanel() {
   const clearWallPlacementDraft = useCallback(() => {
     setDraftStart(null)
     setDraftEnd(null)
+    setWallSketchSnapResult(null)
+    setWallLengthInput(null)
   }, [])
   const clearSlabPlacementDraft = useCallback(() => {
     setSlabDraftPoints([])
@@ -6710,6 +6998,9 @@ export function FloorplanPanel() {
     wallCurveDragRef.current = null
     setWallCurveDraft(null)
     setHoveredWallCurveHandleId(null)
+  }, [])
+  const clearWallEditPreview = useCallback(() => {
+    setWallOffsetPreview(null)
   }, [])
   const clearSiteBoundaryInteraction = useCallback(() => {
     setSiteVertexDragState(null)
@@ -6733,12 +7024,14 @@ export function FloorplanPanel() {
     clearZonePlacementDraft()
     clearWallEndpointDrag()
     clearWallCurveDrag()
+    clearWallEditPreview()
     clearSiteBoundaryInteraction()
     clearSlabBoundaryInteraction()
     clearZoneBoundaryInteraction()
     setCursorPoint(null)
   }, [
     clearWallCurveDrag,
+    clearWallEditPreview,
     clearSiteBoundaryInteraction,
     clearSlabBoundaryInteraction,
     clearSlabPlacementDraft,
@@ -6758,6 +7051,11 @@ export function FloorplanPanel() {
 
   useEffect(() => {
     const handleCancel = () => {
+      if ((isWallBuildActive && (draftStart || wallLengthInput)) || wallEditOperation) {
+        markToolCancelConsumed()
+      }
+
+      setWallEditOperation(null)
       clearDraft()
     }
 
@@ -6765,7 +7063,88 @@ export function FloorplanPanel() {
     return () => {
       emitter.off('tool:cancel', handleCancel)
     }
-  }, [clearDraft])
+  }, [clearDraft, draftStart, isWallBuildActive, setWallEditOperation, wallEditOperation, wallLengthInput])
+
+  const commitWallPreviewAndEndSketch = useCallback(() => {
+    if (!(draftStart && draftEnd && isWallLongEnough(draftStart, draftEnd))) {
+      return false
+    }
+
+    createWallOnCurrentLevel(draftStart, draftEnd)
+    clearDraft()
+    return true
+  }, [clearDraft, draftEnd, draftStart])
+
+  const commitWallLengthInput = useCallback(
+    (value: string) => {
+      const length = parseWallSketchLengthInput(value, unit)
+      const direction = getWallSketchDirection(draftStart, draftEnd)
+
+      if (!(draftStart && direction && length)) {
+        return false
+      }
+
+      const end = getPointAtWallSketchLength(draftStart, direction, length)
+      if (!isWallLongEnough(draftStart, end)) {
+        return false
+      }
+
+      createWallOnCurrentLevel(draftStart, end)
+      clearDraft()
+      return true
+    },
+    [clearDraft, draftEnd, draftStart, unit],
+  )
+
+  useEffect(() => {
+    const handleWallSketchKeyDown = (event: KeyboardEvent) => {
+      if (!isWallBuildActive || wallLengthInput) {
+        return
+      }
+
+      const target = event.target
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey
+      ) {
+        return
+      }
+
+      if (event.key === 'Enter') {
+        if (commitWallPreviewAndEndSketch()) {
+          event.preventDefault()
+        }
+        return
+      }
+
+      if (!draftStart || !getWallSketchDirection(draftStart, draftEnd)) {
+        return
+      }
+
+      if (/^[0-9.]$/.test(event.key)) {
+        event.preventDefault()
+        setWallLengthInput({
+          value: event.key === '.' ? '0.' : event.key,
+        })
+      }
+    }
+
+    window.addEventListener('keydown', handleWallSketchKeyDown)
+    return () => window.removeEventListener('keydown', handleWallSketchKeyDown)
+  }, [commitWallPreviewAndEndSketch, draftEnd, draftStart, isWallBuildActive, wallLengthInput])
+
+  const handleWallLengthInputSubmit = useCallback(
+    (value: string) => {
+      if (!commitWallLengthInput(value)) {
+        setWallLengthInput(null)
+      }
+    },
+    [commitWallLengthInput],
+  )
 
   const createSlabOnCurrentLevel = useCallback(
     (points: WallPlanPoint[]) => {
@@ -6808,6 +7187,291 @@ export function FloorplanPanel() {
     },
     [levelId, setSelection],
   )
+
+  const showWallEditFeedback = useCallback((message: string) => {
+    setWallEditFeedback({ id: Date.now(), message })
+  }, [])
+
+  const finishWallEditOperation = useCallback(() => {
+    setWallEditOperation(null)
+    setWallOffsetPreview(null)
+  }, [setWallEditOperation])
+
+  const runWallEditResult = useCallback(
+    (result: ReturnType<typeof buildSplitWallPlan>) => {
+      if (!result.ok) {
+        showWallEditFeedback(result.reason)
+        return false
+      }
+
+      if (!applyWallEditResult(result)) {
+        showWallEditFeedback('Wall edit could not be applied.')
+        return false
+      }
+
+      const nextSelectedIds = result.plan.selectIds ?? []
+      setSelection({ selectedIds: nextSelectedIds })
+      setSelectedReferenceId(null)
+      sfxEmitter.emit('sfx:structure-build')
+      finishWallEditOperation()
+      return true
+    },
+    [finishWallEditOperation, setSelectedReferenceId, setSelection, showWallEditFeedback],
+  )
+
+  const activateWallEditOperation = useCallback(
+    (operation: WallEditOperation) => {
+      setPhase('structure')
+      setStructureLayer('elements')
+      setMode('select')
+      setTool(null)
+      clearWallPlacementDraft()
+      clearWallEndpointDrag()
+      clearWallCurveDrag()
+
+      const nextOperation = wallEditOperation === operation ? null : operation
+      setWallEditOperation(nextOperation)
+      setWallOffsetPreview(
+        nextOperation === 'offset' && selectedWallEntry
+          ? getWallOffsetPreview({ wall: selectedWallEntry.wall })
+          : null,
+      )
+
+      if (!nextOperation) {
+        return
+      }
+
+      const hints: Record<WallEditOperation, string> = {
+        'trim-extend': 'Click a wall segment to trim, or an endpoint to extend.',
+        split: 'Click a wall where it should break.',
+        merge: 'Click a collinear wall that shares this endpoint.',
+        offset: 'Move the pointer to choose side and distance, then click.',
+        fillet: 'Click another wall that shares this corner.',
+      }
+      showWallEditFeedback(hints[nextOperation])
+    },
+    [
+      clearWallCurveDrag,
+      clearWallEndpointDrag,
+      clearWallPlacementDraft,
+      selectedWallEntry,
+      setMode,
+      setPhase,
+      setStructureLayer,
+      setTool,
+      setWallEditOperation,
+      showWallEditFeedback,
+      wallEditOperation,
+    ],
+  )
+
+  const getSelectedWallPair = useCallback(() => {
+    if (selectedWallPair) {
+      return selectedWallPair
+    }
+
+    const [firstId, secondId] = useViewer.getState().selection.selectedIds
+    const nodes = useScene.getState().nodes
+    const first = firstId ? nodes[firstId as AnyNodeId] : null
+    const second = secondId ? nodes[secondId as AnyNodeId] : null
+    return first?.type === 'wall' && second?.type === 'wall' ? ([first, second] as const) : null
+  }, [selectedWallPair])
+
+  const handleWallEditForWallClick = useCallback(
+    (wall: WallNode, planPoint: WallPlanPoint) => {
+      const operation = wallEditOperation
+      if (!operation) {
+        return false
+      }
+
+      const nodes = useScene.getState().nodes
+
+      if (operation === 'trim-extend') {
+        return runWallEditResult(
+          buildTrimExtendWallPlan({
+            wall,
+            walls,
+            clickPoint: planPoint,
+            nodes,
+          }),
+        )
+      }
+
+      if (operation === 'split') {
+        return runWallEditResult(buildSplitWallPlan({ wall, splitPoint: planPoint, nodes }))
+      }
+
+      if (operation === 'offset') {
+        const offsetSource = selectedWallEntry?.wall ?? wall
+        const preview = getWallOffsetPreview({ wall: offsetSource, point: planPoint })
+        if (!preview) {
+          showWallEditFeedback('Only straight walls can be offset.')
+          return true
+        }
+        return runWallEditResult(buildOffsetWallPlan({ wall: offsetSource, preview }))
+      }
+
+      const primary = selectedWallEntry?.wall
+      if (!primary) {
+        setSelectedReferenceId(null)
+        setSelection({ selectedIds: [wall.id] })
+        showWallEditFeedback(
+          operation === 'merge'
+            ? 'Select the first wall, then click the wall to merge.'
+            : 'Select the first wall, then click the wall to fillet.',
+        )
+        return true
+      }
+
+      if (primary.id === wall.id) {
+        showWallEditFeedback('Click a second wall for this edit.')
+        return true
+      }
+
+      if (operation === 'merge') {
+        return runWallEditResult(buildMergeWallsPlan({ primary, secondary: wall, nodes }))
+      }
+
+      if (operation === 'fillet') {
+        return runWallEditResult(buildFilletWallsPlan({ primary, secondary: wall, nodes }))
+      }
+
+      return false
+    },
+    [
+      runWallEditResult,
+      selectedWallEntry,
+      setSelectedReferenceId,
+      setSelection,
+      showWallEditFeedback,
+      wallEditOperation,
+      walls,
+    ],
+  )
+
+  const commitWallOffsetAtPoint = useCallback(
+    (planPoint: WallPlanPoint) => {
+      const wall = selectedWallEntry?.wall
+      if (!(wallEditOperation === 'offset' && wall)) {
+        return false
+      }
+
+      const preview = getWallOffsetPreview({ wall, point: planPoint }) ?? wallOffsetPreview
+      if (!preview) {
+        showWallEditFeedback('Only straight walls can be offset.')
+        return true
+      }
+
+      return runWallEditResult(buildOffsetWallPlan({ wall, preview }))
+    },
+    [
+      runWallEditResult,
+      selectedWallEntry,
+      showWallEditFeedback,
+      wallEditOperation,
+      wallOffsetPreview,
+    ],
+  )
+
+  const handleSelectedWallTrimExtend = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation()
+      activateWallEditOperation('trim-extend')
+    },
+    [activateWallEditOperation],
+  )
+
+  const handleSelectedWallSplit = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation()
+      const wall = selectedWallEntry?.wall
+      if (!wall) {
+        activateWallEditOperation('split')
+        return
+      }
+
+      const splitPoint: WallPlanPoint = [
+        (wall.start[0] + wall.end[0]) / 2,
+        (wall.start[1] + wall.end[1]) / 2,
+      ]
+      runWallEditResult(
+        buildSplitWallPlan({
+          wall,
+          splitPoint,
+          nodes: useScene.getState().nodes,
+        }),
+      )
+    },
+    [activateWallEditOperation, runWallEditResult, selectedWallEntry],
+  )
+
+  const handleSelectedWallMerge = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation()
+      const pair = getSelectedWallPair()
+      if (!pair) {
+        activateWallEditOperation('merge')
+        return
+      }
+
+      runWallEditResult(
+        buildMergeWallsPlan({
+          primary: pair[0],
+          secondary: pair[1],
+          nodes: useScene.getState().nodes,
+        }),
+      )
+    },
+    [activateWallEditOperation, getSelectedWallPair, runWallEditResult],
+  )
+
+  const handleSelectedWallOffset = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation()
+      if (!selectedWallEntry) {
+        showWallEditFeedback('Select one wall to offset.')
+        return
+      }
+      activateWallEditOperation('offset')
+    },
+    [activateWallEditOperation, selectedWallEntry, showWallEditFeedback],
+  )
+
+  const handleSelectedWallFillet = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation()
+      const pair = getSelectedWallPair()
+      if (!pair) {
+        activateWallEditOperation('fillet')
+        return
+      }
+
+      runWallEditResult(
+        buildFilletWallsPlan({
+          primary: pair[0],
+          secondary: pair[1],
+          nodes: useScene.getState().nodes,
+        }),
+      )
+    },
+    [activateWallEditOperation, getSelectedWallPair, runWallEditResult],
+  )
+
+  useEffect(() => {
+    if (wallEditOperation !== 'offset') {
+      setWallOffsetPreview(null)
+    }
+  }, [wallEditOperation])
+
+  useEffect(() => {
+    if (!wallEditOperation) {
+      return
+    }
+
+    if (phase !== 'structure' || structureLayer === 'zones' || mode !== 'select') {
+      finishWallEditOperation()
+    }
+  }, [finishWallEditOperation, mode, phase, structureLayer, wallEditOperation])
 
   useEffect(() => {
     if (!isStairBuildActive) {
@@ -7625,6 +8289,16 @@ export function FloorplanPanel() {
         return
       }
 
+      if (wallEditOperation === 'offset' && selectedWallEntry) {
+        const preview = getWallOffsetPreview({
+          wall: selectedWallEntry.wall,
+          point: planPoint,
+        })
+        setWallOffsetPreview(preview)
+        setCursorPoint(planPoint)
+        return
+      }
+
       if (isFloorplanGridInteractionActive) {
         const snappedPoint = emitFloorplanGridEvent('move', planPoint, event)
         setCursorPoint((previousPoint) =>
@@ -7696,17 +8370,24 @@ export function FloorplanPanel() {
 
       if (!isWallBuildActive) {
         setCursorPoint(null)
+        setWallSketchSnapResult(null)
         return
       }
 
-      const snappedPoint = snapWallDraftPoint({
+      if (wallLengthInput) {
+        return
+      }
+
+      const snapResult = resolveWallSketchSnap({
         point: planPoint,
         walls,
-        start: draftStart ?? undefined,
-        angleSnap: Boolean(draftStart) && !shiftPressed,
+        anchor: draftStart ?? undefined,
+        enableInference: Boolean(draftStart) && !shiftPressed,
       })
+      const snappedPoint = snapResult.point
 
       setCursorPoint(snappedPoint)
+      setWallSketchSnapResult(snapResult)
 
       if (!draftStart) {
         return
@@ -7737,6 +8418,7 @@ export function FloorplanPanel() {
       isOpeningPlacementActive,
       isPolygonBuildActive,
       isWallBuildActive,
+      selectedWallEntry,
       siteVertexDragState,
       slabVertexDragState,
       shiftPressed,
@@ -7747,6 +8429,8 @@ export function FloorplanPanel() {
       viewBox.width,
       viewport,
       walls,
+      wallEditOperation,
+      wallLengthInput,
       zoneVertexDragState,
     ],
   )
@@ -7856,9 +8540,13 @@ export function FloorplanPanel() {
       }
 
       createWallOnCurrentLevel(draftStart, point)
-      clearDraft()
+      setDraftStart(point)
+      setDraftEnd(point)
+      setCursorPoint(point)
+      setWallSketchSnapResult(null)
+      setWallLengthInput(null)
     },
-    [clearDraft, draftStart],
+    [draftStart],
   )
 
   const handleBackgroundClick = useCallback(
@@ -7869,6 +8557,10 @@ export function FloorplanPanel() {
 
       const planPoint = getPlanPointFromClientPoint(event.clientX, event.clientY)
       if (!planPoint) {
+        return
+      }
+
+      if (wallEditOperation === 'offset' && commitWallOffsetAtPoint(planPoint)) {
         return
       }
 
@@ -7939,16 +8631,19 @@ export function FloorplanPanel() {
         return
       }
 
-      const snappedPoint = snapWallDraftPoint({
+      const snapResult = resolveWallSketchSnap({
         point: planPoint,
         walls,
-        start: draftStart ?? undefined,
-        angleSnap: Boolean(draftStart) && !shiftPressed,
+        anchor: draftStart ?? undefined,
+        enableInference: Boolean(draftStart) && !shiftPressed,
       })
+      const snappedPoint = snapResult.point
 
+      setWallSketchSnapResult(snapResult)
       handleWallPlacementPoint(snappedPoint)
     },
     [
+      commitWallOffsetAtPoint,
       draftStart,
       emitFloorplanGridEvent,
       floorplanOpeningLocalY,
@@ -7971,6 +8666,7 @@ export function FloorplanPanel() {
       structureLayer,
       visibleZonePolygons,
       walls,
+      wallEditOperation,
     ],
   )
   const handleBackgroundDoubleClick = useCallback(
@@ -8307,6 +9003,15 @@ export function FloorplanPanel() {
 
   const handleWallClick = useCallback(
     (wall: WallNode, event: ReactMouseEvent<SVGElement>) => {
+      if (wallEditOperation) {
+        const planPoint = getPlanPointFromClientPoint(event.clientX, event.clientY)
+        if (planPoint && handleWallEditForWallClick(wall, planPoint)) {
+          event.stopPropagation()
+          event.preventDefault()
+          return
+        }
+      }
+
       const centerX = (wall.start[0] + wall.end[0]) / 2
       const centerZ = (wall.start[1] + wall.end[1]) / 2
       const halfLength = Math.hypot(wall.end[0] - wall.start[0], wall.end[1] - wall.start[1]) / 2
@@ -8321,7 +9026,14 @@ export function FloorplanPanel() {
         nativeEvent: event.nativeEvent as any,
       } as any)
     },
-    [floorplanOpeningLocalY, isOpeningPlacementActive, setSelectedReferenceId],
+    [
+      floorplanOpeningLocalY,
+      getPlanPointFromClientPoint,
+      handleWallEditForWallClick,
+      isOpeningPlacementActive,
+      setSelectedReferenceId,
+      wallEditOperation,
+    ],
   )
 
   const handleWallDoubleClick = useCallback(
@@ -9800,11 +10512,58 @@ export function FloorplanPanel() {
     selectedOpeningEntry,
     selectedStairEntry,
   ])
+  const wallActionMenuExtraActions = useMemo<NodeActionMenuExtraAction[]>(
+    () => [
+      {
+        id: 'wall-trim-extend',
+        label: 'Trim / Extend',
+        icon: <Icon height={16} icon="mdi:vector-line" width={16} />,
+        onClick: handleSelectedWallTrimExtend,
+        active: wallEditOperation === 'trim-extend',
+      },
+      {
+        id: 'wall-split',
+        label: 'Split',
+        icon: <Icon height={16} icon="mdi:call-split" width={16} />,
+        onClick: handleSelectedWallSplit,
+        active: wallEditOperation === 'split',
+      },
+      {
+        id: 'wall-merge',
+        label: 'Merge',
+        icon: <Icon height={16} icon="mdi:call-merge" width={16} />,
+        onClick: handleSelectedWallMerge,
+        active: wallEditOperation === 'merge',
+      },
+      {
+        id: 'wall-offset',
+        label: 'Offset',
+        icon: <Icon height={16} icon="mdi:arrow-expand-horizontal" width={16} />,
+        onClick: handleSelectedWallOffset,
+        active: wallEditOperation === 'offset',
+      },
+      {
+        id: 'wall-fillet',
+        label: 'Fillet',
+        icon: <Icon height={16} icon="mdi:vector-radius" width={16} />,
+        onClick: handleSelectedWallFillet,
+        active: wallEditOperation === 'fillet',
+      },
+    ],
+    [
+      handleSelectedWallFillet,
+      handleSelectedWallMerge,
+      handleSelectedWallOffset,
+      handleSelectedWallSplit,
+      handleSelectedWallTrimExtend,
+      wallEditOperation,
+    ],
+  )
   const activeDraftAnchorPoint = draftStart ?? activePolygonDraftPoints[0] ?? null
   const floorplanCursorColor =
     mode === 'delete'
       ? palette.deleteStroke
-      : wallEndpointDraft
+      : wallEndpointDraft || wallEditOperation
         ? palette.editCursor
         : activeDraftAnchorPoint
           ? palette.draftStroke
@@ -9833,6 +10592,26 @@ export function FloorplanPanel() {
           isPanning={isPanning}
           movingOpeningType={movingOpeningType}
         />
+        <FloorplanWallLengthInputOverlay
+          cursorPosition={floorplanCursorPosition}
+          input={wallLengthInput}
+          onCancel={() => setWallLengthInput(null)}
+          onChange={(value) => setWallLengthInput({ value })}
+          onSubmit={handleWallLengthInputSubmit}
+          unit={unit}
+        />
+        {wallEditFeedback && (
+          <div
+            className="pointer-events-none absolute z-30 max-w-64 rounded-lg border border-border/70 bg-background/95 px-3 py-2 font-medium text-foreground text-xs shadow-[0_10px_24px_-10px_rgba(15,23,42,0.45)]"
+            style={{
+              left: floorplanCursorAnchorPosition?.x ?? 16,
+              top: floorplanCursorAnchorPosition?.y ?? 16,
+              transform: floorplanCursorAnchorPosition ? 'translate(14px, 14px)' : undefined,
+            }}
+          >
+            {wallEditFeedback.message}
+          </div>
+        )}
         {showGuides && canInteractWithGuides && selectedGuide && (
           <FloorplanGuideHandleHint
             anchor={guideHandleHintAnchor}
@@ -9873,6 +10652,7 @@ export function FloorplanPanel() {
           wall={{
             position: selectedWallActionMenuPosition,
             onDelete: handleSelectedWallDelete,
+            extraActions: wallActionMenuExtraActions,
             onMove: handleSelectedWallMove,
           }}
         />
@@ -10079,6 +10859,39 @@ export function FloorplanPanel() {
                   vectorEffect="non-scaling-stroke"
                 />
               )}
+
+              {wallOffsetPreviewPoints && (
+                <polygon
+                  fill={palette.draftFill}
+                  fillOpacity={0.18}
+                  points={wallOffsetPreviewPoints}
+                  stroke={palette.draftStroke}
+                  strokeDasharray="0.2 0.12"
+                  strokeWidth="0.06"
+                  vectorEffect="non-scaling-stroke"
+                />
+              )}
+
+              {wallFilletPreviewPoints && (
+                <polyline
+                  fill="none"
+                  points={wallFilletPreviewPoints}
+                  stroke={palette.draftStroke}
+                  strokeDasharray="0.12 0.08"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="0.08"
+                  vectorEffect="non-scaling-stroke"
+                />
+              )}
+
+              <FloorplanWallSketchFeedbackLayer
+                draftEnd={draftEnd}
+                draftStart={draftStart}
+                palette={palette}
+                snapResult={wallSketchSnapResult}
+                unit={unit}
+              />
 
               {polygonDraftPolygonPoints && (
                 <polygon

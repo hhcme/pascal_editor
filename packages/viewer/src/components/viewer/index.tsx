@@ -30,13 +30,16 @@ import PostProcessing from './post-processing'
 import { SelectionManager } from './selection-manager'
 import { ViewerCamera } from './viewer-camera'
 
+const SOFT_DARK_SCENE_BG = '#eef2f7'
+const SOFT_LIGHT_SCENE_BG = '#f8fafc'
+
 function AnimatedBackground({ isDark }: { isDark: boolean }) {
   const targetColor = useMemo(() => new THREE.Color(), [])
   const initialized = useRef(false)
 
   useFrame(({ scene }, delta) => {
     const dt = Math.min(delta, 0.1) * 4
-    const targetHex = isDark ? '#1f2433' : '#ffffff'
+    const targetHex = isDark ? SOFT_DARK_SCENE_BG : SOFT_LIGHT_SCENE_BG
 
     if (!(scene.background && scene.background instanceof THREE.Color)) {
       scene.background = new THREE.Color(targetHex)
@@ -114,7 +117,7 @@ const Viewer: React.FC<ViewerProps> = ({
   return (
     <Canvas
       camera={{ position: [50, 50, 50], fov: 50 }}
-      className={`transition-colors duration-700 ${theme === 'dark' ? 'bg-[#1f2433]' : 'bg-[#fafafa]'}`}
+      className={`transition-colors duration-700 ${theme === 'dark' ? 'bg-[#eef2f7]' : 'bg-[#f8fafc]'}`}
       dpr={[1, 1.5]}
       frameloop="never"
       gl={async (props) => {
@@ -143,7 +146,7 @@ const Viewer: React.FC<ViewerProps> = ({
       }}
     >
       <FrameLimiter fps={50} />
-      {/* <AnimatedBackground isDark={theme === 'dark'} /> */}
+      <AnimatedBackground isDark={theme === 'dark'} />
       <ViewerCamera />
 
       {/* <directionalLight position={[10, 10, 5]} intensity={0.5} castShadow

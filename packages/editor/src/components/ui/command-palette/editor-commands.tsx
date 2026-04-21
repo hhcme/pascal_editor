@@ -70,6 +70,18 @@ export function EditorCommands() {
       })
     }
 
+    const activateWallEdit = (
+      operation: 'trim-extend' | 'split' | 'merge' | 'offset' | 'fillet',
+    ) => {
+      run(() => {
+        setPhase('structure')
+        setStructureLayer('elements')
+        setMode('select')
+        setTool(null)
+        useEditor.getState().setWallEditOperation(operation)
+      })
+    }
+
     return register([
       // ── Scene ────────────────────────────────────────────────────────────
       {
@@ -79,6 +91,41 @@ export function EditorCommands() {
         icon: <Square className="h-4 w-4" />,
         keywords: ['draw', 'build', 'structure'],
         execute: () => activateTool('wall'),
+      },
+      {
+        id: 'editor.wall-edit.trim-extend',
+        label: 'Trim / Extend Walls',
+        group: 'Wall Editing',
+        keywords: ['trim', 'extend', 'wall', 'cad'],
+        execute: () => activateWallEdit('trim-extend'),
+      },
+      {
+        id: 'editor.wall-edit.split',
+        label: 'Split Wall',
+        group: 'Wall Editing',
+        keywords: ['break', 'split', 'wall', 'cad'],
+        execute: () => activateWallEdit('split'),
+      },
+      {
+        id: 'editor.wall-edit.merge',
+        label: 'Merge Walls',
+        group: 'Wall Editing',
+        keywords: ['join', 'merge', 'wall', 'cad'],
+        execute: () => activateWallEdit('merge'),
+      },
+      {
+        id: 'editor.wall-edit.offset',
+        label: 'Offset Wall',
+        group: 'Wall Editing',
+        keywords: ['parallel', 'offset', 'wall', 'cad'],
+        execute: () => activateWallEdit('offset'),
+      },
+      {
+        id: 'editor.wall-edit.fillet',
+        label: 'Fillet Walls',
+        group: 'Wall Editing',
+        keywords: ['round', 'radius', 'fillet', 'wall', 'cad'],
+        execute: () => activateWallEdit('fillet'),
       },
       {
         id: 'editor.tool.slab',

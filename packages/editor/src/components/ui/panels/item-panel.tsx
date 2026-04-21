@@ -183,7 +183,7 @@ export function ItemPanel() {
           <button
             className={cn(
               'flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground',
-              uniformScale ? 'bg-[#3e3e3e]' : 'bg-[#2C2C2E] hover:bg-[#3e3e3e]',
+              uniformScale ? 'bg-accent' : 'bg-background hover:bg-accent/70',
             )}
             onClick={() => setUniformScale((v) => !v)}
             type="button"
@@ -266,7 +266,7 @@ export function ItemPanel() {
           {(() => {
             const [w, h, d] = getScaledDimensions(node)
             return (
-              <span className="font-mono text-white">
+              <span className="font-mono text-foreground">
                 {Math.round(w * 100) / 100}×{Math.round(h * 100) / 100}×{Math.round(d * 100) / 100}
               </span>
             )

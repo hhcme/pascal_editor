@@ -203,7 +203,7 @@ export function EditorLayoutV2({
   overlays,
 }: EditorLayoutV2Props) {
   return (
-    <div className="dark flex h-full w-full flex-col bg-sidebar text-foreground">
+    <div className="flex h-full w-full flex-col bg-sidebar text-foreground">
       {/* Top navbar */}
       {navbarSlot}
 

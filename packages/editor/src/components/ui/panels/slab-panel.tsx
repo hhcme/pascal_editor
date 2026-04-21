@@ -176,7 +176,7 @@ export function SlabPanel() {
       <PanelSection title="Info">
         <div className="flex items-center justify-between px-2 py-1 text-muted-foreground text-sm">
           <span>Area</span>
-          <span className="font-mono text-white">{area.toFixed(2)} m²</span>
+          <span className="font-mono text-foreground">{area.toFixed(2)} m²</span>
         </div>
       </PanelSection>
 
@@ -200,7 +200,7 @@ export function SlabPanel() {
                 >
                   <div className="min-w-0 flex-1">
                     <p
-                      className={`font-medium text-xs ${isEditing ? 'text-primary' : 'text-white'}`}
+                      className={`font-medium text-xs ${isEditing ? 'text-primary' : 'text-foreground'}`}
                     >
                       Hole {index + 1} {isEditing && '(Editing)'}
                     </p>
@@ -217,13 +217,13 @@ export function SlabPanel() {
                         onClick={() => setEditingHole(null)}
                       />
                     ) : isAutoHole ? (
-                      <div className="rounded-md bg-[#2C2C2E] px-2 py-1 text-[10px] text-muted-foreground">
+                      <div className="rounded-md bg-background px-2 py-1 text-[10px] text-muted-foreground">
                         Auto
                       </div>
                     ) : (
                       <>
                         <button
-                          className="flex h-7 w-7 items-center justify-center rounded-md bg-[#2C2C2E] text-muted-foreground hover:bg-[#3e3e3e] hover:text-foreground"
+                          className="flex h-7 w-7 items-center justify-center rounded-md bg-background text-muted-foreground hover:bg-accent/70 hover:text-foreground"
                           onClick={() => handleEditHole(index)}
                           type="button"
                         >

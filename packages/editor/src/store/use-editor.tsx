@@ -25,6 +25,7 @@ import {
 import { useViewer } from '@pascal-app/viewer'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import type { WallEditOperation } from '../components/tools/wall/wall-edit-geometry'
 import { getDefaultCatalogItem } from '../components/ui/item-catalog/catalog-items'
 
 const DEFAULT_ACTIVE_SIDEBAR_PANEL = 'site'
@@ -164,6 +165,8 @@ type EditorState = {
   setFloorplanHovered: (hovered: boolean) => void
   floorplanSelectionTool: FloorplanSelectionTool
   setFloorplanSelectionTool: (tool: FloorplanSelectionTool) => void
+  wallEditOperation: WallEditOperation | null
+  setWallEditOperation: (operation: WallEditOperation | null) => void
   gridSnapStep: GridSnapStep
   setGridSnapStep: (step: GridSnapStep) => void
   // First-person walkthrough mode (street view)
@@ -548,6 +551,8 @@ const useEditor = create<EditorState>()(
       setFloorplanHovered: (hovered) => set({ isFloorplanHovered: hovered }),
       floorplanSelectionTool: 'click' as FloorplanSelectionTool,
       setFloorplanSelectionTool: (tool) => set({ floorplanSelectionTool: tool }),
+      wallEditOperation: null,
+      setWallEditOperation: (operation) => set({ wallEditOperation: operation }),
       gridSnapStep: DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE.gridSnapStep,
       setGridSnapStep: (step) => set({ gridSnapStep: step }),
       allowUndergroundCamera: false,

@@ -212,7 +212,7 @@ export function MetricControl({
     <div
       className={cn(
         'group flex h-10 w-full items-center justify-between rounded-lg border border-border/50 px-3 text-sm transition-colors',
-        isDragging ? 'bg-[#3e3e3e]' : 'bg-[#2C2C2E] hover:bg-[#3e3e3e]',
+        isDragging ? 'bg-accent' : 'bg-background hover:bg-accent/70',
         className,
       )}
       onMouseEnter={() => setIsHovered(true)}

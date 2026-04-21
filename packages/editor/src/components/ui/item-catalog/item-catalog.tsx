@@ -104,7 +104,7 @@ export function ItemCatalog({ category }: { category: CatalogCategory }) {
                       isActive
                         ? 'bg-blue-500 text-white'
                         : isEmpty
-                          ? 'cursor-not-allowed bg-zinc-800 text-zinc-500'
+                          ? 'cursor-not-allowed bg-muted text-muted-foreground/60'
                           : 'bg-blue-950/50 text-blue-300 hover:bg-blue-900/60 hover:text-blue-200',
                     )}
                     disabled={isEmpty}
@@ -141,7 +141,7 @@ export function ItemCatalog({ category }: { category: CatalogCategory }) {
                       isActive
                         ? 'bg-violet-500 text-white'
                         : isEmpty
-                          ? 'cursor-not-allowed bg-zinc-800 text-zinc-500'
+                          ? 'cursor-not-allowed bg-muted text-muted-foreground/60'
                           : 'bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground',
                     )}
                     disabled={isEmpty}
@@ -195,7 +195,7 @@ export function ItemCatalog({ category }: { category: CatalogCategory }) {
                     src={resolveCdnUrl(item.thumbnail) || ''}
                   />
                   {attachmentIcon && (
-                    <div className="absolute right-0.5 bottom-0.5 flex h-4 w-4 items-center justify-center rounded bg-black/60">
+                    <div className="absolute right-0.5 bottom-0.5 flex h-4 w-4 items-center justify-center rounded border border-border/50 bg-background/80">
                       <Image
                         alt={item.attachTo === 'ceiling' ? 'Ceiling attachment' : 'Wall attachment'}
                         className="h-4 w-4"

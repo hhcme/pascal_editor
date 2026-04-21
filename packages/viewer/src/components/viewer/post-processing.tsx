@@ -44,8 +44,8 @@ export const SSGI_PARAMS = {
 const MAX_PIPELINE_RETRIES = 3
 const RETRY_DELAY_MS = 500
 
-const DARK_BG = '#1f2433'
-const LIGHT_BG = '#ffffff'
+const DARK_BG = '#eef2f7'
+const LIGHT_BG = '#f8fafc'
 
 function BasicRenderPass() {
   const { gl: renderer, scene, camera } = useThree()

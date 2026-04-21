@@ -47,6 +47,37 @@ function postToHost(type: string, payload?: unknown) {
   window.parent.postMessage({ source: 'findtop-editor', type, payload }, '*')
 }
 
+async function readCanvasAsPng(canvas: HTMLCanvasElement): Promise<{
+  data: string
+  width: number
+  height: number
+}> {
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+  if (!blob) {
+    throw new Error('Failed to capture canvas as PNG')
+  }
+
+  const data = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read canvas PNG'))
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        reject(new Error('Failed to encode canvas PNG'))
+        return
+      }
+      const [, base64 = ''] = reader.result.split(',', 2)
+      resolve(base64)
+    }
+    reader.readAsDataURL(blob)
+  })
+
+  return {
+    data,
+    width: canvas.width,
+    height: canvas.height,
+  }
+}
+
 function readProjectContext() {
   if (typeof window === 'undefined') {
     return {
@@ -108,6 +139,13 @@ export default function Home() {
   const bootstrapLoadedRef = useRef(false)
   const recoveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(false)
+
+  useEffect(() => {
+    const viewer = useViewer.getState()
+    if (viewer.theme !== 'light') {
+      viewer.setTheme('light')
+    }
+  }, [])
 
   const fetchBootstrap = useCallback(async (): Promise<EditorBootstrapPayload> => {
     return requestProjectJson<EditorBootstrapPayload>(context.projectId, 'bootstrap')
@@ -288,6 +326,38 @@ export default function Home() {
       await saveCanvasAsPng(canvas, `screenshot_${date}.png`, exportFilters.png)
     }
 
+    async function captureAiRenderSourceFromHost(payload: {
+      requestId?: string
+      renderType?: 'exterior' | 'interior' | 'garden'
+    }) {
+      const requestId = payload.requestId
+      if (!requestId) return
+
+      try {
+        const canvas = document.querySelector('canvas')
+        if (!(canvas instanceof HTMLCanvasElement)) {
+          throw new Error('Viewer canvas is not ready')
+        }
+
+        const image = await readCanvasAsPng(canvas)
+        postToHost('ai-render-source-result', {
+          requestId,
+          status: 'success',
+          image: {
+            ...image,
+            mime: 'image/png',
+          },
+          camera: null,
+        })
+      } catch (error) {
+        postToHost('ai-render-source-result', {
+          requestId,
+          status: 'error',
+          message: error instanceof Error ? error.message : 'AI render source capture failed',
+        })
+      }
+    }
+
     function onMessage(event: MessageEvent<HostCommand>) {
       if (event.data?.source !== 'findtop-host') return
       if (event.data.type === 'save') {
@@ -341,6 +411,20 @@ export default function Home() {
             message: error instanceof Error ? error.message : 'Host-triggered screenshot export failed',
           })
         })
+        return
+      }
+
+      if (event.data.type === 'capture-ai-render-source') {
+        const payload =
+          event.data.payload && typeof event.data.payload === 'object'
+            ? (event.data.payload as {
+                requestId?: string
+                renderType?: 'exterior' | 'interior' | 'garden'
+              })
+            : {}
+        void captureAiRenderSourceFromHost(
+          payload,
+        )
       }
     }
 

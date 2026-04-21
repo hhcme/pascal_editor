@@ -24,7 +24,7 @@ const TOOLBAR_CONTAINER =
 
 /** Ghost button inside a container — flush edges, no individual border/radius. */
 const TOOLBAR_BTN =
-  'flex items-center justify-center w-8 text-muted-foreground/80 transition-colors hover:bg-white/8 hover:text-foreground/90'
+  'flex items-center justify-center w-8 text-muted-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground/90'
 
 // ── View mode segmented control ─────────────────────────────────────────────
 
@@ -59,8 +59,8 @@ function ViewModeControl() {
             className={cn(
               'flex items-center justify-center gap-1.5 px-2.5 font-medium text-xs transition-colors',
               isActive
-                ? 'bg-white/10 text-foreground'
-                : 'text-muted-foreground/70 hover:bg-white/8 hover:text-muted-foreground',
+                ? 'bg-accent text-foreground'
+                : 'text-muted-foreground/70 hover:bg-accent/80 hover:text-muted-foreground',
             )}
             key={mode.id}
             onClick={() => setViewMode(mode.id)}
@@ -215,7 +215,7 @@ function LevelModeToggle() {
           className={cn(
             TOOLBAR_BTN,
             'w-auto gap-1.5 px-2.5',
-            !isDefault && 'bg-white/10 text-foreground/90',
+            !isDefault && 'bg-accent text-foreground/90',
           )}
           onClick={cycle}
           type="button"
@@ -300,7 +300,7 @@ function WallModeToggle() {
             TOOLBAR_BTN,
             'w-auto gap-1.5 px-2.5',
             wallMode !== 'cutaway'
-              ? 'bg-white/10'
+              ? 'bg-accent'
               : 'opacity-60 grayscale hover:opacity-100 hover:grayscale-0',
           )}
           onClick={cycle}
@@ -327,7 +327,7 @@ function CameraModeToggle() {
         <button
           className={cn(
             TOOLBAR_BTN,
-            cameraMode === 'orthographic' && 'bg-white/10 text-foreground/90',
+            cameraMode === 'orthographic' && 'bg-accent text-foreground/90',
           )}
           onClick={() =>
             setCameraMode(cameraMode === 'perspective' ? 'orthographic' : 'perspective')
@@ -353,7 +353,7 @@ function PreviewButton() {
     <Tooltip>
       <TooltipTrigger asChild>
         <button
-          className="flex items-center gap-1.5 px-2.5 font-medium text-muted-foreground/80 text-xs transition-colors hover:bg-white/8 hover:text-foreground/90"
+          className="flex items-center gap-1.5 px-2.5 font-medium text-muted-foreground/80 text-xs transition-colors hover:bg-accent/80 hover:text-foreground/90"
           onClick={() => useEditor.getState().setPreviewMode(true)}
           type="button"
         >

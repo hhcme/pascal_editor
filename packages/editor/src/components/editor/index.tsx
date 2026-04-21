@@ -485,7 +485,7 @@ function DeleteCursorBadge({ position }: { position: { x: number; y: number } })
       }}
     >
       <div
-        className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/5 bg-zinc-900/95 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.3),0_4px_8px_-4px_rgba(0,0,0,0.2)]"
+        className="flex h-8 w-8 items-center justify-center rounded-xl border border-border/60 bg-background/95 shadow-[0_8px_16px_-4px_rgba(15,23,42,0.16),0_4px_8px_-4px_rgba(15,23,42,0.12)]"
         style={{
           boxShadow: `0 8px 16px -4px rgba(0,0,0,0.3), 0 4px 8px -4px rgba(0,0,0,0.2), 0 0 18px ${DELETE_CURSOR_BADGE_COLOR}22`,
         }}
@@ -817,13 +817,6 @@ export default function Editor({
     }
   }, [isVersionPreviewMode])
 
-  useEffect(() => {
-    document.body.classList.add('dark')
-    return () => {
-      document.body.classList.remove('dark')
-    }
-  }, [])
-
   const showLoader = isLoading || isSceneLoading
 
   const previewViewerContent = (
@@ -881,7 +874,7 @@ export default function Editor({
         )}
 
         {!isLoading && isPreviewMode ? (
-          <div className="dark flex h-full w-full flex-col bg-neutral-100 text-foreground">
+          <div className="flex h-full w-full flex-col bg-neutral-100 text-foreground">
             <ViewerOverlay onBack={() => useEditor.getState().setPreviewMode(false)} />
             <div className="h-full w-full">{previewViewerContent}</div>
           </div>
@@ -937,7 +930,7 @@ export default function Editor({
 
   return (
     <PresetsProvider adapter={presetsAdapter}>
-      <div className="dark flex h-full w-full gap-3 bg-neutral-100 p-3 text-foreground">
+      <div className="flex h-full w-full gap-3 bg-neutral-100 p-3 text-foreground">
         {showLoader && (
           <div className="fixed inset-0 z-60">
             <SceneLoader />

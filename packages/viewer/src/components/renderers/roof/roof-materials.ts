@@ -12,7 +12,7 @@ export const roofMaterials: THREE.Material[] = [
 // Debug materials — vivid, distinct colours to identify each surface group.
 export const roofDebugMaterials: THREE.Material[] = [
   new THREE.MeshStandardMaterial({ color: '#eaeaea', roughness: 0.8, side: THREE.DoubleSide }), // 0: Wall
-  new THREE.MeshStandardMaterial({ color: '#000000', roughness: 0.9, side: THREE.FrontSide }), // 1: Deck
+  new THREE.MeshStandardMaterial({ color: '#e5e5e5', roughness: 0.9, side: THREE.FrontSide }), // 1: Deck
   new THREE.MeshStandardMaterial({ color: '#dddddd', roughness: 0.9, side: THREE.DoubleSide }), // 2: Interior
   new THREE.MeshStandardMaterial({ color: '#4ade80', roughness: 0.9, side: THREE.FrontSide }), // 3: Shingle
 ]

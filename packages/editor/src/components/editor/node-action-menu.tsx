@@ -2,7 +2,15 @@
 
 import { Icon } from '@iconify/react'
 import { Copy, Move, Spline, Trash2 } from 'lucide-react'
-import type { MouseEventHandler, PointerEventHandler } from 'react'
+import type { MouseEventHandler, PointerEventHandler, ReactNode } from 'react'
+
+export type NodeActionMenuExtraAction = {
+  id: string
+  label: string
+  icon: ReactNode
+  onClick: MouseEventHandler<HTMLButtonElement>
+  active?: boolean
+}
 
 type NodeActionMenuProps = {
   onAddHole?: MouseEventHandler<HTMLButtonElement>
@@ -10,6 +18,7 @@ type NodeActionMenuProps = {
   onDuplicate?: MouseEventHandler<HTMLButtonElement>
   onMove?: MouseEventHandler<HTMLButtonElement>
   onCurve?: MouseEventHandler<HTMLButtonElement>
+  extraActions?: NodeActionMenuExtraAction[]
   onPointerDown?: PointerEventHandler<HTMLDivElement>
   onPointerUp?: PointerEventHandler<HTMLDivElement>
   onPointerEnter?: PointerEventHandler<HTMLDivElement>
@@ -22,6 +31,7 @@ export function NodeActionMenu({
   onDuplicate,
   onMove,
   onCurve,
+  extraActions,
   onPointerDown,
   onPointerUp,
   onPointerEnter,
@@ -57,6 +67,22 @@ export function NodeActionMenu({
           <Spline className="h-4 w-4" />
         </button>
       )}
+      {extraActions?.map((action) => (
+        <button
+          aria-label={action.label}
+          className={
+            action.active
+              ? 'tooltip-trigger rounded-md bg-accent p-1.5 text-foreground transition-colors hover:bg-accent'
+              : 'tooltip-trigger rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground'
+          }
+          key={action.id}
+          onClick={action.onClick}
+          title={action.label}
+          type="button"
+        >
+          {action.icon}
+        </button>
+      ))}
       {onDuplicate && (
         <button
           aria-label="Duplicate"

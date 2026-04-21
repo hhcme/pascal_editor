@@ -13,10 +13,10 @@ import { EDITOR_LAYER } from '../../lib/constants'
 export const Grid = ({
   cellSize = 0.5,
   cellThickness = 0.5,
-  cellColor = '#888888',
+  cellColor = '#d7dce5',
   sectionSize = 1,
   sectionThickness = 1,
-  sectionColor = '#000000',
+  sectionColor = '#aeb7c5',
   fadeDistance = 100,
   fadeStrength = 1,
   revealRadius = 10,
@@ -33,9 +33,8 @@ export const Grid = ({
 }) => {
   const theme = useViewer((state) => state.theme)
 
-  // Use slightly lighter colors for dark mode grid to make it apparent
-  const effectiveCellColor = theme === 'dark' ? '#555566' : cellColor
-  const effectiveSectionColor = theme === 'dark' ? '#666677' : sectionColor
+  const effectiveCellColor = theme === 'dark' ? '#d7dce5' : cellColor
+  const effectiveSectionColor = theme === 'dark' ? '#aeb7c5' : sectionColor
 
   const cursorPositionRef = useRef(new Vector2(0, 0))
 

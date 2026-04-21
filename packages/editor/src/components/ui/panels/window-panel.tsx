@@ -208,7 +208,7 @@ export function WindowPanel() {
           tabs={adapter.tabs}
           type="window"
         >
-          <button className="flex w-full items-center gap-2 rounded-lg border border-border/50 bg-[#2C2C2E] px-3 py-2 font-medium text-muted-foreground text-xs transition-colors hover:bg-[#3e3e3e] hover:text-foreground">
+          <button className="flex w-full items-center gap-2 rounded-lg border border-border/50 bg-background px-3 py-2 font-medium text-muted-foreground text-xs transition-colors hover:bg-accent/70 hover:text-foreground">
             <BookMarked className="h-3.5 w-3.5 shrink-0" />
             <span>Presets</span>
           </button>

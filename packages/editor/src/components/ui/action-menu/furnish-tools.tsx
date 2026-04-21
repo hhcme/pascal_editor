@@ -70,8 +70,8 @@ export function FurnishTools() {
             className={cn(
               'rounded-lg duration-300',
               isActive
-                ? 'z-10 scale-110 bg-black/40 hover:bg-black/40'
-                : 'scale-95 bg-transparent opacity-60 grayscale hover:bg-black/20 hover:opacity-100 hover:grayscale-0',
+                ? 'z-10 scale-110 bg-accent shadow-sm hover:bg-accent'
+                : 'scale-95 bg-transparent opacity-60 grayscale hover:bg-accent/70 hover:opacity-100 hover:grayscale-0',
             )}
             key={`${tool.id}-${tool.catalogCategory ?? index}`}
             label={tool.label}

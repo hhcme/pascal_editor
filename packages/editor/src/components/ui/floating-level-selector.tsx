@@ -256,7 +256,7 @@ export function FloatingLevelSelector() {
   const reversedLevels = [...levels].reverse()
 
   const addButtonClass =
-    'absolute left-1/2 z-10 flex h-4 w-4 -translate-x-1/2 items-center justify-center rounded-full border border-border/80 bg-neutral-800 text-muted-foreground/60 shadow-md transition-colors hover:bg-neutral-700 hover:text-foreground'
+  'absolute left-1/2 z-10 flex h-4 w-4 -translate-x-1/2 items-center justify-center rounded-full border border-border/80 bg-background text-muted-foreground/60 shadow-md transition-colors hover:bg-accent/70 hover:text-foreground'
 
   return (
     <>

@@ -202,7 +202,7 @@ export function RoofPanel() {
         <div className="flex flex-col gap-1">
           {segments.map((seg, i) => (
             <button
-              className="flex items-center justify-between rounded-lg border border-border/50 bg-[#2C2C2E] px-3 py-2 text-foreground text-sm transition-colors hover:bg-[#3e3e3e]"
+              className="flex items-center justify-between rounded-lg border border-border/50 bg-background px-3 py-2 text-foreground text-sm transition-colors hover:bg-accent/70"
               key={seg.id}
               onClick={() => handleSelectSegment(seg.id)}
               type="button"
@@ -312,7 +312,7 @@ export function RoofPanel() {
       </PanelSection>
       <PanelSection title="Material">
         {!materialTargetRole ? (
-          <div className="mb-3 rounded-lg border border-border/50 bg-[#2C2C2E] px-3 py-2 text-[11px] text-muted-foreground">
+          <div className="mb-3 rounded-lg border border-border/50 bg-background px-3 py-2 text-[11px] text-muted-foreground">
             Click the roof surface you want to edit. Materials apply to one target at a time.
           </div>
         ) : null}

@@ -239,7 +239,7 @@ export function WallPanel() {
 
       <PanelSection title="Material">
         {!materialTargetSide ? (
-          <div className="mb-3 rounded-lg border border-border/50 bg-[#2C2C2E] px-3 py-2 text-[11px] text-muted-foreground">
+          <div className="mb-3 rounded-lg border border-border/50 bg-background px-3 py-2 text-[11px] text-muted-foreground">
             Click the wall face you want to edit. Materials now apply to one side at a time.
           </div>
         ) : null}
