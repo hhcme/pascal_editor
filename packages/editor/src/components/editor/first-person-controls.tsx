@@ -24,6 +24,32 @@ const _right = new Vector3()
 const _moveVector = new Vector3()
 const _euler = new Euler(0, 0, 0, 'YXZ')
 
+function requestPointerLockSafely(canvas: HTMLCanvasElement) {
+  if (typeof canvas.requestPointerLock !== 'function') return
+
+  try {
+    const lockResult = canvas.requestPointerLock()
+    if (lockResult && typeof lockResult.catch === 'function') {
+      lockResult.catch(() => {
+        // Pointer lock can be blocked in embedded webviews; walkthrough still works without mouse look.
+      })
+    }
+  } catch {
+    // Ignore unsupported or denied pointer lock requests.
+  }
+}
+
+function exitPointerLockSafely(target?: Element) {
+  if (typeof document.exitPointerLock !== 'function') return
+  if (target ? document.pointerLockElement !== target : !document.pointerLockElement) return
+
+  try {
+    document.exitPointerLock()
+  } catch {
+    // Ignore teardown races when the document already released pointer lock.
+  }
+}
+
 export const FirstPersonControls = () => {
   const { camera, gl } = useThree()
   const keysRef = useRef<Set<string>>(new Set())
@@ -49,12 +75,16 @@ export const FirstPersonControls = () => {
 
     const requestLock = () => {
       if (!isLockedRef.current) {
-        canvas.requestPointerLock()
+        requestPointerLockSafely(canvas)
       }
     }
 
     const handlePointerLockChange = () => {
       isLockedRef.current = document.pointerLockElement === canvas
+    }
+
+    const handlePointerLockError = () => {
+      isLockedRef.current = false
     }
 
     const handleMouseMove = (e: MouseEvent) => {
@@ -97,9 +127,7 @@ export const FirstPersonControls = () => {
       if (code === 'Escape') {
         e.preventDefault()
         e.stopPropagation()
-        if (document.pointerLockElement === canvas) {
-          document.exitPointerLock()
-        }
+        exitPointerLockSafely(canvas)
         useEditor.getState().setFirstPersonMode(false)
       }
     }
@@ -110,6 +138,7 @@ export const FirstPersonControls = () => {
 
     canvas.addEventListener('click', requestLock)
     document.addEventListener('pointerlockchange', handlePointerLockChange)
+    document.addEventListener('pointerlockerror', handlePointerLockError)
     document.addEventListener('mousemove', handleMouseMove)
     // Use capture phase so we intercept movement keys before the global keyboard handler
     document.addEventListener('keydown', handleKeyDown, true)
@@ -118,12 +147,11 @@ export const FirstPersonControls = () => {
     return () => {
       canvas.removeEventListener('click', requestLock)
       document.removeEventListener('pointerlockchange', handlePointerLockChange)
+      document.removeEventListener('pointerlockerror', handlePointerLockError)
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('keydown', handleKeyDown, true)
       document.removeEventListener('keyup', handleKeyUp)
-      if (document.pointerLockElement === canvas) {
-        document.exitPointerLock()
-      }
+      exitPointerLockSafely(canvas)
       keysRef.current.clear()
     }
   }, [gl])
@@ -181,9 +209,7 @@ export const FirstPersonControls = () => {
  */
 export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
   const handleExit = useCallback(() => {
-    if (document.pointerLockElement) {
-      document.exitPointerLock()
-    }
+    exitPointerLockSafely()
     onExit()
   }, [onExit])
 

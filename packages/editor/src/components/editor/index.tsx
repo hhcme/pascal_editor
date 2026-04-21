@@ -534,7 +534,7 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
       )}
       {!(isLoading || isVersionPreviewMode) && !isFirstPersonMode && <ToolManager />}
       {isFirstPersonMode && <FirstPersonControls />}
-      <CustomCameraControls />
+      {!isFirstPersonMode && <CustomCameraControls />}
       <ThumbnailGenerator onThumbnailCapture={onThumbnailCapture} />
       <PresetThumbnailGenerator />
       {!isFirstPersonMode && <SiteEdgeLabels />}
