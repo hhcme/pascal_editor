@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "provider": "ambientcg",
+  "providerName": "ambientCG",
+  "homepage": "https://ambientcg.com/",
+  "licenseId": "CC0-1.0",
+  "licenseUrl": "https://docs.ambientcg.com/license/",
+  "downloadAttributes": "1K-JPG",
+  "packs": [
+    {
+      "assetId": "WoodFloor051",
+      "materialId": "ambientcg-woodfloor051",
+      "directory": "ambientcg-woodfloor051",
+      "label": "Wood Floor 051",
+      "category": "wood",
+      "colorFamily": "wood",
+      "finish": "satin",
+      "tags": ["ambientcg", "cc0", "wood", "floor"],
+      "sourceUrl": "https://ambientcg.com/view?id=WoodFloor051"
+    },
+    {
+      "assetId": "Bricks097",
+      "materialId": "ambientcg-bricks097",
+      "directory": "ambientcg-bricks097",
+      "label": "Bricks 097",
+      "category": "building",
+      "colorFamily": "red",
+      "finish": "rough",
+      "tags": ["ambientcg", "cc0", "brick", "facade"],
+      "sourceUrl": "https://ambientcg.com/view?id=Bricks097"
+    },
+    {
+      "assetId": "Concrete034",
+      "materialId": "ambientcg-concrete034",
+      "directory": "ambientcg-concrete034",
+      "label": "Concrete 034",
+      "category": "building",
+      "colorFamily": "gray",
+      "finish": "rough",
+      "tags": ["ambientcg", "cc0", "concrete", "wall"],
+      "sourceUrl": "https://ambientcg.com/view?id=Concrete034"
+    },
+    {
+      "assetId": "Tiles030",
+      "materialId": "ambientcg-tiles030",
+      "directory": "ambientcg-tiles030",
+      "label": "Tiles 030",
+      "category": "tile",
+      "colorFamily": "white",
+      "finish": "glossy",
+      "tags": ["ambientcg", "cc0", "tile", "bathroom"],
+      "sourceUrl": "https://ambientcg.com/view?id=Tiles030"
+    },
+    {
+      "assetId": "Carpet001",
+      "materialId": "ambientcg-carpet001",
+      "directory": "ambientcg-carpet001",
+      "label": "Carpet 001",
+      "category": "fabric",
+      "colorFamily": "gray",
+      "finish": "rough",
+      "tags": ["ambientcg", "cc0", "carpet", "floor"],
+      "sourceUrl": "https://ambientcg.com/view?id=Carpet001"
+    },
+    {
+      "assetId": "Marble019",
+      "materialId": "ambientcg-marble019",
+      "directory": "ambientcg-marble019",
+      "label": "Marble 019",
+      "category": "stone",
+      "colorFamily": "white",
+      "finish": "glossy",
+      "tags": ["ambientcg", "cc0", "marble", "slab"],
+      "sourceUrl": "https://ambientcg.com/view?id=Marble019"
+    }
+  ]
+}

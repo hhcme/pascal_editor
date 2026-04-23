@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useShallow } from 'zustand/react/shallow'
 import { sfxEmitter } from '../../../lib/sfx-bus'
+import { isZoneLabelHidden } from '../../../lib/zone-label-visibility'
 import useEditor from '../../../store/use-editor'
 
 // ─── Per-zone label editor ────────────────────────────────────────────────────
@@ -21,6 +22,7 @@ function ZoneLabelEditor({ zoneId }: { zoneId: ZoneNode['id'] }) {
   const mode = useEditor((s) => s.mode)
   const isSelected = selectedZoneId === zoneId
   const isDeleteHovered = mode === 'delete' && hoveredId === zoneId
+  const isLabelHidden = isZoneLabelHidden(zone)
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -131,7 +133,7 @@ function ZoneLabelEditor({ zoneId }: { zoneId: ZoneNode['id'] }) {
     }
   }, [zoneId])
 
-  if (!labelEl) return null
+  if (!labelEl || isLabelHidden) return null
 
   const shadowColor = isDeleteHovered ? '#dc2626' : (zone?.color ?? '#6366f1')
   const textShadow = [

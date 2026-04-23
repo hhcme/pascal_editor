@@ -1,9 +1,19 @@
-// translate-inject.js — DOM-based Chinese localization for the upstream editor
-// Uses MutationObserver to translate text as it appears in the DOM
+// translate-inject.js — DOM-based locale overlay for the upstream editor
+// Uses MutationObserver to translate text as it appears in the DOM when zh-CN is active
 // This script is injected into the webview alongside the editor build
 
 ;(function () {
   'use strict'
+
+  function getEditorLanguage() {
+    const params = new URLSearchParams(window.location.search)
+    const requested = params.get('lang') || 'zh-CN'
+    return requested.toLowerCase().startsWith('en') ? 'en' : 'zh-CN'
+  }
+
+  function applyDocumentLanguage(language) {
+    document.documentElement.lang = language
+  }
 
   // ── Translation map (inlined for performance) ──
   const T = {
@@ -20,14 +30,14 @@
     'Select a level to view content': '选择楼层查看内容',
     'Delete level': '删除楼层', 'Structure': '结构', 'Furnish': '装饰',
     'Zones': '区域', 'Cutaway': '剖切', 'Up': '向上', 'Down': '向下',
-    'Manual': '手动', 'Stacked': '堆叠', 'Exploded': '爆炸视图', 'Solo': '单独',
+    'Manual': '手动', 'Stack': '堆叠', 'Stacked': '堆叠', 'Exploded': '爆炸视图', 'Solo': '单独',
     'Type a new name…': '输入新名称…', 'Type a new name above…': '在上面输入新名称…',
     'Camera Snapshot — Select Scope': '相机快照 — 选择范围',
     'Site': '场地', 'Selection': '选择', 'Wall Mode': '墙体模式',
     'Level Mode': '楼层模式', 'Rename Level': '重命名楼层', 'Go to Level': '转到楼层',
-    'Wall': '墙体', 'Slab': '楼板', 'Ceiling': '天花板',
+    'Wall': '墙体', '2D Sketch': '2D 草图', 'Slab': '楼板', 'Ceiling': '天花板',
     'Gable Roof': '山墙屋顶', 'Stairs': '楼梯', 'Door': '门', 'Window': '窗户',
-    'Fence': '围栏', 'Zone': '区域', 'Furniture': '家具', 'Appliance': '电器',
+    'Fence': '围栏', 'Zone': '区域', 'Furniture': '家具', 'Lighting': '灯光', 'Appliance': '电器',
     'Kitchen': '厨房', 'Bathroom': '浴室', 'Outdoor': '户外',
     'navigate': '导航', 'select': '选择', 'back': '返回', 'close': '关闭',
     'Send Feedback': '发送反馈',
@@ -45,10 +55,11 @@
     'Opacity': '不透明度', 'Side': '面', 'Front': '正面', 'Back': '背面',
     'Double': '双面', 'Feedback': '反馈', 'Move': '移动', 'Duplicate': '复制',
     'Cut Out': '切割', 'Add': '添加', 'Remove': '移除', 'Done': '完成',
+    'Curve': '弯曲', 'Trim / Extend': '修剪/延伸',
     'Orbit Left': '向左旋转', 'Orbit Right': '向右旋转', 'Top View': '俯视图',
     'Clear selection': '清除选择', 'Add level above': '在上方添加楼层',
     'Add level below': '在下方添加楼层', 'Insert level here': '在此处插入楼层',
-    'Are you sure you want to delete': '确定要删除吗',
+    'Are you sure you want to delete': '确定要删除',
     'All walls, floors, and objects on this level will be permanently removed': '此楼层上的所有墙体、地板和物体将被永久删除',
     'Info': '信息', 'Holes': '孔洞', 'Style': '样式', 'Footprint': '轮廓',
     'Heights': '高度', 'Roof Type': '屋顶类型', 'Segments': '分段',
@@ -67,13 +78,17 @@
     'Elevation': '标高', 'Collections': '集合', 'Manage collections…': '管理集合…',
     'New': '新建', 'Manage collections': '管理集合', 'Rename': '重命名',
     'No collections yet. Create one to group items together.': '暂无集合。创建一个来分组项目。',
-    'Wall Tool': '墙体工具', 'Slab Tool': '楼板工具', 'Ceiling Tool': '天花板工具',
+    'Wall Tool': '墙体工具', 'Sketch Line Tool': '草图线工具',
+    'Construction Line Tool': '参考线工具', 'Reference Line Tool': '参考线工具',
+    'Sketch Rectangle Tool': '草图矩形工具',
+    'Slab Tool': '楼板工具', 'Ceiling Tool': '天花板工具',
     'Door Tool': '门工具', 'Window Tool': '窗工具', 'Item Tool': '物品工具',
     'Stair Tool': '楼梯工具', 'Zone Tool': '区域工具', 'Delete Selection': '删除选中',
     'Add Level': '添加楼层',
     'Camera: Switch to Orthographic': '相机：切换到正交视图',
     'Camera: Switch to Perspective': '相机：切换到透视图',
     'Switch to Light Theme': '切换到浅色主题', 'Switch to Dark Theme': '切换到深色主题',
+    'Preview': '预览',
     'Exit Preview': '退出预览', 'Enter Preview': '进入预览',
     'Toggle Fullscreen': '切换全屏', 'Undo': '撤销', 'Redo': '重做',
     'No commands found.': '未找到命令。', 'Search actions...': '搜索操作...',
@@ -87,6 +102,7 @@
     'Palm': '棕榈树', 'Patio Umbrella': '露台伞', 'Sunbed': '日光浴床',
     'Double Window': '双窗', 'Simple Window': '简单窗', 'Rectangle Window': '矩形窗',
     'Door with bar': '带杆门', 'Glass Door': '玻璃门', 'Parking Spot': '停车位',
+    'Wine Bottle': '酒瓶',
     'Toilet Paper': '卫生纸', 'Shower Rug': '淋浴垫', 'Laundry Bag': '洗衣袋',
     'Drying Rack': '晾衣架', 'Washing Machine': '洗衣机', 'Toilet': '马桶',
     'Squared Shower': '方形淋浴', 'Angle Shower': '角形淋浴', 'Bathtub': '浴缸',
@@ -105,6 +121,7 @@
     'Table Lamp': '台灯', 'Closet': '衣柜', 'Dresser': '梳妆台',
     'Bunkbed': '双层床', 'Double Bed': '双人床', 'Single Bed': '单人床',
     'Sofa': '沙发', 'Lounge Chair': '躺椅', 'Stool': '凳子',
+    'Threadmill': '跑步机', 'Treadmill': '跑步机',
     'Dining Chair': '餐椅', 'Office Chair': '办公椅', 'Livingroom Chair': '客厅椅',
     'Bedside Table': '床头柜', 'Coffee Table': '咖啡桌',
     'Office Table': '办公桌', 'Dining Table': '餐桌',
@@ -114,10 +131,19 @@
 
     // ── Toolbar & view modes ──
     'Split': '分屏', 'Walkthrough': '漫游', 'Preview mode': '预览模式',
+    'Light': '灯光', 'Power': '电源', 'Intensity': '亮度', 'Color Temp': '色温',
     'Perspective': '透视', 'Orthographic': '正交', 'Metric (m)': '公制 (m)',
     'Imperial (ft)': '英制 (ft)', 'Dark': '深色', 'Light': '浅色',
+    'Orientation and sun': '方位与日照',
+    'Compass markers': '方位标识', 'Sun shadows': '日照阴影',
+    'Sun position': '太阳位置', 'Morning': '上午', 'Noon': '正午',
+    'Afternoon': '下午', 'Evening': '傍晚',
     'Collapse sidebar': '收起侧边栏', 'Expand sidebar': '展开侧边栏',
     'Toggle Sidebar': '切换侧边栏',
+    'Levels: Manual': '楼层：手动', 'Levels: Stack': '楼层：堆叠',
+    'Levels: Exploded': '楼层：爆炸视图', 'Levels: Solo': '楼层：单独',
+    'Walls: Full height': '墙体：全高', 'Walls: Cutaway': '墙体：剖切',
+    'Walls: Low': '墙体：低',
 
     // ── Cutaway modes ──
     'Full height': '全高', 'Full Height': '全高', 'Low': '低',
@@ -130,11 +156,29 @@
     'Scroll wheel': '滚轮', 'Dismiss': '关闭',
 
     // ── Control modes ──
-    'Select': '选择', 'Box select': '框选', 'Edit site': '编辑场地', 'Build': '构建',
+    'Select': '选择', 'Box select': '框选', 'Edit site': '编辑场地', 'Build': '结构',
 
     // ── First person ──
     'Exit Street View': '退出街景', 'Sprint': '冲刺',
     'Click to look around': '点击环顾四周',
+    'Street View': '街景', 'Walk mode': '行走模式', 'Fly mode': '飞行模式',
+    'Click canvas to enter walkthrough': '点击画面进入漫游',
+    'Drag canvas to look around': '拖动画面环顾四周',
+    'Double-click floor to move there': '双击地面前往此处',
+    'Look': '环顾', 'Mouse': '鼠标', 'Height': '高度',
+    'Drag': '拖动',
+    'Faster': '加速', 'Slower': '减速', 'Speed': '速度', 'Wheel': '滚轮',
+    'Walk': '行走', 'Fly': '飞行', 'Adult': '成人', 'Child': '儿童',
+    'Inspect': '检视', 'Quick': '快速',
+    'Press M to switch walk/fly': '按 M 切换行走/飞行',
+    'Map': '小地图', 'Collision on': '碰撞开启', 'Floor follow on': '地面跟随开启',
+    'Rooms': '房间',
+    'Current view': '当前位置', 'No rooms': '暂无房间',
+    'Save view': '收藏视角', 'Saved views': '视角收藏',
+    'No saved views': '暂无收藏视角', 'No map data': '暂无地图数据',
+    'Start tour': '开始导览', 'Stop tour': '停止导览',
+    'Present': '演示', 'Exit presentation': '退出演示',
+    'Gamepad': '手柄', 'Touch move': '触控移动', 'View': '视角',
 
     // ── View toggles ──
     'Guide images': '引导图', 'No guide images on this level yet.': '此楼层暂无引导图。',
@@ -172,7 +216,7 @@
     'Select previous level in the active building': '选择当前建筑的上一个楼层',
     'toggle sidebar': '切换侧边栏',
     'Modes & History': '模式与历史', 'Switch to Select mode': '切换到选择模式',
-    'Switch to Build mode': '切换到构建模式',
+    'Switch to Build mode': '切换到结构模式',
     'Cancel the active tool and return to Select mode': '取消当前工具并返回选择模式',
     'Delete selected objects': '删除所选对象',
     'Add or remove an object from multi-selection': '从多选中添加或移除对象',
@@ -249,6 +293,123 @@
     'Item': '物品', 'Roof Segment': '屋顶段',
     'Levels': '楼层', 'Untitled': '未命名',
 
+    // ── Wall panel ──
+    'Library': '材质库',
+    'Click the wall face you want to edit. Materials now apply to one side at a time.': '请点击要编辑的墙面；材质一次只应用到一侧。',
+    'Trim / Extend Walls': '修剪/延伸墙体',
+
+    // ── Wall edit tools ──
+    'Chamfer': '倒角', 'Fillet': '圆角', 'Offset': '偏移',
+    'Merge': '合并', 'Mirror': '镜像', 'Linear Pattern': '线性阵列',
+    'Sketch Line': '草图线', 'Sketch Rectangle': '草图矩形',
+    'Construction Line': '参考线', 'Reference Line': '参考线',
+    'Smart Dimension': '智能尺寸', 'Fixed': '固定',
+    'Construction': '参考线', 'Reference': '参考线',
+    'Set Length': '设定长度', 'Equal Length': '等长',
+    'Pattern': '阵列', 'Radius': '半径', 'Length': '长度',
+    'Horizontal': '水平', 'Vertical': '垂直',
+    'Split Wall': '分割墙体', 'Offset Wall': '偏移墙体', 'Set Wall Length': '设定墙体长度',
+    'Fillet Walls': '圆角墙体', 'Chamfer Walls': '倒角墙体',
+    'Linear Pattern Walls': '线性阵列墙体',
+    'Create Zone': '创建区域', 'Create Slab': '创建楼板',
+    'Create Wall': '创建墙体', 'Create Walls': '创建墙体',
+    'Offset wall': '偏移墙体', 'Fillet wall': '圆角墙体', 'Chamfer wall': '倒角墙体',
+    'Enter a chamfer distance, or press Enter for the default.': '输入倒角距离，或按回车键使用默认值。',
+    'Enter a chamfer distance, or press Enter for default.': '输入倒角距离，或按回车键使用默认值。',
+    'Enter a fillet radius, or press Enter for the default.': '输入圆角半径，或按回车键使用默认值。',
+    'Enter distance from wall start, or click the wall to split.': '输入距墙体起点的距离，或点击墙体进行分割。',
+    'Click a wall segment to trim, or an endpoint to extend.': '点击墙段进行修剪，或点击端点进行延伸。',
+    'Click a wall where it should break.': '点击墙体需要分割的位置。',
+    'Click a collinear wall that shares this endpoint.': '点击共用该端点的共线墙体。',
+    'Move the pointer to choose side and distance, then click.': '移动指针选择方向和距离，然后点击。',
+    'Click another wall that shares this corner.': '点击共用这个转角的另一面墙。',
+    'Click another wall that shares this corner, then enter a chamfer distance.': '点击共用这个转角的另一面墙，然后输入倒角距离。',
+    'Select walls, then click another wall to use as the mirror axis.': '先选择墙体，再点击另一面墙作为镜像轴。',
+    'Enter spacing and count, or click a wall to use its direction.': '输入间距和数量，或点击一面墙作为方向。',
+    'Only straight walls can be offset.': '只能偏移直墙。',
+    'Select the wall to mirror, then click a different wall as the axis.': '选择要镜像的墙体，然后点击另一面墙作为轴线。',
+    'Click a different wall to use as the mirror axis.': '点击另一面墙作为镜像轴。',
+    'Select walls to pattern, then enter spacing and count.': '选择要阵列的墙体，然后输入间距和数量。',
+    'Enter spacing and count, for example 1,3.': '输入间距和数量，例如 1,3。',
+    'Enter the wall length to drive this segment.': '输入墙体长度以驱动该墙段。',
+    'Enter the wall length.': '输入墙体长度。',
+    'Enter the sketch line length.': '输入草图线长度。',
+    'Enter a valid sketch length.': '请输入有效的草图长度。',
+    'Closed sketch profile created. Select an edge to convert it to walls, slab, or zone.': '已创建闭合草图轮廓。请选择一条边以转换为墙体、楼板或区域。',
+    'Select a sketch edge that belongs to a closed profile.': '请选择属于闭合轮廓的草图边。',
+    'No walls were created from this sketch profile.': '未能从此草图轮廓创建墙体。',
+    'Select one sketch line to dimension.': '请选择一条草图线进行标注。',
+    'Select one sketch line to make horizontal.': '请选择一条草图线设为水平。',
+    'Select one sketch line to make vertical.': '请选择一条草图线设为垂直。',
+    'Select one sketch line to fix.': '请选择一条草图线进行固定。',
+    'Select one sketch line to toggle construction.': '请选择一条草图线切换参考线属性。',
+    'Select one sketch line to toggle reference mode.': '请选择一条草图线切换参考线属性。',
+    'Select one sketch line to create a wall.': '请选择一条草图线创建墙体。',
+    'No wall was created from this sketch line.': '未能从此草图线创建墙体。',
+    'Fixed sketch geometry cannot be resized.': '固定的草图几何不能调整长度。',
+    'Fixed sketch geometry cannot be reoriented.': '固定的草图几何不能重新定向。',
+    'The selected sketch line is too short to resize.': '所选草图线太短，无法调整长度。',
+    'The selected sketch line is too short to orient.': '所选草图线太短，无法定向。',
+    'Select the first wall, then click the wall to merge.': '先选择第一面墙，再点击要合并的墙。',
+    'Select the first wall, then click the wall to chamfer.': '先选择第一面墙，再点击要倒角的墙。',
+    'Select the first wall, then click the wall to fillet.': '先选择第一面墙，再点击要圆角的墙。',
+    'Click a second wall for this edit.': '点击第二面墙完成此编辑。',
+    'Enter a valid split distance.': '请输入有效的分割距离。',
+    'Split distance must be inside the wall length.': '分割距离必须在墙体长度范围内。',
+    'Enter a valid offset distance.': '请输入有效的偏移距离。',
+    'Enter a valid wall length.': '请输入有效的墙体长度。',
+    'Enter a valid chamfer distance.': '请输入有效的倒角距离。',
+    'Select two walls to chamfer.': '请选择两面墙进行倒角。',
+    'Enter a valid fillet radius.': '请输入有效的圆角半径。',
+    'Select two walls to fillet.': '请选择两面墙进行圆角。',
+    'Select one wall to offset.': '请选择一面墙进行偏移。',
+    'Select one wall to make horizontal.': '请选择一面墙设为水平。',
+    'Select one wall to make vertical.': '请选择一面墙设为垂直。',
+    'Select at least one wall to mirror.': '请至少选择一面墙进行镜像。',
+    'Select at least one wall to pattern.': '请至少选择一面墙进行阵列。',
+    'Select at least two walls to equalize length.': '请选择至少两面墙进行等长。',
+    'Select a wall that belongs to a closed loop.': '请选择属于闭合轮廓的墙体。',
+    'Closed loop detected. Select a wall in it to create a zone or slab.': '已检测到闭合轮廓。请选择其中一面墙来创建区域或楼板。',
+    'Wall openings or attached items block this edit.': '墙体洞口或附着物阻止了此编辑。',
+    'Curved walls cannot be split in this tool.': '此工具不能分割弧形墙。',
+    'Pick a point inside the wall segment.': '请选择墙段内部的点。',
+    'The split would create a wall segment that is too short.': '分割后会产生过短的墙段。',
+    'A door, window, or wall item crosses the split point.': '门、窗或墙面物品跨过了分割点。',
+    'No wall boundary crosses this wall.': '没有墙体边界与此墙相交。',
+    'No trimmable wall segment was found.': '未找到可修剪的墙段。',
+    'No nearby crossing wall can extend this endpoint.': '附近没有可用于延伸此端点的相交墙体。',
+    'Curved walls cannot be trimmed or extended in this tool.': '此工具不能修剪或延伸弧形墙。',
+    'Only straight walls can be merged.': '只能合并直墙。',
+    'Walls must share an endpoint before they can merge.': '墙体必须共用一个端点才能合并。',
+    'Walls must share thickness, height, material, and level.': '墙体的厚度、高度、材质和楼层必须一致。',
+    'Walls must be collinear to merge.': '墙体必须共线才能合并。',
+    'Only straight walls can receive a driving length.': '只有直墙可以设定驱动长度。',
+    'The selected wall is too short to resize.': '所选墙体太短，无法调整长度。',
+    'Only straight walls can receive horizontal or vertical relations.': '只有直墙可以设定水平或垂直关系。',
+    'The selected wall is too short to orient.': '所选墙体太短，无法定向。',
+    'Only straight walls can drive equal length.': '只有直墙可以作为等长参考。',
+    'Select a second wall to equalize length.': '请选择第二面墙进行等长。',
+    'Curved walls cannot be offset in this tool.': '此工具不能偏移弧形墙。',
+    'The offset wall would be too short.': '偏移后的墙体会过短。',
+    'Walls must share an endpoint for fillet v1.': '墙体必须共用一个端点才能做圆角。',
+    'Only straight walls can be filleted in this tool.': '此工具只能对直墙做圆角。',
+    'One of the wall legs is too short for a fillet.': '其中一段墙太短，无法做圆角。',
+    'Walls need a clear corner angle for a fillet.': '墙体需要明确的转角角度才能做圆角。',
+    'The fillet radius is too large for these walls.': '圆角半径对这些墙体来说过大。',
+    'The fillet could not be built.': '无法生成圆角。',
+    'A door, window, or wall item lies inside the fillet corner.': '门、窗或墙面物品位于圆角转角内。',
+    'Pick a valid mirror axis.': '请选择有效的镜像轴。',
+    'A mirrored wall would be too short.': '镜像后的墙体会过短。',
+    'Pick a valid pattern direction.': '请选择有效的阵列方向。',
+    'Enter a valid spacing and instance count.': '请输入有效的间距和实例数量。',
+    'A patterned wall would be too short.': '阵列后的墙体会过短。',
+    'Walls must share an endpoint for chamfer.': '墙体必须共用一个端点才能倒角。',
+    'Only straight walls can be chamfered in this tool.': '此工具只能对直墙做倒角。',
+    'The chamfer distance is too large for these walls.': '倒角距离对这些墙体来说过大。',
+    'Walls need a clear corner angle for a chamfer.': '墙体需要明确的转角角度才能倒角。',
+    'The chamfer wall would be too short.': '倒角墙体会过短。',
+    'A door, window, or wall item lies inside the chamfer corner.': '门、窗或墙面物品位于倒角转角内。',
+
     // ── Wall numbering (regex-based) ──
     // These are handled by the translateText function
   }
@@ -282,8 +443,15 @@
       return text.replace(trimmed, T[trimmed])
     }
 
-    // Pattern: "Level 1", "Level 2" → "层 1", "层 2"
-    const levelMatch = trimmed.match(/^Level\s+(\d+)$/)
+    // Pattern: trailing half of the split "delete level" dialog copy.
+    // React renders the level name in a <strong>, so the sentence spans text nodes.
+    const deleteLevelTailMatch = trimmed.match(/^\?\s*All\s+walls,\s+floors,\s+and\s+objects\s+on\s+this\s+level\s+will\s+be\s+permanently\s+removed\.?$/)
+    if (deleteLevelTailMatch) {
+      return text.replace(trimmed, ' 吗？此楼层上的所有墙体、地板和物体将被永久删除。')
+    }
+
+    // Pattern: "Level 1", "Level -2" → "层 1", "层 -2"
+    const levelMatch = trimmed.match(/^Level\s+(-?\d+)$/)
     if (levelMatch) {
       return text.replace(trimmed, `层 ${levelMatch[1]}`)
     }
@@ -302,10 +470,39 @@
       return text.replace(trimmed, `${translated} ${elementMatch[2]}`)
     }
 
+    // Pattern: "Room1 Slab", "Room 1 Ceiling" → "房间 1 楼板/天花板"
+    const roomSurfaceMatch = trimmed.match(/^Room\s*(\d+)\s+(Slab|Ceiling)$/i)
+    if (roomSurfaceMatch) {
+      const surfaceMap = { Slab: '楼板', Ceiling: '天花板' }
+      const surfaceKey = roomSurfaceMatch[2].toLowerCase() === 'ceiling' ? 'Ceiling' : 'Slab'
+      const surface = surfaceMap[surfaceKey]
+      return text.replace(trimmed, `房间 ${roomSurfaceMatch[1]} ${surface}`)
+    }
+
+    // Pattern: "Slab (12.3m²)", "Ceiling (12.3m²)" → localized type with measurement intact.
+    const surfaceAreaMatch = trimmed.match(/^(Slab|Ceiling)\s+(\(.+\))$/)
+    if (surfaceAreaMatch) {
+      const surfaceMap = { Slab: '楼板', Ceiling: '天花板' }
+      return text.replace(trimmed, `${surfaceMap[surfaceAreaMatch[1]]} ${surfaceAreaMatch[2]}`)
+    }
+
     // Pattern: "Building 1" → "建筑 1"
     const buildingMatch = trimmed.match(/^Building\s+(\d+)$/)
     if (buildingMatch) {
       return text.replace(trimmed, `建筑 ${buildingMatch[1]}`)
+    }
+
+    // Pattern: "Wall 22 Chamfer", "墙体 22 Offset" → localized suffix
+    const wallEditSuffixMatch = trimmed.match(/^(.+?)\s+(Offset|Fillet|Chamfer)$/)
+    if (wallEditSuffixMatch) {
+      const suffixMap = { Offset: '偏移', Fillet: '圆角', Chamfer: '倒角' }
+      return text.replace(trimmed, `${wallEditSuffixMatch[1]} ${suffixMap[wallEditSuffixMatch[2]]}`)
+    }
+
+    // Pattern: "Grid snap: 0.10" → "网格吸附：0.10"
+    const gridSnapMatch = trimmed.match(/^Grid snap:\s+(.+)$/)
+    if (gridSnapMatch) {
+      return text.replace(trimmed, `网格吸附：${gridSnapMatch[1]}`)
     }
 
     // Case-insensitive fallback — try matching lowercase version
@@ -428,6 +625,14 @@
 
   // ── Initialize ──
   function init() {
+    const language = getEditorLanguage()
+    applyDocumentLanguage(language)
+
+    if (language === 'en') {
+      console.log('[建筑王 i18n] Editor language is English; localization overlay disabled')
+      return
+    }
+
     console.log('[建筑王 i18n] Starting Chinese localization')
 
     // Initial pass — translate any text already in DOM

@@ -1,6 +1,7 @@
 import {
   type AnyNodeId,
   type AssetInput,
+  type ControlValue,
   ItemNode,
   sceneRegistry,
   useScene,
@@ -29,6 +30,7 @@ export interface DraftNodeHandle {
     asset: AssetInput,
     rotation?: [number, number, number],
     scale?: [number, number, number],
+    interactiveValues?: ControlValue[],
   ) => ItemNode | null
   /** Take ownership of an existing scene node as the draft (for move mode). */
   adopt: (node: ItemNode) => void
@@ -57,6 +59,7 @@ export function useDraftNode(): DraftNodeHandle {
       asset: AssetInput,
       rotation?: [number, number, number],
       scale?: [number, number, number],
+      interactiveValues?: ControlValue[],
     ): ItemNode | null => {
       const currentLevelId = useViewer.getState().selection.levelId
       if (!currentLevelId) return null
@@ -67,6 +70,7 @@ export function useDraftNode(): DraftNodeHandle {
         scale: scale ?? [1, 1, 1],
         name: asset.name,
         asset,
+        interactiveValues,
         parentId: currentLevelId,
         metadata: { isTransient: true },
       })
@@ -159,6 +163,7 @@ export function useDraftNode(): DraftNodeHandle {
     const finalNode = ItemNode.parse({
       name: draft.name,
       asset: draft.asset,
+      interactiveValues: draft.interactiveValues,
       position: updateProps.position ?? draft.position,
       rotation: updateProps.rotation ?? draft.rotation,
       side: updateProps.side ?? draft.side,

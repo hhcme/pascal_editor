@@ -12,6 +12,7 @@ const CATEGORY_ICONS: Record<string, string> = {
   door: '/icons/door.png',
   window: '/icons/window.png',
   furniture: '/icons/couch.png',
+  lighting: '/icons/environment.png',
   appliance: '/icons/appliance.png',
   kitchen: '/icons/kitchen.png',
   bathroom: '/icons/bathroom.png',

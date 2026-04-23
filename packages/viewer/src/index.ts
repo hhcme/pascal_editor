@@ -16,7 +16,40 @@ export {
   disposeMaterial,
 } from './lib/materials'
 export { mergedOutline } from './lib/merged-outline-node'
-export { default as useViewer } from './store/use-viewer'
+export {
+  clampSunProgress,
+  DEFAULT_SUN_STUDY_STATE,
+  getNearestSunTimeOfDay,
+  getSunAnglesForProgress,
+  getSunPathPosition,
+  getSunPosition,
+  getSunPositionForProgress,
+  getSunPositionFromAngles,
+  getSunProgressForTimeOfDay,
+  resolveSunLighting,
+  resolveSunPreset,
+  resolveSunProgress,
+  SUN_TIME_OPTIONS,
+  type SunPreset,
+  type SunResolvedPreset,
+  type SunStudyState,
+  type SunTimeOfDay,
+} from './lib/sun-study'
+export {
+  clampWeatherIntensity,
+  clampWeatherParticleSize,
+  clampWeatherWindSpeed,
+  DEFAULT_WEATHER_STATE,
+  normalizeWeatherWindDirection,
+  resolveWeatherOption,
+  resolveWeatherState,
+  WEATHER_OPTIONS,
+  type WeatherMode,
+  type WeatherOption,
+  type WeatherState,
+} from './lib/weather'
 export type { ExportSceneRequest } from './store/use-viewer'
+export { default as useViewer } from './store/use-viewer'
 export { InteractiveSystem } from './systems/interactive/interactive-system'
 export { snapLevelsToTruePositions } from './systems/level/level-utils'
+export { WeatherSystem } from './systems/weather/weather-system'

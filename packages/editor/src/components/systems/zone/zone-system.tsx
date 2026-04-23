@@ -3,6 +3,7 @@ import { useViewer } from '@pascal-app/viewer'
 import { useFrame } from '@react-three/fiber'
 import { type Group, MathUtils, type Mesh } from 'three'
 import type { MeshBasicNodeMaterial } from 'three/webgpu'
+import { isZoneLabelHidden } from '../../../lib/zone-label-visibility'
 import useEditor from '../../../store/use-editor'
 
 // Disable raycasting on zone geometry so clicks pass through to items underneath.
@@ -73,8 +74,8 @@ export const ZoneSystem = () => {
         obj.userData.__raycastDisabled = true
       }
 
-      // Labels: always visible on the current level (regardless of mode)
-      const showLabel = !!selectedLevelId && isOnSelectedLevel
+      // Labels: visible on the current level unless the user hid them for screenshots.
+      const showLabel = !!selectedLevelId && isOnSelectedLevel && !isZoneLabelHidden(zone)
       const labelOpacity = showLabel ? '1' : '0'
       const labelEl = document.getElementById(`${zoneId}-label`)
       if (labelEl && labelEl.style.opacity !== labelOpacity) {

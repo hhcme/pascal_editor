@@ -25,6 +25,7 @@ export const sceneRegistry = {
     'stair-segment': new Set<string>(),
     scan: new Set<string>(),
     guide: new Set<string>(),
+    'sketch-line': new Set<string>(),
     window: new Set<string>(),
     door: new Set<string>(),
   },

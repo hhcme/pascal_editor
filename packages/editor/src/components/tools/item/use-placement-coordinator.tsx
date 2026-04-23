@@ -1,4 +1,4 @@
-import type { AssetInput } from '@pascal-app/core'
+import type { AssetInput, ControlValue } from '@pascal-app/core'
 import {
   type AnyNodeId,
   type CeilingEvent,
@@ -77,6 +77,7 @@ export interface PlacementCoordinatorConfig {
   initialState?: PlacementState
   /** Scale to use when lazily creating a draft (e.g. for wall/ceiling duplicates). Defaults to [1,1,1]. */
   defaultScale?: [number, number, number]
+  defaultInteractiveValues?: ControlValue[]
 }
 
 export function usePlacementCoordinator(config: PlacementCoordinatorConfig): React.ReactNode {
@@ -174,6 +175,7 @@ export function usePlacementCoordinator(config: PlacementCoordinatorConfig): Rea
         asset,
         [0, result.cursorRotationY, 0],
         configRef.current.defaultScale,
+        configRef.current.defaultInteractiveValues,
       )
 
       const draft = draftNode.current
@@ -268,7 +270,13 @@ export function usePlacementCoordinator(config: PlacementCoordinatorConfig): Rea
 
       draftNode.commit(result.nodeUpdate)
       if (configRef.current.onCommitted()) {
-        draftNode.create(gridPosition.current, asset, currentRotation)
+        draftNode.create(
+          gridPosition.current,
+          asset,
+          currentRotation,
+          undefined,
+          configRef.current.defaultInteractiveValues,
+        )
         revalidate()
       }
     }

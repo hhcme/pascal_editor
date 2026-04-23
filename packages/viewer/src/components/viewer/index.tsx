@@ -21,6 +21,7 @@ import { ItemLightSystem } from '../../systems/item-light/item-light-system'
 import { LevelSystem } from '../../systems/level/level-system'
 import { ScanSystem } from '../../systems/scan/scan-system'
 import { WallCutout } from '../../systems/wall/wall-cutout'
+import { WeatherSystem } from '../../systems/weather/weather-system'
 import { ZoneSystem } from '../../systems/zone/zone-system'
 import { SceneRenderer } from '../renderers/scene-renderer'
 import FrameLimiter from './frame-limiter'
@@ -160,6 +161,7 @@ const Viewer: React.FC<ViewerProps> = ({
       <LevelSystem />
       <GuideSystem />
       <ScanSystem />
+      <WeatherSystem />
       <WallCutout />
       {/* Core systems */}
       <CeilingSystem />

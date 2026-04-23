@@ -1,8 +1,8 @@
-import type { AnyNodeId, LevelNode } from '@pascal-app/core'
+import type { AnyNodeId, ControlValue, LevelNode } from '@pascal-app/core'
 import { sceneRegistry, useInteractive, useScene } from '@pascal-app/core'
 import { useFrame } from '@react-three/fiber'
 import { useRef } from 'react'
-import { MathUtils, type PointLight, Vector3 } from 'three'
+import { Color, MathUtils, type PointLight, Vector3 } from 'three'
 import { useItemLightPool } from '../../store/use-item-light-pool'
 import useViewer from '../../store/use-viewer'
 
@@ -31,9 +31,29 @@ const _dir = new Vector3()
 const _camPos = new Vector3()
 const _camFwd = new Vector3()
 const _itemPos = new Vector3()
+const _targetLightColor = new Color()
+const WARM_LIGHT_COLOR = new Color('#ffd1a3')
+const NEUTRAL_LIGHT_COLOR = new Color('#ffffff')
+const COOL_LIGHT_COLOR = new Color('#dce8ff')
 
 type SceneNodes = ReturnType<typeof useScene.getState>['nodes']
 type InteractiveState = ReturnType<typeof useInteractive.getState>
+
+function resolveLightColor(
+  reg: import('../../store/use-item-light-pool').LightRegistration,
+  values: ControlValue[] | undefined,
+) {
+  const rawTemperature = reg.temperatureIndex >= 0 ? values?.[reg.temperatureIndex] : undefined
+  if (typeof rawTemperature !== 'number') {
+    return _targetLightColor.set(reg.effect.color)
+  }
+
+  const t = MathUtils.clamp((rawTemperature - 2700) / (6500 - 2700), 0, 1)
+  if (t < 0.5) {
+    return _targetLightColor.copy(WARM_LIGHT_COLOR).lerp(NEUTRAL_LIGHT_COLOR, t / 0.5)
+  }
+  return _targetLightColor.copy(NEUTRAL_LIGHT_COLOR).lerp(COOL_LIGHT_COLOR, (t - 0.5) / 0.5)
+}
 
 function scoreRegistration(
   reg: import('../../store/use-item-light-pool').LightRegistration,
@@ -266,6 +286,9 @@ export function ItemLightSystem() {
       // Compute target intensity
       const values = interactiveState.items[reg.nodeId]?.controlValues
       const isOn = reg.toggleIndex >= 0 ? Boolean(values?.[reg.toggleIndex]) : true
+      const targetColor = resolveLightColor(reg, values)
+      light.color.lerp(targetColor, dt * 12)
+
       let t = 1
       if (reg.hasSlider) {
         const raw = (values?.[reg.sliderIndex] as number) ?? reg.sliderMin

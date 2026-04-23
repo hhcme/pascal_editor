@@ -97,6 +97,7 @@ const assetSchema = z.object({
 
 export type AssetInput = z.input<typeof assetSchema>
 export type Asset = z.infer<typeof assetSchema>
+const controlValueSchema = z.union([z.boolean(), z.number()])
 
 export const ItemNode = BaseNode.extend({
   id: objectId('item'),
@@ -113,6 +114,7 @@ export const ItemNode = BaseNode.extend({
 
   // Denormalized references to collections this node belongs to
   collectionIds: z.array(z.custom<CollectionId>()).optional(),
+  interactiveValues: z.array(controlValueSchema).optional(),
 
   asset: assetSchema,
 }).describe(dedent`Item node - used to represent a item in the building
@@ -127,6 +129,7 @@ export const ItemNode = BaseNode.extend({
     - rotation: corrective rotation for the model
     - scale: corrective scale for the model
     - tags: tags associated with the item
+  - interactiveValues: persisted runtime control values for interactive items
 `)
 
 export type ItemNode = z.infer<typeof ItemNode>

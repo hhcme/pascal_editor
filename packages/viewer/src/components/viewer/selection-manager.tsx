@@ -37,6 +37,7 @@ type SelectableNodeType =
   | 'ceiling'
   | 'roof'
   | 'roof-segment'
+  | 'sketch-line'
 
 // Expand polygon outward by a small amount to include items on edges
 const expandPolygon = (polygon: [number, number][], tolerance: number): [number, number][] => {
@@ -146,6 +147,12 @@ const isNodeInZone = (node: AnyNode, levelId: string, zoneId: string): boolean =
     return startIn || endIn
   }
 
+  if (node.type === 'sketch-line') {
+    const startIn = pointInPolygonWithTolerance(node.start[0], node.start[1], zone.polygon)
+    const endIn = pointInPolygonWithTolerance(node.end[0], node.end[1], zone.polygon)
+    return startIn || endIn
+  }
+
   if (node.type === 'slab' || node.type === 'ceiling') {
     const poly = (node as { polygon: [number, number][] }).polygon
     if (!poly?.length) return false
@@ -229,7 +236,18 @@ const getStrategy = (): SelectionStrategy | null => {
 
   // Zone selected -> can select/hover contents (walls, items, slabs, ceilings, roofs, windows, doors)
   return {
-    types: ['wall', 'fence', 'item', 'slab', 'ceiling', 'roof', 'roof-segment', 'window', 'door'],
+    types: [
+      'wall',
+      'fence',
+      'item',
+      'slab',
+      'ceiling',
+      'roof',
+      'roof-segment',
+      'sketch-line',
+      'window',
+      'door',
+    ],
     handleClick: (node, nativeEvent) => {
       let nodeToSelect = node
       if (node.type === 'roof-segment' && node.parentId) {
@@ -262,6 +280,7 @@ const getStrategy = (): SelectionStrategy | null => {
         'ceiling',
         'roof',
         'roof-segment',
+        'sketch-line',
         'window',
         'door',
       ]
@@ -322,6 +341,7 @@ export const SelectionManager = () => {
       'ceiling',
       'roof',
       'roof-segment',
+      'sketch-line',
       'window',
       'door',
     ]

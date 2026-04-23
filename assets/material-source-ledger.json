@@ -1,0 +1,724 @@
+{
+  "$schema": "./material-source-ledger.schema.json",
+  "version": 1,
+  "defaultTexturePolicy": {
+    "sourceId": "legacy-material-catalog",
+    "licenseId": "license-review-needed",
+    "reviewStatus": "needs-review",
+    "distribution": "bundled",
+    "notes": "Existing bundled texture files predate the material source ledger. Do not treat them as open assets until each source is reviewed."
+  },
+  "defaultProceduralPolicy": {
+    "sourceId": "procedural-catalog",
+    "licenseId": "internal-procedural",
+    "licenseUrl": "../../docs/asset-library.md",
+    "reviewStatus": "approved",
+    "distribution": "bundled",
+    "notes": "Pure parameter presets generated in code; no third-party texture payload is embedded."
+  },
+  "approvedSources": [
+    {
+      "id": "procedural-catalog",
+      "name": "Findtop Procedural Catalog",
+      "homepage": "../../docs/asset-library.md",
+      "licenseId": "internal-procedural",
+      "licenseUrl": "../../docs/asset-library.md",
+      "integrationMode": "generated-parameters",
+      "bestFor": [
+        "paint",
+        "metal",
+        "glass",
+        "simple-building-finishes"
+      ],
+      "notes": "Use for color and PBR parameter presets that contain no external bitmap assets."
+    },
+    {
+      "id": "legacy-material-catalog",
+      "name": "Legacy Bundled Material Catalog",
+      "homepage": "../../docs/asset-library.md",
+      "licenseId": "license-review-needed",
+      "licenseUrl": "../../docs/asset-library.md",
+      "integrationMode": "legacy-bundled",
+      "bestFor": [
+        "review-only"
+      ],
+      "notes": "Known source bucket for texture files that still need per-asset license review."
+    },
+    {
+      "id": "ambientcg",
+      "name": "ambientCG",
+      "homepage": "https://ambientcg.com/",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://docs.ambientcg.com/license/",
+      "integrationMode": "curated-download",
+      "bestFor": [
+        "pbr-materials",
+        "wood",
+        "stone",
+        "tile",
+        "fabric",
+        "wall-covering"
+      ],
+      "notes": "Primary source for CC0 material expansion packs."
+    },
+    {
+      "id": "poly-haven",
+      "name": "Poly Haven",
+      "homepage": "https://polyhaven.com/",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "integrationMode": "curated-download",
+      "bestFor": [
+        "pbr-materials",
+        "hdris",
+        "selected-surfaces"
+      ],
+      "notes": "Use for selected CC0 materials and environment lighting."
+    },
+    {
+      "id": "sketchfab-api",
+      "name": "Sketchfab Download API",
+      "homepage": "https://sketchfab.com/developers/download-api",
+      "licenseId": "per-asset-creative-commons",
+      "licenseUrl": "https://sketchfab.com/developers/download-api/guidelines",
+      "integrationMode": "user-authenticated-import",
+      "bestFor": [
+        "long-tail-user-import"
+      ],
+      "notes": "Do not bundle by default. Preserve author, source URL, and license with every imported material."
+    }
+  ],
+  "licensePolicy": {
+    "bundledAllowlist": [
+      "CC0-1.0",
+      "internal-procedural"
+    ],
+    "importAllowlist": [
+      "CC0-1.0",
+      "CC-BY-4.0"
+    ],
+    "rejectByDefault": [
+      "unknown",
+      "license-review-needed",
+      "CC-BY-NC",
+      "CC-BY-ND",
+      "CC-BY-SA",
+      "GPL",
+      "LGPL",
+      "editorial",
+      "royalty-free-marketplace"
+    ]
+  },
+  "materialOverrides": {
+    "ambientcg-woodfloor051": {
+      "sourceId": "ambientcg",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://docs.ambientcg.com/license/",
+      "sourceUrl": "https://ambientcg.com/view?id=WoodFloor051",
+      "author": "ambientCG",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded as the 1K-JPG PBR package."
+    },
+    "ambientcg-bricks097": {
+      "sourceId": "ambientcg",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://docs.ambientcg.com/license/",
+      "sourceUrl": "https://ambientcg.com/view?id=Bricks097",
+      "author": "ambientCG",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded as the 1K-JPG PBR package."
+    },
+    "ambientcg-concrete034": {
+      "sourceId": "ambientcg",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://docs.ambientcg.com/license/",
+      "sourceUrl": "https://ambientcg.com/view?id=Concrete034",
+      "author": "ambientCG",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded as the 1K-JPG PBR package."
+    },
+    "ambientcg-tiles030": {
+      "sourceId": "ambientcg",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://docs.ambientcg.com/license/",
+      "sourceUrl": "https://ambientcg.com/view?id=Tiles030",
+      "author": "ambientCG",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded as the 1K-JPG PBR package."
+    },
+    "ambientcg-carpet001": {
+      "sourceId": "ambientcg",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://docs.ambientcg.com/license/",
+      "sourceUrl": "https://ambientcg.com/view?id=Carpet001",
+      "author": "ambientCG",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded as the 1K-JPG PBR package."
+    },
+    "ambientcg-marble019": {
+      "sourceId": "ambientcg",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://docs.ambientcg.com/license/",
+      "sourceUrl": "https://ambientcg.com/view?id=Marble019",
+      "author": "ambientCG",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded as the 1K-JPG PBR package."
+    },
+    "polyhaven-wood-table-001": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/wood_table_001",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brick-4": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brick_4",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-concrete-layers-02": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/concrete_layers_02",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-plaster-grey-04": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/plaster_grey_04",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-interior-tiles": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/interior_tiles",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brown-leather": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brown_leather",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brick-floor-003": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brick_floor_003",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brown-planks-03": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brown_planks_03",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-grey-cartago-03": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/grey_cartago_03",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-concrete-wall-001": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/concrete_wall_001",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-marble-01": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/marble_01",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-blue-floor-tiles-01": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/blue_floor_tiles_01",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brick-crosswalk": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brick_crosswalk",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brick-floor": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brick_floor",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brick-moss-001": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brick_moss_001",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brick-pavement-02": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brick_pavement_02",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brick-wall-001": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brick_wall_001",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brown-floor-tiles": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brown_floor_tiles",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-checkered-pavement-tiles": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/checkered_pavement_tiles",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-concrete-tiles-02": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/concrete_tiles_02",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-dirty-tiles": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/dirty_tiles",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-terrazzo-tiles": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/terrazzo_tiles",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-black-painted-planks": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/black_painted_planks",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-blue-painted-planks": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/blue_painted_planks",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brown-planks-04": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brown_planks_04",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brown-planks-05": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brown_planks_05",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-beam-wall-01": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/beam_wall_01",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-anti-slip-concrete": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/anti_slip_concrete",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brushed-concrete": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brushed_concrete",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-concrete-block-wall": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/concrete_block_wall",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-beige-wall-001": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/beige_wall_001",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-blue-plaster-weathered": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/blue_plaster_weathered",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-fabric-leather-01": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/fabric_leather_01",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-fabric-leather-02": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/fabric_leather_02",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-denim-fabric": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/denim_fabric",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-cotton-jersey": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/cotton_jersey",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brick-gravel": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brick_gravel",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brick-pavement": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brick_pavement",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brick-pavement-03": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brick_pavement_03",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-granite-tile-03": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/granite_tile_03",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-grey-cartago-01": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/grey_cartago_01",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-rectangular-facade-tiles": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/rectangular_facade_tiles",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-bark-brown-01": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/bark_brown_01",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-bark-brown-02": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/bark_brown_02",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-bark-willow": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/bark_willow",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-asphalt-floor": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/asphalt_floor",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brushed-concrete-03": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brushed_concrete_03",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-brushed-concrete-2": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/brushed_concrete_2",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-beige-wall-002": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/beige_wall_002",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-concrete-debris": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/concrete_debris",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-concrete-floor-painted": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/concrete_floor_painted",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-bi-stretch": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/bi_stretch",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-caban": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/caban",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-crepe-georgette": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/crepe_georgette",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    },
+    "polyhaven-leather-white": {
+      "sourceId": "poly-haven",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sourceUrl": "https://polyhaven.com/a/leather_white",
+      "author": "Poly Haven",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Downloaded through the Poly Haven public API as 1k jpg maps with md5 verification."
+    }
+  }
+}

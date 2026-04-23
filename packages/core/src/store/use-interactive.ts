@@ -16,7 +16,7 @@ type InteractiveStore = {
   items: Record<AnyNodeId, ItemInteractiveState>
 
   /** Initialize a node's interactive state from its asset definition (idempotent) */
-  initItem: (itemId: AnyNodeId, interactive: Interactive) => void
+  initItem: (itemId: AnyNodeId, interactive: Interactive, initialValues?: ControlValue[]) => void
 
   /** Set a single control value */
   setControlValue: (itemId: AnyNodeId, index: number, value: ControlValue) => void
@@ -38,10 +38,25 @@ const defaultControlValue = (interactive: Interactive, index: number): ControlVa
   }
 }
 
+const normalizeControlValue = (
+  interactive: Interactive,
+  index: number,
+  value: ControlValue | undefined,
+): ControlValue => {
+  const control = interactive.controls[index]
+  if (!control) return false
+  if (control.kind === 'toggle') {
+    return typeof value === 'boolean' ? value : defaultControlValue(interactive, index)
+  }
+  return typeof value === 'number' && Number.isFinite(value)
+    ? value
+    : defaultControlValue(interactive, index)
+}
+
 export const useInteractive = create<InteractiveStore>((set, get) => ({
   items: {},
 
-  initItem: (itemId, interactive) => {
+  initItem: (itemId, interactive, initialValues) => {
     const { controls } = interactive
     if (controls.length === 0) return
 
@@ -52,7 +67,9 @@ export const useInteractive = create<InteractiveStore>((set, get) => ({
       items: {
         ...state.items,
         [itemId]: {
-          controlValues: controls.map((_, i) => defaultControlValue(interactive, i)),
+          controlValues: controls.map((_, i) =>
+            normalizeControlValue(interactive, i, initialValues?.[i]),
+          ),
         },
       },
     }))

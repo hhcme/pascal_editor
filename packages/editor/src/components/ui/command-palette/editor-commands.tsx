@@ -65,13 +65,22 @@ export function EditorCommands() {
       run(() => {
         setPhase('structure')
         setMode('build')
-        if (tool === 'zone') setStructureLayer('zones')
+        setStructureLayer(tool === 'zone' ? 'zones' : 'elements')
         setTool(tool)
       })
     }
 
     const activateWallEdit = (
-      operation: 'trim-extend' | 'split' | 'merge' | 'offset' | 'fillet',
+      operation:
+        | 'trim-extend'
+        | 'split'
+        | 'merge'
+        | 'offset'
+        | 'fillet'
+        | 'mirror'
+        | 'linear-pattern'
+        | 'chamfer'
+        | 'set-length',
     ) => {
       run(() => {
         setPhase('structure')
@@ -91,6 +100,38 @@ export function EditorCommands() {
         icon: <Square className="h-4 w-4" />,
         keywords: ['draw', 'build', 'structure'],
         execute: () => activateTool('wall'),
+      },
+      {
+        id: 'editor.tool.sketch-line',
+        label: '草图线工具',
+        group: '草图',
+        icon: <PencilLine className="h-4 w-4" />,
+        keywords: ['sketch', 'line', 'solidworks', 'cad'],
+        execute: () => activateTool('sketch-line'),
+      },
+      {
+        id: 'editor.tool.sketch-construction-line',
+        label: '参考线工具',
+        group: '草图',
+        icon: <PencilLine className="h-4 w-4" />,
+        keywords: ['sketch', 'construction', 'reference', 'cad'],
+        execute: () => activateTool('sketch-construction-line'),
+      },
+      {
+        id: 'editor.tool.sketch-rectangle',
+        label: '草图矩形工具',
+        group: '草图',
+        icon: <Square className="h-4 w-4" />,
+        keywords: ['sketch', 'rectangle', 'profile', 'solidworks', 'cad'],
+        execute: () => activateTool('sketch-rectangle'),
+      },
+      {
+        id: 'editor.tool.smart-dimension',
+        label: '智能尺寸',
+        group: '草图',
+        icon: <PencilLine className="h-4 w-4" />,
+        keywords: ['sketch', 'dimension', 'length', 'solidworks', 'cad'],
+        execute: () => activateTool('smart-dimension'),
       },
       {
         id: 'editor.wall-edit.trim-extend',
@@ -121,11 +162,39 @@ export function EditorCommands() {
         execute: () => activateWallEdit('offset'),
       },
       {
+        id: 'editor.wall-edit.set-length',
+        label: 'Set Wall Length',
+        group: 'Wall Editing',
+        keywords: ['dimension', 'length', 'smart dimension', 'wall', 'cad'],
+        execute: () => activateWallEdit('set-length'),
+      },
+      {
         id: 'editor.wall-edit.fillet',
         label: 'Fillet Walls',
         group: 'Wall Editing',
         keywords: ['round', 'radius', 'fillet', 'wall', 'cad'],
         execute: () => activateWallEdit('fillet'),
+      },
+      {
+        id: 'editor.wall-edit.mirror',
+        label: 'Mirror Walls',
+        group: 'Wall Editing',
+        keywords: ['mirror', 'symmetry', 'wall', 'cad'],
+        execute: () => activateWallEdit('mirror'),
+      },
+      {
+        id: 'editor.wall-edit.linear-pattern',
+        label: 'Linear Pattern Walls',
+        group: 'Wall Editing',
+        keywords: ['pattern', 'array', 'repeat', 'wall', 'cad'],
+        execute: () => activateWallEdit('linear-pattern'),
+      },
+      {
+        id: 'editor.wall-edit.chamfer',
+        label: 'Chamfer Walls',
+        group: 'Wall Editing',
+        keywords: ['chamfer', 'bevel', 'corner', 'wall', 'cad'],
+        execute: () => activateWallEdit('chamfer'),
       },
       {
         id: 'editor.tool.slab',

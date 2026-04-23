@@ -1,13 +1,12 @@
 'use client'
 
 import NextImage from 'next/image'
-import { useContextualTools } from '../../../hooks/use-contextual-tools'
-
 import { cn } from '../../../lib/utils'
 import useEditor, {
+  isSketchStructureTool,
+  SKETCH_STRUCTURE_TOOLS,
   type CatalogCategory,
   type StructureTool,
-  type Tool,
 } from '../../../store/use-editor'
 import { ActionButton } from './action-button'
 
@@ -20,6 +19,14 @@ export type ToolConfig = {
 
 export const tools: ToolConfig[] = [
   { id: 'wall', iconSrc: '/icons/wall.png', label: 'Wall' },
+  { id: 'sketch-line', iconSrc: '/icons/sketch-line.svg', label: '草图线' },
+  { id: 'sketch-rectangle', iconSrc: '/icons/sketch-rectangle.svg', label: '草图矩形' },
+  {
+    id: 'sketch-construction-line',
+    iconSrc: '/icons/sketch-construction-line.svg',
+    label: '参考线',
+  },
+  { id: 'smart-dimension', iconSrc: '/icons/smart-dimension.svg', label: '智能尺寸' },
   // { id: 'room', iconSrc: '/icons/room.png', label: 'Room' },
   // { id: 'custom-room', iconSrc: '/icons/custom-room.png', label: 'Custom Room' },
   { id: 'slab', iconSrc: '/icons/floor.png', label: 'Slab' },
@@ -32,6 +39,8 @@ export const tools: ToolConfig[] = [
   { id: 'zone', iconSrc: '/icons/zone.png', label: 'Zone' },
 ]
 
+const sketchToolIds = new Set<StructureTool>(SKETCH_STRUCTURE_TOOLS)
+
 export function StructureTools() {
   const activeTool = useEditor((state) => state.tool)
   const catalogCategory = useEditor((state) => state.catalogCategory)
@@ -39,18 +48,13 @@ export function StructureTools() {
   const setTool = useEditor((state) => state.setTool)
   const setCatalogCategory = useEditor((state) => state.setCatalogCategory)
 
-  const contextualTools = useContextualTools()
-
   // Filter tools based on structureLayer
   const visibleTools =
     structureLayer === 'zones'
       ? tools.filter((t) => t.id === 'zone')
-      : tools.filter((t) => t.id !== 'zone')
-
-  const hasActiveTool = visibleTools.some(
-    (t) =>
-      activeTool === t.id && (t.catalogCategory ? catalogCategory === t.catalogCategory : true),
-  )
+      : isSketchStructureTool(activeTool)
+        ? tools.filter((t) => sketchToolIds.has(t.id))
+        : tools.filter((t) => t.id !== 'zone' && !sketchToolIds.has(t.id))
 
   return (
     <div className="flex items-center gap-1.5 px-1">
@@ -59,8 +63,6 @@ export function StructureTools() {
         const isActive =
           activeTool === tool.id &&
           (tool.catalogCategory ? catalogCategory === tool.catalogCategory : true)
-
-        const isContextual = contextualTools.includes(tool.id)
 
         return (
           <ActionButton

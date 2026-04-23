@@ -147,38 +147,51 @@ function RightColumn({
   toolbarLeft,
   toolbarRight,
   children,
+  inspector,
   overlays,
 }: {
   toolbarLeft?: ReactNode
   toolbarRight?: ReactNode
   children: ReactNode
+  inspector?: ReactNode
   overlays?: ReactNode
 }) {
   return (
-    <div
-      className="editor-canvas-shell relative flex min-w-0 flex-1 flex-col overflow-hidden"
-      style={{
-        clipPath: 'inset(0 0 0 0)',
-      }}
-    >
-      {/* Viewer toolbar */}
-      {(toolbarLeft || toolbarRight) && (
-        <div className="pointer-events-none absolute top-3 right-4 left-4 z-20 flex items-center justify-between gap-3">
-          <div className="pointer-events-auto flex items-center gap-2">{toolbarLeft}</div>
-          <div className="pointer-events-auto flex items-center gap-2">{toolbarRight}</div>
-        </div>
-      )}
-      {/* Canvas area */}
-      <div className="relative flex-1 overflow-hidden">{children}</div>
-      {/* Overlays scoped to the viewer column */}
-      {overlays && (
-        <div
-          className="pointer-events-none absolute inset-0 z-30"
-          style={{ transform: 'translateZ(0)' }}
+    <div className="relative flex min-w-0 flex-1 overflow-hidden">
+      <div
+        className="editor-canvas-shell relative flex min-w-0 flex-1 flex-col overflow-hidden"
+        style={{
+          clipPath: 'inset(0 0 0 0)',
+        }}
+      >
+        {/* Viewer toolbar */}
+        {(toolbarLeft || toolbarRight) && (
+          <div className="pointer-events-none absolute top-3 right-4 left-4 z-20 flex items-center justify-between gap-3">
+            <div className="pointer-events-auto flex items-center gap-2">{toolbarLeft}</div>
+            <div className="pointer-events-auto flex items-center gap-2">{toolbarRight}</div>
+          </div>
+        )}
+        {/* Canvas area */}
+        <div className="relative flex-1 overflow-hidden">{children}</div>
+        {/* Overlays scoped to the viewer column */}
+        {overlays && (
+          <div
+            className="pointer-events-none absolute inset-0 z-30"
+            style={{ transform: 'translateZ(0)' }}
+          >
+            {overlays}
+          </div>
+        )}
+      </div>
+
+      {inspector ? (
+        <aside
+          className="editor-docked-inspector flex min-h-0 shrink-0 flex-col overflow-hidden"
+          style={{ flexBasis: 'clamp(300px, 18vw, 340px)' }}
         >
-          {overlays}
-        </div>
-      )}
+          {inspector}
+        </aside>
+      ) : null}
     </div>
   )
 }
@@ -193,6 +206,7 @@ export interface EditorLayoutV2Props {
   viewerToolbarLeft?: ReactNode
   viewerToolbarRight?: ReactNode
   viewerContent: ReactNode
+  inspector?: ReactNode
   overlays?: ReactNode
 }
 
@@ -204,6 +218,7 @@ export function EditorLayoutV2({
   viewerToolbarLeft,
   viewerToolbarRight,
   viewerContent,
+  inspector,
   overlays,
 }: EditorLayoutV2Props) {
   return (
@@ -221,6 +236,7 @@ export function EditorLayoutV2({
           />
         )}
         <RightColumn
+          inspector={inspector}
           overlays={overlays}
           toolbarLeft={viewerToolbarLeft}
           toolbarRight={viewerToolbarRight}

@@ -1,6 +1,5 @@
 'use client'
 
-import { Icon } from '@iconify/react'
 import {
   initSpaceDetectionSync,
   initSpatialGridSync,
@@ -35,7 +34,8 @@ import { CommandPalette, type CommandPaletteEmptyAction } from '../ui/command-pa
 import { EditorCommands } from '../ui/command-palette/editor-commands'
 import { FloatingLevelSelector } from '../ui/floating-level-selector'
 import { HelperManager } from '../ui/helpers/helper-manager'
-import { PanelManager } from '../ui/panels/panel-manager'
+import { PanelManager, useInspectorPanelType } from '../ui/panels/panel-manager'
+import { PanelSurfaceProvider } from '../ui/panels/panel-wrapper'
 import { ErrorBoundary } from '../ui/primitives/error-boundary'
 import { useSidebarStore } from '../ui/primitives/sidebar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/primitives/tooltip'
@@ -53,6 +53,7 @@ import { FloatingActionMenu } from './floating-action-menu'
 import { FloatingBuildingActionMenu } from './floating-building-action-menu'
 import { FloorplanPanel } from './floorplan-panel'
 import { Grid } from './grid'
+import { OrientationGuide } from './orientation-guide'
 import { PresetThumbnailGenerator } from './preset-thumbnail-generator'
 import { SelectionManager } from './selection-manager'
 import { SiteEdgeLabels } from './site-edge-labels'
@@ -322,28 +323,29 @@ const PREVIEW_CAMERA_CONTROL_HINTS: CameraControlHint[] = [
   { action: 'Zoom', keys: [{ value: 'Scroll' }] },
 ]
 
-const CAMERA_SHORTCUT_KEY_META: Record<string, { icon?: string; label: string; text?: string }> = {
-  'Left click': {
-    icon: 'ph:mouse-left-click-fill',
-    label: 'Left click',
-  },
-  'Middle click': {
-    icon: 'qlementine-icons:mouse-middle-button-16',
-    label: 'Middle click',
-  },
-  'Right click': {
-    icon: 'ph:mouse-right-click-fill',
-    label: 'Right click',
-  },
-  Scroll: {
-    icon: 'qlementine-icons:mouse-middle-button-16',
-    label: 'Scroll wheel',
-  },
-  Space: {
-    icon: 'lucide:space',
-    label: 'Space',
-  },
-}
+const CAMERA_SHORTCUT_KEY_META: Record<string, { iconSrc?: string; label: string; text?: string }> =
+  {
+    'Left click': {
+      iconSrc: '/icons/mouse-left.svg',
+      label: 'Left click',
+    },
+    'Middle click': {
+      iconSrc: '/icons/mouse-scroll.svg',
+      label: 'Middle click',
+    },
+    'Right click': {
+      iconSrc: '/icons/mouse-right.svg',
+      label: 'Right click',
+    },
+    Scroll: {
+      iconSrc: '/icons/mouse-scroll.svg',
+      label: 'Scroll wheel',
+    },
+    Space: {
+      iconSrc: '/icons/key-space.svg',
+      label: 'Space',
+    },
+  }
 
 function readCameraControlsHintDismissed(): boolean {
   if (typeof window === 'undefined') {
@@ -375,7 +377,7 @@ function writeCameraControlsHintDismissed(dismissed: boolean) {
 function InlineShortcutKey({ shortcutKey }: { shortcutKey: ShortcutKey }) {
   const meta = CAMERA_SHORTCUT_KEY_META[shortcutKey.value]
 
-  if (meta?.icon) {
+  if (meta?.iconSrc) {
     return (
       <span
         aria-label={meta.label}
@@ -383,7 +385,12 @@ function InlineShortcutKey({ shortcutKey }: { shortcutKey: ShortcutKey }) {
         role="img"
         title={meta.label}
       >
-        <Icon aria-hidden="true" color="currentColor" height={16} icon={meta.icon} width={16} />
+        <img
+          alt=""
+          aria-hidden="true"
+          className="h-4 w-4 shrink-0 object-contain"
+          src={meta.iconSrc}
+        />
         <span className="sr-only">{meta.label}</span>
       </span>
     )
@@ -456,12 +463,11 @@ function ViewerCanvasControlsHint({
               onClick={onDismiss}
               type="button"
             >
-              <Icon
+              <img
+                alt=""
                 aria-hidden="true"
-                color="currentColor"
-                height={14}
-                icon="lucide:x"
-                width={14}
+                className="h-3.5 w-3.5 shrink-0 object-contain"
+                src="/icons/action-close.svg"
               />
             </button>
           </TooltipTrigger>
@@ -490,13 +496,11 @@ function DeleteCursorBadge({ position }: { position: { x: number; y: number } })
           boxShadow: `0 8px 16px -4px rgba(0,0,0,0.3), 0 4px 8px -4px rgba(0,0,0,0.2), 0 0 18px ${DELETE_CURSOR_BADGE_COLOR}22`,
         }}
       >
-        <Icon
+        <img
+          alt=""
           aria-hidden="true"
-          className="drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]"
-          color={DELETE_CURSOR_BADGE_COLOR}
-          height={18}
-          icon="mdi:trash-can-outline"
-          width={18}
+          className="h-[18px] w-[18px] drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]"
+          src="/icons/delete.svg"
         />
       </div>
     </div>
@@ -537,6 +541,7 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
       {!isFirstPersonMode && <CustomCameraControls />}
       <ThumbnailGenerator onThumbnailCapture={onThumbnailCapture} />
       <PresetThumbnailGenerator />
+      {!isLoading && !isFirstPersonMode && <OrientationGuide />}
       {!isFirstPersonMode && <SiteEdgeLabels />}
       {isFirstPersonMode && <InteractiveSystem />}
     </>
@@ -693,7 +698,7 @@ const ViewerCanvas = memo(function ViewerCanvas({
             />
           ) : null}
           <SelectionPersistenceManager enabled={hasLoadedInitialScene && !showLoader} />
-          <Viewer selectionManager={isFirstPersonMode ? 'default' : 'custom'}>
+          <Viewer selectionManager="custom">
             <ViewerSceneContent
               isFirstPersonMode={isFirstPersonMode}
               isLoading={isLoading}
@@ -748,9 +753,25 @@ export default function Editor({
   const [hasLoadedInitialScene, setHasLoadedInitialScene] = useState(false)
   const isPreviewMode = useEditor((s) => s.isPreviewMode)
   const isFirstPersonMode = useEditor((s) => s.isFirstPersonMode)
+  const inspectorPanelType = useInspectorPanelType()
 
   const sidebarWidth = useSidebarStore((s) => s.width)
   const isSidebarCollapsed = useSidebarStore((s) => s.isCollapsed)
+
+  useEffect(() => {
+    if (!isFirstPersonMode) return
+
+    const wasCollapsed = useSidebarStore.getState().isCollapsed
+    if (!wasCollapsed) {
+      useSidebarStore.getState().setIsCollapsed(true)
+    }
+
+    return () => {
+      if (!wasCollapsed) {
+        useSidebarStore.getState().setIsCollapsed(false)
+      }
+    }
+  }, [isFirstPersonMode])
 
   useEffect(() => {
     const teardown = initializeEditorRuntime()
@@ -881,32 +902,36 @@ export default function Editor({
         ) : (
           <>
             <EditorLayoutV2
+              inspector={
+                !isFirstPersonMode && !isVersionPreviewMode && inspectorPanelType ? (
+                  <PanelSurfaceProvider mode="docked">
+                    <PanelManager />
+                  </PanelSurfaceProvider>
+                ) : null
+              }
               navbarSlot={navbarSlot}
               overlays={
-                <>
-                  <FloatingLevelSelector />
-                  {!isVersionPreviewMode && (
+                !isFirstPersonMode ? (
+                  <>
+                    <FloatingLevelSelector />
+                    {!isVersionPreviewMode && (
+                      <div className="pointer-events-auto">
+                        <ActionMenu />
+                      </div>
+                    )}
                     <div className="pointer-events-auto">
-                      <ActionMenu />
+                      <HelperManager />
                     </div>
-                  )}
-                  {!isVersionPreviewMode && (
-                    <div className="pointer-events-auto">
-                      <PanelManager />
-                    </div>
-                  )}
-                  <div className="pointer-events-auto">
-                    <HelperManager />
-                  </div>
-                  {viewerBanner}
-                </>
+                    {viewerBanner}
+                  </>
+                ) : null
               }
               renderTabContent={renderTabContent}
               sidebarOverlay={sidebarOverlay}
               sidebarTabs={tabBarTabs}
               viewerContent={viewerCanvas}
-              viewerToolbarLeft={viewerToolbarLeft}
-              viewerToolbarRight={viewerToolbarRight}
+              viewerToolbarLeft={isFirstPersonMode ? null : viewerToolbarLeft}
+              viewerToolbarRight={isFirstPersonMode ? null : viewerToolbarRight}
             />
             {/* First-person overlay — rendered on top of normal layout */}
             {isFirstPersonMode && (
@@ -960,17 +985,19 @@ export default function Editor({
             <div className="relative flex-1 overflow-hidden rounded-xl">{viewerCanvas}</div>
 
             {/* Fixed UI overlays scoped to the viewer area */}
-            <ViewerOverlays left={overlayLeft}>
-              <div className="pointer-events-auto">
-                <ActionMenu />
-              </div>
-              <div className="pointer-events-auto">
-                <PanelManager />
-              </div>
-              <div className="pointer-events-auto">
-                <HelperManager />
-              </div>
-            </ViewerOverlays>
+            {!isFirstPersonMode && (
+              <ViewerOverlays left={overlayLeft}>
+                <div className="pointer-events-auto">
+                  <ActionMenu />
+                </div>
+                <div className="pointer-events-auto">
+                  <PanelManager />
+                </div>
+                <div className="pointer-events-auto">
+                  <HelperManager />
+                </div>
+              </ViewerOverlays>
+            )}
           </>
         )}
       </div>

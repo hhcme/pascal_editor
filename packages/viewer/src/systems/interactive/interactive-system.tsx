@@ -98,7 +98,12 @@ const ItemControlsOverlay = ({ nodeId }: { nodeId: AnyNodeId }) => {
           <ControlWidget
             control={control}
             key={i}
-            onChange={(v) => setControlValue(nodeId, i, v)}
+            onChange={(v) => {
+              const nextValues = [...controlValues]
+              nextValues[i] = v
+              setControlValue(nodeId, i, v)
+              useScene.getState().updateNode(nodeId, { interactiveValues: nextValues })
+            }}
             value={controlValues[i] ?? false}
           />
         ))}

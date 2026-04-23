@@ -1,7 +1,5 @@
 'use client'
 
-import { Icon } from '@iconify/react'
-import { Copy, Move, Spline, Trash2 } from 'lucide-react'
 import type { MouseEventHandler, PointerEventHandler, ReactNode } from 'react'
 import { cn } from '../../lib/utils'
 
@@ -9,8 +7,10 @@ export type NodeActionMenuExtraAction = {
   id: string
   label: string
   icon: ReactNode
-  onClick: MouseEventHandler<HTMLButtonElement>
+  onClick?: MouseEventHandler<HTMLButtonElement>
   active?: boolean
+  disabled?: boolean
+  disabledReason?: string
 }
 
 type NodeActionMenuProps = {
@@ -24,6 +24,10 @@ type NodeActionMenuProps = {
   onPointerUp?: PointerEventHandler<HTMLDivElement>
   onPointerEnter?: PointerEventHandler<HTMLDivElement>
   onPointerLeave?: PointerEventHandler<HTMLDivElement>
+}
+
+function MenuIcon({ src, alt }: { src: string; alt: string }) {
+  return <img alt={alt} className="h-4 w-4 shrink-0 object-contain" src={src} />
 }
 
 export function NodeActionMenu({
@@ -57,7 +61,7 @@ export function NodeActionMenu({
           title="Move"
           type="button"
         >
-          <Move className="h-4 w-4" />
+          <MenuIcon alt="" src="/icons/action-move.svg" />
         </button>
       )}
       {onCurve && (
@@ -68,16 +72,22 @@ export function NodeActionMenu({
           title="Curve"
           type="button"
         >
-          <Spline className="h-4 w-4" />
+          <MenuIcon alt="" src="/icons/action-curve.svg" />
         </button>
       )}
       {extraActions?.map((action) => (
         <button
           aria-label={action.label}
-          className={cn(buttonClass, action.active && 'bg-primary/10 text-primary hover:bg-primary/15')}
+          className={cn(
+            buttonClass,
+            action.active && 'bg-primary/10 text-primary hover:bg-primary/15',
+            action.disabled &&
+              'cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground',
+          )}
+          disabled={action.disabled}
           key={action.id}
           onClick={action.onClick}
-          title={action.label}
+          title={action.disabled ? (action.disabledReason ?? action.label) : action.label}
           type="button"
         >
           {action.icon}
@@ -91,7 +101,7 @@ export function NodeActionMenu({
           title="Duplicate"
           type="button"
         >
-          <Copy className="h-4 w-4" />
+          <MenuIcon alt="" src="/icons/action-duplicate.svg" />
         </button>
       )}
       {onAddHole && (
@@ -102,7 +112,7 @@ export function NodeActionMenu({
           title="Cut Out"
           type="button"
         >
-          <Icon height={16} icon="carbon:cut-out" width={16} />
+          <MenuIcon alt="" src="/icons/action-cut-out.svg" />
         </button>
       )}
       {onDelete && (
@@ -113,7 +123,7 @@ export function NodeActionMenu({
           title="Delete"
           type="button"
         >
-          <Trash2 className="h-4 w-4" />
+          <MenuIcon alt="" src="/icons/delete.svg" />
         </button>
       )}
     </div>

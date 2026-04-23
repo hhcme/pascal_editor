@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://findtop.local/schemas/asset-source-ledger.schema.json",
+  "title": "Findtop Asset Source Ledger",
+  "type": "object",
+  "required": ["version", "defaultLegacyPolicy", "approvedSources", "licensePolicy"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "defaultLegacyPolicy": {
+      "$ref": "#/$defs/provenance"
+    },
+    "approvedSources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/source"
+      }
+    },
+    "licensePolicy": {
+      "type": "object",
+      "required": ["bundledAllowlist", "importAllowlist", "rejectByDefault"],
+      "properties": {
+        "bundledAllowlist": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "importAllowlist": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rejectByDefault": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "assetOverrides": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/provenance"
+      }
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "homepage",
+        "licenseId",
+        "licenseUrl",
+        "integrationMode",
+        "bestFor"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "homepage": {
+          "type": "string"
+        },
+        "licenseId": {
+          "type": "string"
+        },
+        "licenseUrl": {
+          "type": "string"
+        },
+        "integrationMode": {
+          "type": "string"
+        },
+        "bestFor": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["sourceId", "licenseId", "reviewStatus", "distribution"],
+      "properties": {
+        "sourceId": {
+          "type": "string"
+        },
+        "licenseId": {
+          "type": "string"
+        },
+        "licenseUrl": {
+          "type": "string"
+        },
+        "sourceUrl": {
+          "type": "string"
+        },
+        "author": {
+          "type": "string"
+        },
+        "reviewStatus": {
+          "enum": ["approved", "needs-review", "rejected"]
+        },
+        "distribution": {
+          "enum": ["bundled", "downloaded", "user-imported", "external-link"]
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

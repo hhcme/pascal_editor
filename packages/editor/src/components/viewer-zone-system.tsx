@@ -4,6 +4,7 @@ import { sceneRegistry, useScene, type ZoneNode } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
 import { useFrame } from '@react-three/fiber'
 import type { Mesh } from 'three'
+import { isZoneLabelHidden } from '../lib/zone-label-visibility'
 import useEditor from '../store/use-editor'
 
 export const ViewerZoneSystem = () => {
@@ -34,8 +35,8 @@ export const ViewerZoneSystem = () => {
         }
       })
 
-      // Labels: always visible on the current level (regardless of mode or zone selection)
-      const showLabel = !!levelId && isOnSelectedLevel
+      // Labels: visible on the current level unless the user hid them for screenshots.
+      const showLabel = !!levelId && isOnSelectedLevel && !isZoneLabelHidden(zone)
       const targetOpacity = showLabel ? '1' : '0'
       const labelEl = document.getElementById(`${id}-label`)
       if (labelEl && labelEl.style.opacity !== targetOpacity) {

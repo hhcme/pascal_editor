@@ -1,0 +1,552 @@
+{
+  "$schema": "./asset-source-ledger.schema.json",
+  "version": 1,
+  "defaultLegacyPolicy": {
+    "sourceId": "legacy-catalog",
+    "licenseId": "license-review-needed",
+    "reviewStatus": "needs-review",
+    "distribution": "bundled",
+    "notes": "Existing bundled assets predate the asset source ledger. Do not treat them as open assets until each source is reviewed."
+  },
+  "approvedSources": [
+    {
+      "id": "poly-haven",
+      "name": "Poly Haven",
+      "homepage": "https://polyhaven.com/",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "integrationMode": "curated-download",
+      "bestFor": [
+        "hdris",
+        "pbr-materials",
+        "decor-models"
+      ],
+      "notes": "Use for high-quality environment lighting, materials, and selected decor models."
+    },
+    {
+      "id": "ambientcg",
+      "name": "ambientCG",
+      "homepage": "https://ambientcg.com/",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://docs.ambientcg.com/license/",
+      "integrationMode": "curated-download",
+      "bestFor": [
+        "pbr-materials",
+        "surface-scans",
+        "selected-models"
+      ],
+      "notes": "Use first for floor, wall, stone, wood, fabric, and tile material coverage."
+    },
+    {
+      "id": "kenney",
+      "name": "Kenney",
+      "homepage": "https://kenney.nl/assets",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://kenney.nl/assets",
+      "integrationMode": "curated-download",
+      "bestFor": [
+        "low-poly-furniture",
+        "city-props",
+        "prototype-assets"
+      ],
+      "notes": "Use for lightweight baseline coverage. Keep visual style separate from realistic packs."
+    },
+    {
+      "id": "quaternius",
+      "name": "Quaternius",
+      "homepage": "https://quaternius.com/",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://quaternius.com/",
+      "integrationMode": "curated-download",
+      "bestFor": [
+        "modular-building-parts",
+        "nature",
+        "props"
+      ],
+      "notes": "Use selected glTF/Blend packs only after style and scale normalization."
+    },
+    {
+      "id": "smithsonian-open-access",
+      "name": "Smithsonian Open Access",
+      "homepage": "https://www.si.edu/openaccess",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://www.si.edu/openaccess/faq",
+      "integrationMode": "curated-download",
+      "bestFor": [
+        "art-decor",
+        "sculptures",
+        "museum-objects"
+      ],
+      "notes": "Use only objects explicitly marked CC0. Avoid implying endorsement or using Smithsonian marks."
+    },
+    {
+      "id": "sketchfab-api",
+      "name": "Sketchfab Download API",
+      "homepage": "https://sketchfab.com/developers/download-api",
+      "licenseId": "per-asset-creative-commons",
+      "licenseUrl": "https://sketchfab.com/developers/download-api/guidelines",
+      "integrationMode": "user-authenticated-import",
+      "bestFor": [
+        "long-tail-user-import"
+      ],
+      "notes": "Do not bundle by default. Preserve author, source URL, and license with every imported asset."
+    },
+    {
+      "id": "findtop-procedural",
+      "name": "Findtop Procedural Asset Kit",
+      "homepage": "https://findtop.local/assets/procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "integrationMode": "generated",
+      "bestFor": [
+        "life-atmosphere-baseline",
+        "scale-reference",
+        "low-poly-vegetation",
+        "pets"
+      ],
+      "notes": "Project-generated low-poly baseline models for bundled people, animals, and plants."
+    }
+  ],
+  "licensePolicy": {
+    "bundledAllowlist": [
+      "CC0-1.0"
+    ],
+    "importAllowlist": [
+      "CC0-1.0",
+      "CC-BY-4.0"
+    ],
+    "rejectByDefault": [
+      "unknown",
+      "license-review-needed",
+      "CC-BY-NC",
+      "CC-BY-ND",
+      "CC-BY-SA",
+      "GPL",
+      "LGPL",
+      "editorial",
+      "royalty-free-marketplace"
+    ]
+  },
+  "assetOverrides": {
+    "person-standing-adult": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "person-standing-casual": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "person-walking": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "person-seated": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "person-child": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "person-wheelchair": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "person-service-staff": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "person-office-worker": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "people-pair": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "people-family": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "dog-standing": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "cat-sitting": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "rabbit-sitting": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "bird-on-perch": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "fish-tank": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "duck-standing": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "deer-garden": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "horse-standing": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "indoor-ficus": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "indoor-monstera": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "indoor-snake-plant": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "indoor-palm-tall": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "tabletop-succulent": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "tabletop-flower-vase": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "hanging-planter": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "wall-planter": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "planter-box": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "terrace-planter-set": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "round-shrub": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "flowering-bush": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "grass-clump": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "rectangular-flower-bed": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "hedge-row": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "hedge-corner": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "small-ornamental-tree": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "shade-tree": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "cypress-tree": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "bamboo-cluster": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "banana-plant": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "tall-garden-planter": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "entry-planter-pair": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    },
+    "groundcover-patch": {
+      "sourceId": "findtop-procedural",
+      "licenseId": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "sourceUrl": "editor/tooling/assets/generate-life-atmosphere-assets.mjs",
+      "author": "Findtop",
+      "reviewStatus": "approved",
+      "distribution": "bundled",
+      "notes": "Generated from project-owned primitive geometry; no third-party mesh data."
+    }
+  }
+}

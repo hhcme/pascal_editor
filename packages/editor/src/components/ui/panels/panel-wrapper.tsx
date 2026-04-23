@@ -1,8 +1,27 @@
 'use client'
 
+import { createContext, useContext, type ReactNode } from 'react'
 import { ChevronLeft, RotateCcw, X } from 'lucide-react'
 import Image from 'next/image'
 import { cn } from '../../../lib/utils'
+
+type PanelSurfaceMode = 'floating' | 'docked'
+
+const PanelSurfaceModeContext = createContext<PanelSurfaceMode>('floating')
+
+export function PanelSurfaceProvider({
+  children,
+  mode,
+}: {
+  children: ReactNode
+  mode: PanelSurfaceMode
+}) {
+  return (
+    <PanelSurfaceModeContext.Provider value={mode}>
+      {children}
+    </PanelSurfaceModeContext.Provider>
+  )
+}
 
 interface PanelWrapperProps {
   title: string
@@ -10,7 +29,7 @@ interface PanelWrapperProps {
   onClose?: () => void
   onReset?: () => void
   onBack?: () => void
-  children: React.ReactNode
+  children: ReactNode
   className?: string
   width?: number | string
 }
@@ -25,13 +44,18 @@ export function PanelWrapper({
   className,
   width = 340,
 }: PanelWrapperProps) {
+  const panelSurfaceMode = useContext(PanelSurfaceModeContext)
+  const isDocked = panelSurfaceMode === 'docked'
+
   return (
     <div
       className={cn(
-        'editor-floating-panel pointer-events-auto fixed top-[68px] right-4 z-50 flex max-h-[calc(100dvh-92px)] max-w-[calc(100dvw-32px)] flex-col overflow-hidden rounded-lg bg-sidebar/95 dark:text-foreground',
+        isDocked
+          ? 'editor-docked-panel pointer-events-auto relative flex h-full min-h-0 w-full flex-col overflow-hidden dark:text-foreground'
+          : 'editor-floating-panel pointer-events-auto fixed top-[68px] right-4 z-50 flex max-h-[calc(100dvh-92px)] max-w-[calc(100dvw-32px)] flex-col overflow-hidden rounded-lg bg-sidebar/95 dark:text-foreground',
         className,
       )}
-      style={{ width }}
+      style={isDocked ? undefined : { width }}
     >
       {/* Header */}
       <div className="editor-panel-header flex min-h-11 items-center justify-between border-border/50 border-b px-3 py-2.5">

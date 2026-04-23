@@ -19,7 +19,16 @@ import {
   type WallPlanPoint,
 } from './wall-drafting'
 
-export type WallEditOperation = 'trim-extend' | 'split' | 'merge' | 'offset' | 'fillet'
+export type WallEditOperation =
+  | 'trim-extend'
+  | 'split'
+  | 'merge'
+  | 'offset'
+  | 'fillet'
+  | 'mirror'
+  | 'linear-pattern'
+  | 'chamfer'
+  | 'set-length'
 
 export type WallTrimCandidate = {
   wallId: WallNode['id']
@@ -47,6 +56,11 @@ export type WallEditPreviewSegment = {
   start: WallPlanPoint
   end: WallPlanPoint
   isValid: boolean
+}
+
+export type ClosedWallLoop = {
+  wallIds: WallNode['id'][]
+  points: WallPlanPoint[]
 }
 
 export type WallEditPlan = {
@@ -77,8 +91,13 @@ const EPSILON = 1e-6
 const ATTACHMENT_TOLERANCE = 1e-4
 const DEFAULT_OFFSET_DISTANCE = WALL_GRID_STEP
 const DEFAULT_FILLET_RADIUS = 0.5
+const DEFAULT_CHAMFER_DISTANCE = 0.5
+const DEFAULT_LINEAR_PATTERN_SPACING = 1
+const DEFAULT_LINEAR_PATTERN_COUNT = 3
 const FILLET_SEGMENT_TARGET_LENGTH = 0.35
 const MAX_FILLET_SEGMENTS = 12
+const MAX_LINEAR_PATTERN_COUNT = 50
+const CLOSED_LOOP_KEY_TOLERANCE = 1e-4
 
 function add(a: WallPlanPoint, b: WallPlanPoint): WallPlanPoint {
   return [a[0] + b[0], a[1] + b[1]]
@@ -102,6 +121,10 @@ function cross(a: WallPlanPoint, b: WallPlanPoint): number {
 
 function distance(a: WallPlanPoint, b: WallPlanPoint): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1])
+}
+
+function length(point: WallPlanPoint): number {
+  return Math.hypot(point[0], point[1])
 }
 
 function pointsEqual(a: WallPlanPoint, b: WallPlanPoint, tolerance = EPSILON): boolean {
@@ -147,6 +170,22 @@ function pointAtWallParam(wall: Pick<WallNode, 'start' | 'end'>, t: number): Wal
     wall.start[0] + (wall.end[0] - wall.start[0]) * t,
     wall.start[1] + (wall.end[1] - wall.start[1]) * t,
   ]
+}
+
+function reflectPointAcrossLine(
+  point: WallPlanPoint,
+  axisStart: WallPlanPoint,
+  axisEnd: WallPlanPoint,
+): WallPlanPoint | null {
+  const axis = subtract(axisEnd, axisStart)
+  const axisLengthSquared = dot(axis, axis)
+  if (axisLengthSquared <= EPSILON) {
+    return null
+  }
+
+  const t = dot(subtract(point, axisStart), axis) / axisLengthSquared
+  const projected = add(axisStart, scale(axis, t))
+  return add(projected, subtract(projected, point))
 }
 
 function getWallParamForPoint(wall: Pick<WallNode, 'start' | 'end'>, point: WallPlanPoint): number {
@@ -283,6 +322,17 @@ function areWallsCollinearAcrossPoint(a: WallNode, b: WallNode, sharedPoint: Wal
   const normalizedCross = cross(aVector, bVector) / (aLength * bLength)
   const normalizedDot = dot(aVector, bVector) / (aLength * bLength)
   return Math.abs(normalizedCross) <= 1e-4 && normalizedDot < -0.999
+}
+
+function getWallEndpointKeptRange(
+  wall: WallNode,
+  endpoint: WallEndpoint,
+  cutDistance: number,
+): WallParamRange {
+  const totalLength = wallLength(wall)
+  return endpoint === 'start'
+    ? { min: cutDistance, max: totalLength }
+    : { min: 0, max: totalLength - cutDistance }
 }
 
 function getWallAttachmentSpan(node: AnyNode): { min: number; max: number; center: number } | null {
@@ -810,6 +860,101 @@ export function buildTrimExtendWallPlan(args: {
   return buildTrimWallPlan({ wall, walls, clickPoint, nodes })
 }
 
+export function buildSetWallLengthPlan(args: {
+  wall: WallNode
+  length: number
+  nodes: Record<AnyNodeId, AnyNode>
+}): WallEditResult {
+  const { wall, length: nextLength, nodes } = args
+  if (!isEditableStraightWall(wall)) {
+    return { ok: false, reason: 'Only straight walls can receive a driving length.' }
+  }
+
+  if (!(Number.isFinite(nextLength) && nextLength > WALL_MIN_LENGTH)) {
+    return { ok: false, reason: 'Enter a valid wall length.' }
+  }
+
+  const direction = getWallDirection(wall)
+  if (!direction) {
+    return { ok: false, reason: 'The selected wall is too short to resize.' }
+  }
+
+  const currentLength = wallLength(wall)
+  const nextEnd = add(wall.start, scale(direction, nextLength))
+  return buildEndpointChangePlan({
+    wall,
+    nextStart: wall.start,
+    nextEnd,
+    keptRange: { min: 0, max: Math.min(currentLength, nextLength) },
+    nodes,
+  })
+}
+
+export function buildOrientWallPlan(args: {
+  wall: WallNode
+  orientation: 'horizontal' | 'vertical'
+  nodes: Record<AnyNodeId, AnyNode>
+}): WallEditResult {
+  const { wall, orientation, nodes } = args
+  if (!isEditableStraightWall(wall)) {
+    return { ok: false, reason: 'Only straight walls can receive horizontal or vertical relations.' }
+  }
+
+  const currentLength = wallLength(wall)
+  if (currentLength <= WALL_MIN_LENGTH) {
+    return { ok: false, reason: 'The selected wall is too short to orient.' }
+  }
+
+  const dx = wall.end[0] - wall.start[0]
+  const dz = wall.end[1] - wall.start[1]
+  const horizontalSign = dx < -EPSILON ? -1 : 1
+  const verticalSign = dz < -EPSILON ? -1 : 1
+  const nextEnd: WallPlanPoint =
+    orientation === 'horizontal'
+      ? [wall.start[0] + horizontalSign * currentLength, wall.start[1]]
+      : [wall.start[0], wall.start[1] + verticalSign * currentLength]
+
+  return buildEndpointChangePlan({
+    wall,
+    nextStart: wall.start,
+    nextEnd,
+    keptRange: { min: 0, max: currentLength },
+    nodes,
+  })
+}
+
+export function buildEqualLengthWallsPlan(args: {
+  source: WallNode
+  targets: WallNode[]
+  nodes: Record<AnyNodeId, AnyNode>
+}): WallEditResult {
+  const { source, targets, nodes } = args
+  if (!isEditableStraightWall(source)) {
+    return { ok: false, reason: 'Only straight walls can drive equal length.' }
+  }
+
+  const targetWalls = targets.filter((wall) => wall.id !== source.id)
+  if (targetWalls.length === 0) {
+    return { ok: false, reason: 'Select a second wall to equalize length.' }
+  }
+
+  const sourceLength = wallLength(source)
+  const results = targetWalls.map((wall) => buildSetWallLengthPlan({ wall, length: sourceLength, nodes }))
+  const failed = results.find((result) => !result.ok)
+  if (failed && !failed.ok) {
+    return failed
+  }
+
+  const successful = results.filter((result): result is Extract<WallEditResult, { ok: true }> => result.ok)
+  return {
+    ok: true,
+    plan: {
+      ...mergePlanChanges(...successful.map((result) => result.plan)),
+      selectIds: [source.id as AnyNodeId, ...targetWalls.map((wall) => wall.id as AnyNodeId)],
+    },
+  }
+}
+
 export function buildMergeWallsPlan(args: {
   primary: WallNode
   secondary: WallNode
@@ -1187,6 +1332,442 @@ export function buildFilletWallsPlan(args: {
   }
 }
 
+export function buildMirrorWallsPlan(args: {
+  walls: WallNode[]
+  axisStart: WallPlanPoint
+  axisEnd: WallPlanPoint
+}): WallEditResult {
+  const { walls, axisStart, axisEnd } = args
+  if (walls.length === 0) {
+    return { ok: false, reason: 'Select at least one wall to mirror.' }
+  }
+
+  if (distance(axisStart, axisEnd) <= EPSILON) {
+    return { ok: false, reason: 'Pick a valid mirror axis.' }
+  }
+
+  const created: Array<{ node: WallNode; parentId?: AnyNodeId }> = []
+  for (const wall of walls) {
+    const nextStart = reflectPointAcrossLine(wall.start, axisStart, axisEnd)
+    const nextEnd = reflectPointAcrossLine(wall.end, axisStart, axisEnd)
+    if (!(nextStart && nextEnd) || distance(nextStart, nextEnd) <= WALL_MIN_LENGTH) {
+      return { ok: false, reason: 'A mirrored wall would be too short.' }
+    }
+
+    const mirroredWall = cloneWall(
+      wall,
+      nextStart,
+      nextEnd,
+      wall.name ? `${wall.name} Mirror` : 'Mirrored wall',
+    )
+    created.push({ node: mirroredWall, parentId: wall.parentId as AnyNodeId | undefined })
+  }
+
+  return {
+    ok: true,
+    plan: {
+      created,
+      selectIds: created.map(({ node }) => node.id as AnyNodeId),
+      dirtyIds: created.map(({ node }) => node.id as AnyNodeId),
+    },
+  }
+}
+
+export function buildLinearPatternWallsPlan(args: {
+  walls: WallNode[]
+  direction: WallPlanPoint
+  spacing?: number
+  count?: number
+}): WallEditResult {
+  const {
+    walls,
+    direction,
+    spacing = DEFAULT_LINEAR_PATTERN_SPACING,
+    count = DEFAULT_LINEAR_PATTERN_COUNT,
+  } = args
+  if (walls.length === 0) {
+    return { ok: false, reason: 'Select at least one wall to pattern.' }
+  }
+
+  const directionLength = length(direction)
+  if (directionLength <= EPSILON) {
+    return { ok: false, reason: 'Pick a valid pattern direction.' }
+  }
+
+  const instanceCount = Math.floor(count)
+  if (
+    !(
+      Number.isFinite(spacing) &&
+      Math.abs(spacing) > EPSILON &&
+      Number.isFinite(instanceCount) &&
+      instanceCount >= 2 &&
+      instanceCount <= MAX_LINEAR_PATTERN_COUNT
+    )
+  ) {
+    return { ok: false, reason: 'Enter a valid spacing and instance count.' }
+  }
+
+  const unitDirection = scale(direction, 1 / directionLength)
+  const created: Array<{ node: WallNode; parentId?: AnyNodeId }> = []
+
+  for (let instance = 1; instance < instanceCount; instance += 1) {
+    const offset = scale(unitDirection, spacing * instance)
+    for (const wall of walls) {
+      const nextStart = add(wall.start, offset)
+      const nextEnd = add(wall.end, offset)
+      if (distance(nextStart, nextEnd) <= WALL_MIN_LENGTH) {
+        return { ok: false, reason: 'A patterned wall would be too short.' }
+      }
+
+      const patternedWall = cloneWall(
+        wall,
+        nextStart,
+        nextEnd,
+        wall.name ? `${wall.name} Pattern ${instance + 1}` : `Pattern wall ${instance + 1}`,
+      )
+      created.push({ node: patternedWall, parentId: wall.parentId as AnyNodeId | undefined })
+    }
+  }
+
+  return {
+    ok: true,
+    plan: {
+      created,
+      selectIds: created.map(({ node }) => node.id as AnyNodeId),
+      dirtyIds: created.map(({ node }) => node.id as AnyNodeId),
+    },
+  }
+}
+
+export function buildChamferWallsPlan(args: {
+  primary: WallNode
+  secondary: WallNode
+  nodes: Record<AnyNodeId, AnyNode>
+  distance?: number
+}): WallEditResult {
+  const { primary, secondary, nodes, distance: requestedDistance = DEFAULT_CHAMFER_DISTANCE } = args
+  const sharedPoint = getSharedEndpoint(primary, secondary)
+  if (!sharedPoint) {
+    return { ok: false, reason: 'Walls must share an endpoint for chamfer.' }
+  }
+
+  const primaryEndpoint = getEndpointAtPoint(primary, sharedPoint)
+  const secondaryEndpoint = getEndpointAtPoint(secondary, sharedPoint)
+  if (!(primaryEndpoint && secondaryEndpoint)) {
+    return { ok: false, reason: 'Walls must share an endpoint for chamfer.' }
+  }
+
+  if (!areWallStylesCompatible(primary, secondary)) {
+    return { ok: false, reason: 'Walls must share thickness, height, material, and level.' }
+  }
+
+  if (!(isEditableStraightWall(primary) && isEditableStraightWall(secondary))) {
+    return { ok: false, reason: 'Only straight walls can be chamfered in this tool.' }
+  }
+
+  const primaryFar = getOtherEndpoint(primary, primaryEndpoint)
+  const secondaryFar = getOtherEndpoint(secondary, secondaryEndpoint)
+  const primaryLength = distance(sharedPoint, primaryFar)
+  const secondaryLength = distance(sharedPoint, secondaryFar)
+  const maxDistance = Math.min(primaryLength, secondaryLength) - WALL_MIN_LENGTH
+  if (
+    !(
+      Number.isFinite(requestedDistance) &&
+      requestedDistance > WALL_MIN_LENGTH &&
+      requestedDistance < maxDistance
+    )
+  ) {
+    return { ok: false, reason: 'The chamfer distance is too large for these walls.' }
+  }
+
+  const primaryDir = scale(subtract(primaryFar, sharedPoint), 1 / primaryLength)
+  const secondaryDir = scale(subtract(secondaryFar, sharedPoint), 1 / secondaryLength)
+  const normalizedCross = cross(primaryDir, secondaryDir)
+  if (Math.abs(normalizedCross) <= 1e-4) {
+    return { ok: false, reason: 'Walls need a clear corner angle for a chamfer.' }
+  }
+
+  const primaryTangent = add(sharedPoint, scale(primaryDir, requestedDistance))
+  const secondaryTangent = add(sharedPoint, scale(secondaryDir, requestedDistance))
+  if (distance(primaryTangent, secondaryTangent) <= WALL_MIN_LENGTH) {
+    return { ok: false, reason: 'The chamfer wall would be too short.' }
+  }
+
+  const primaryNextStart = primaryEndpoint === 'start' ? primaryTangent : primary.start
+  const primaryNextEnd = primaryEndpoint === 'end' ? primaryTangent : primary.end
+  const secondaryNextStart = secondaryEndpoint === 'start' ? secondaryTangent : secondary.start
+  const secondaryNextEnd = secondaryEndpoint === 'end' ? secondaryTangent : secondary.end
+
+  const primaryAttachments = buildAttachmentUpdatesForEndpointChange({
+    wall: primary,
+    nextStart: primaryNextStart,
+    nextEnd: primaryNextEnd,
+    keptRange: getWallEndpointKeptRange(primary, primaryEndpoint, requestedDistance),
+    nodes,
+  })
+  const secondaryAttachments = buildAttachmentUpdatesForEndpointChange({
+    wall: secondary,
+    nextStart: secondaryNextStart,
+    nextEnd: secondaryNextEnd,
+    keptRange: getWallEndpointKeptRange(secondary, secondaryEndpoint, requestedDistance),
+    nodes,
+  })
+  if (!(primaryAttachments && secondaryAttachments)) {
+    return { ok: false, reason: 'A door, window, or wall item lies inside the chamfer corner.' }
+  }
+
+  const chamferWall = cloneWall(
+    primary,
+    primaryTangent,
+    secondaryTangent,
+    primary.name ? `${primary.name} Chamfer` : 'Chamfer wall',
+  )
+  const attachmentUpdates = [...primaryAttachments, ...secondaryAttachments]
+
+  return {
+    ok: true,
+    plan: {
+      created: [{ node: chamferWall, parentId: primary.parentId as AnyNodeId | undefined }],
+      updated: [
+        {
+          id: primary.id as AnyNodeId,
+          data: {
+            start: primaryNextStart,
+            end: primaryNextEnd,
+            children: getChildIdsForWall(attachmentUpdates, primary.id),
+          } as Partial<AnyNode>,
+        },
+        {
+          id: secondary.id as AnyNodeId,
+          data: {
+            start: secondaryNextStart,
+            end: secondaryNextEnd,
+            children: getChildIdsForWall(attachmentUpdates, secondary.id),
+          } as Partial<AnyNode>,
+        },
+        ...attachmentUpdates.map(({ id, data }) => ({ id, data })),
+      ],
+      selectIds: [chamferWall.id as AnyNodeId],
+      dirtyIds: [primary.id as AnyNodeId, secondary.id as AnyNodeId, chamferWall.id as AnyNodeId],
+    },
+  }
+}
+
+type ClosedLoopEdge = {
+  id: string
+  wall: WallNode
+  a: string
+  b: string
+}
+
+function closedLoopPointKey(point: WallPlanPoint, tolerance = CLOSED_LOOP_KEY_TOLERANCE): string {
+  return `${Math.round(point[0] / tolerance)}:${Math.round(point[1] / tolerance)}`
+}
+
+function polygonArea(points: WallPlanPoint[]): number {
+  let area = 0
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index]!
+    const next = points[(index + 1) % points.length]!
+    area += current[0] * next[1] - next[0] * current[1]
+  }
+  return area / 2
+}
+
+function isPointOnSegment(
+  point: WallPlanPoint,
+  start: WallPlanPoint,
+  end: WallPlanPoint,
+): boolean {
+  return (
+    Math.abs(cross(subtract(point, start), subtract(end, start))) <= 1e-6 &&
+    point[0] >= Math.min(start[0], end[0]) - 1e-6 &&
+    point[0] <= Math.max(start[0], end[0]) + 1e-6 &&
+    point[1] >= Math.min(start[1], end[1]) - 1e-6 &&
+    point[1] <= Math.max(start[1], end[1]) + 1e-6
+  )
+}
+
+function doSegmentsIntersect(
+  firstStart: WallPlanPoint,
+  firstEnd: WallPlanPoint,
+  secondStart: WallPlanPoint,
+  secondEnd: WallPlanPoint,
+): boolean {
+  const firstVector = subtract(firstEnd, firstStart)
+  const secondVector = subtract(secondEnd, secondStart)
+  const firstToSecondStart = cross(firstVector, subtract(secondStart, firstStart))
+  const firstToSecondEnd = cross(firstVector, subtract(secondEnd, firstStart))
+  const secondToFirstStart = cross(secondVector, subtract(firstStart, secondStart))
+  const secondToFirstEnd = cross(secondVector, subtract(firstEnd, secondStart))
+
+  if (
+    firstToSecondStart * firstToSecondEnd < -EPSILON &&
+    secondToFirstStart * secondToFirstEnd < -EPSILON
+  ) {
+    return true
+  }
+
+  return (
+    isPointOnSegment(secondStart, firstStart, firstEnd) ||
+    isPointOnSegment(secondEnd, firstStart, firstEnd) ||
+    isPointOnSegment(firstStart, secondStart, secondEnd) ||
+    isPointOnSegment(firstEnd, secondStart, secondEnd)
+  )
+}
+
+function isSelfIntersectingPolygon(points: WallPlanPoint[]): boolean {
+  for (let firstIndex = 0; firstIndex < points.length; firstIndex += 1) {
+    const firstStart = points[firstIndex]!
+    const firstEnd = points[(firstIndex + 1) % points.length]!
+
+    for (let secondIndex = firstIndex + 1; secondIndex < points.length; secondIndex += 1) {
+      const isAdjacent =
+        Math.abs(firstIndex - secondIndex) === 1 ||
+        (firstIndex === 0 && secondIndex === points.length - 1)
+      if (isAdjacent) {
+        continue
+      }
+
+      const secondStart = points[secondIndex]!
+      const secondEnd = points[(secondIndex + 1) % points.length]!
+      if (doSegmentsIntersect(firstStart, firstEnd, secondStart, secondEnd)) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+function traceClosedLoop(args: {
+  componentEdges: ClosedLoopEdge[]
+  adjacency: Map<string, ClosedLoopEdge[]>
+  pointByKey: Map<string, WallPlanPoint>
+}): ClosedWallLoop | null {
+  const { componentEdges, adjacency, pointByKey } = args
+  const firstEdge = componentEdges[0]
+  if (!firstEdge) {
+    return null
+  }
+
+  const componentEdgeIds = new Set(componentEdges.map((edge) => edge.id))
+  const usedEdgeIds = new Set<string>([firstEdge.id])
+  const wallIds: WallNode['id'][] = [firstEdge.wall.id]
+  const pointKeys: string[] = [firstEdge.a]
+  let previousKey = firstEdge.a
+  let currentKey = firstEdge.b
+
+  while (currentKey !== pointKeys[0]) {
+    pointKeys.push(currentKey)
+    const nextEdge = (adjacency.get(currentKey) ?? []).find(
+      (edge) => componentEdgeIds.has(edge.id) && !usedEdgeIds.has(edge.id),
+    )
+    if (!nextEdge) {
+      return null
+    }
+
+    usedEdgeIds.add(nextEdge.id)
+    wallIds.push(nextEdge.wall.id)
+    const nextKey = nextEdge.a === currentKey ? nextEdge.b : nextEdge.a
+    previousKey = currentKey
+    currentKey = nextKey
+
+    if (pointKeys.length > componentEdges.length + 1 || currentKey === previousKey) {
+      return null
+    }
+  }
+
+  if (usedEdgeIds.size !== componentEdges.length || pointKeys.length < 3) {
+    return null
+  }
+
+  const points = pointKeys.map((key) => pointByKey.get(key)).filter(Boolean) as WallPlanPoint[]
+  if (
+    points.length !== pointKeys.length ||
+    Math.abs(polygonArea(points)) <= EPSILON ||
+    isSelfIntersectingPolygon(points)
+  ) {
+    return null
+  }
+
+  return { wallIds, points }
+}
+
+export function detectClosedWallLoops(walls: WallNode[]): ClosedWallLoop[] {
+  const edges: ClosedLoopEdge[] = []
+  const pointByKey = new Map<string, WallPlanPoint>()
+  const adjacency = new Map<string, ClosedLoopEdge[]>()
+
+  for (const wall of walls) {
+    if (!isEditableStraightWall(wall)) {
+      continue
+    }
+
+    const a = closedLoopPointKey(wall.start)
+    const b = closedLoopPointKey(wall.end)
+    if (a === b) {
+      continue
+    }
+
+    pointByKey.set(a, pointByKey.get(a) ?? wall.start)
+    pointByKey.set(b, pointByKey.get(b) ?? wall.end)
+
+    const edge: ClosedLoopEdge = { id: wall.id, wall, a, b }
+    edges.push(edge)
+    adjacency.set(a, [...(adjacency.get(a) ?? []), edge])
+    adjacency.set(b, [...(adjacency.get(b) ?? []), edge])
+  }
+
+  const visited = new Set<string>()
+  const loops: ClosedWallLoop[] = []
+
+  for (const edge of edges) {
+    if (visited.has(edge.id)) {
+      continue
+    }
+
+    const componentEdges: ClosedLoopEdge[] = []
+    const stack = [edge]
+    visited.add(edge.id)
+
+    while (stack.length > 0) {
+      const currentEdge = stack.pop()!
+      componentEdges.push(currentEdge)
+      for (const key of [currentEdge.a, currentEdge.b]) {
+        for (const nextEdge of adjacency.get(key) ?? []) {
+          if (!visited.has(nextEdge.id)) {
+            visited.add(nextEdge.id)
+            stack.push(nextEdge)
+          }
+        }
+      }
+    }
+
+    if (componentEdges.length < 3) {
+      continue
+    }
+
+    const componentKeys = new Set(componentEdges.flatMap((componentEdge) => [componentEdge.a, componentEdge.b]))
+    const hasOnlyDegreeTwoVertices = [...componentKeys].every(
+      (key) =>
+        (adjacency.get(key) ?? []).filter((candidate) =>
+          componentEdges.some((componentEdge) => componentEdge.id === candidate.id),
+        ).length === 2,
+    )
+    if (!hasOnlyDegreeTwoVertices || componentKeys.size !== componentEdges.length) {
+      continue
+    }
+
+    const loop = traceClosedLoop({ componentEdges, adjacency, pointByKey })
+    if (loop) {
+      loops.push(loop)
+    }
+  }
+
+  return loops
+}
+
 type AnyContainerNode = AnyNode & { children: string[] }
 
 function removeChildFromParent(
@@ -1406,6 +1987,18 @@ export function getDefaultWallEditRadius() {
 
 export function getDefaultWallOffsetDistance() {
   return DEFAULT_OFFSET_DISTANCE
+}
+
+export function getDefaultWallChamferDistance() {
+  return DEFAULT_CHAMFER_DISTANCE
+}
+
+export function getDefaultWallLinearPatternSpacing() {
+  return DEFAULT_LINEAR_PATTERN_SPACING
+}
+
+export function getDefaultWallLinearPatternCount() {
+  return DEFAULT_LINEAR_PATTERN_COUNT
 }
 
 export function combineWallEditPlans(...plans: WallEditPlan[]): WallEditPlan {

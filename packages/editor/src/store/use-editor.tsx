@@ -9,14 +9,14 @@ import {
   type FenceNode,
   type ItemNode,
   type LevelNode,
-  type RoofSurfaceMaterialRole,
   type RoofNode,
   type RoofSegmentNode,
+  type RoofSurfaceMaterialRole,
   type SlabNode,
   type Space,
-  type StairSurfaceMaterialRole,
   type StairNode,
   type StairSegmentNode,
+  type StairSurfaceMaterialRole,
   useScene,
   type WallNode,
   type WallSurfaceSide,
@@ -35,6 +35,9 @@ const MAX_FLOORPLAN_PANE_RATIO = 0.85
 
 export type ViewMode = '3d' | '2d' | 'split'
 export type SplitOrientation = 'horizontal' | 'vertical'
+export type FirstPersonNavigationMode = 'walk' | 'fly'
+export type FirstPersonSpeedPreset = 'inspect' | 'walk' | 'quick' | 'fly'
+export type FirstPersonEyeHeightPreset = 'adult' | 'child'
 
 export type Phase = 'site' | 'structure' | 'furnish'
 
@@ -43,6 +46,10 @@ export type Mode = 'select' | 'edit' | 'delete' | 'build'
 // Structure mode tools (building elements)
 export type StructureTool =
   | 'wall'
+  | 'sketch-line'
+  | 'sketch-rectangle'
+  | 'sketch-construction-line'
+  | 'smart-dimension'
   | 'fence'
   | 'room'
   | 'custom-room'
@@ -62,9 +69,24 @@ export type FurnishTool = 'item'
 // Site mode tools
 export type SiteTool = 'property-line'
 
+export type SketchStructureTool = Extract<
+  StructureTool,
+  'sketch-line' | 'sketch-rectangle' | 'sketch-construction-line' | 'smart-dimension'
+>
+
+export const SKETCH_STRUCTURE_TOOLS: readonly SketchStructureTool[] = [
+  'sketch-line',
+  'sketch-rectangle',
+  'sketch-construction-line',
+  'smart-dimension',
+]
+
+const SKETCH_STRUCTURE_TOOL_SET = new Set<StructureTool>(SKETCH_STRUCTURE_TOOLS)
+
 // Catalog categories for furnish mode items
 export type CatalogCategory =
   | 'furniture'
+  | 'lighting'
   | 'appliance'
   | 'bathroom'
   | 'kitchen'
@@ -80,12 +102,19 @@ export type GridSnapStep = 0.5 | 0.25 | 0.1 | 0.05
 // Combined tool type
 export type Tool = SiteTool | StructureTool | FurnishTool
 
+export function isSketchStructureTool(tool: Tool | null | undefined): tool is SketchStructureTool {
+  return Boolean(tool && SKETCH_STRUCTURE_TOOL_SET.has(tool as StructureTool))
+}
+
 export type MovingWallEndpoint = {
   wall: WallNode
   endpoint: 'start' | 'end'
 }
 
-export type MaterialTargetRole = WallSurfaceSide | StairSurfaceMaterialRole | RoofSurfaceMaterialRole
+export type MaterialTargetRole =
+  | WallSurfaceSide
+  | StairSurfaceMaterialRole
+  | RoofSurfaceMaterialRole
 
 export type SelectedMaterialTarget = {
   nodeId: AnyNodeId
@@ -173,6 +202,12 @@ type EditorState = {
   isFirstPersonMode: boolean
   _viewModeBeforeFirstPerson: ViewMode | null
   setFirstPersonMode: (enabled: boolean) => void
+  firstPersonNavigationMode: FirstPersonNavigationMode
+  setFirstPersonNavigationMode: (mode: FirstPersonNavigationMode) => void
+  firstPersonSpeedPreset: FirstPersonSpeedPreset
+  setFirstPersonSpeedPreset: (preset: FirstPersonSpeedPreset) => void
+  firstPersonEyeHeightPreset: FirstPersonEyeHeightPreset
+  setFirstPersonEyeHeightPreset: (preset: FirstPersonEyeHeightPreset) => void
   // Development-only camera debug flag for inspecting underside geometry
   allowUndergroundCamera: boolean
   setAllowUndergroundCamera: (enabled: boolean) => void
@@ -559,11 +594,22 @@ const useEditor = create<EditorState>()(
       setAllowUndergroundCamera: (enabled) => set({ allowUndergroundCamera: enabled }),
       isFirstPersonMode: false,
       _viewModeBeforeFirstPerson: null as ViewMode | null,
+      firstPersonNavigationMode: 'walk',
+      setFirstPersonNavigationMode: (mode) => set({ firstPersonNavigationMode: mode }),
+      firstPersonSpeedPreset: 'walk',
+      setFirstPersonSpeedPreset: (preset) => set({ firstPersonSpeedPreset: preset }),
+      firstPersonEyeHeightPreset: 'adult',
+      setFirstPersonEyeHeightPreset: (preset) => set({ firstPersonEyeHeightPreset: preset }),
       setFirstPersonMode: (enabled) => {
         if (enabled) {
           const currentViewMode = get().viewMode
-          useViewer.getState().setCameraMode('perspective')
-          useViewer.getState().setWallMode('up')
+          const viewer = useViewer.getState()
+          viewer.setCameraMode('perspective')
+          viewer.setWallMode('up')
+          viewer.setWalkthroughMode(true)
+          viewer.setHoveredId(null)
+          viewer.outliner.selectedObjects.length = 0
+          viewer.outliner.hoveredObjects.length = 0
           set({
             isFirstPersonMode: true,
             _viewModeBeforeFirstPerson: currentViewMode,
@@ -573,9 +619,10 @@ const useEditor = create<EditorState>()(
             tool: null,
             catalogCategory: null,
           })
-          useViewer.getState().setSelection({ selectedIds: [], zoneId: null })
+          viewer.setSelection({ selectedIds: [], zoneId: null })
         } else {
           const prevMode = get()._viewModeBeforeFirstPerson
+          useViewer.getState().setWalkthroughMode(false)
           set({
             isFirstPersonMode: false,
             _viewModeBeforeFirstPerson: null,

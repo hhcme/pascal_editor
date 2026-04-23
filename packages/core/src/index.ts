@@ -12,6 +12,7 @@ export type {
   RoofEvent,
   RoofSegmentEvent,
   SiteEvent,
+  SketchLineEvent,
   SlabEvent,
   StairEvent,
   StairSegmentEvent,
@@ -45,7 +46,17 @@ export {
   getMaterialsForTarget,
   LIBRARY_MATERIAL_REF_PREFIX,
   MATERIAL_CATALOG,
+  MATERIAL_CATALOG_CATEGORY_OPTIONS,
+  MATERIAL_CATALOG_COLOR_OPTIONS,
+  MATERIAL_CATALOG_FINISH_OPTIONS,
+  MATERIAL_CATALOG_SOURCE_OPTIONS,
+  type MaterialCatalogCategory,
+  type MaterialCatalogColorFamily,
+  type MaterialCatalogFinish,
   type MaterialCatalogItem,
+  type MaterialCatalogOption,
+  type MaterialCatalogPreviewShape,
+  type MaterialCatalogSource,
   toLibraryMaterialRef,
 } from './material-library'
 export * from './schema'
@@ -90,6 +101,19 @@ export {
   pointToKey,
   type WallMiterData,
 } from './systems/wall/wall-mitering'
+export {
+  getClampedSketchLineCurveOffset,
+  getMaxSketchLineCurveOffset,
+  getSketchLineChordFrame,
+  getSketchLineChordLength,
+  getSketchLineCurveFrameAt,
+  getSketchLineCurveLength,
+  getSketchLineMidpointHandlePoint,
+  getSketchLineStraightSnapOffset,
+  isCurvedSketchLine,
+  normalizeSketchLineCurveOffset,
+  sampleSketchLineCenterline,
+} from './systems/sketch/sketch-line-curve'
 export { WallSystem } from './systems/wall/wall-system'
 export { WindowSystem } from './systems/window/window-system'
 export type { SceneGraph } from './utils/clone-scene-graph'

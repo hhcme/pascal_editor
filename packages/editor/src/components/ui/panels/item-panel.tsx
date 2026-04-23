@@ -1,9 +1,18 @@
 'use client'
 
-import { type AnyNode, getScaledDimensions, ItemNode, useScene } from '@pascal-app/core'
+import {
+  type AnyNode,
+  type Control,
+  type ControlValue,
+  getScaledDimensions,
+  type Interactive,
+  ItemNode,
+  useInteractive,
+  useScene,
+} from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
 import { Copy, Link, Link2Off, Move, Trash2 } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { sfxEmitter } from '../../../lib/sfx-bus'
 import { cn } from '../../../lib/utils'
 import useEditor from '../../../store/use-editor'
@@ -11,8 +20,42 @@ import { ActionButton, ActionGroup } from '../controls/action-button'
 import { InspectorStat, InspectorSummary } from '../controls/inspector-summary'
 import { PanelSection } from '../controls/panel-section'
 import { SliderControl } from '../controls/slider-control'
+import { ToggleControl } from '../controls/toggle-control'
 import { CollectionsPopover } from './collections/collections-popover'
 import { PanelWrapper } from './panel-wrapper'
+
+function hasLightEffect(interactive: Interactive | undefined): boolean {
+  return Boolean(interactive?.effects.some((effect) => effect.kind === 'light'))
+}
+
+function getDefaultControlValue(control: Control): ControlValue {
+  if (control.kind === 'toggle') return control.default ?? false
+  if (control.kind === 'slider') return control.default ?? control.min
+  return control.default ?? control.min
+}
+
+function normalizeControlValue(control: Control, value: ControlValue | undefined): ControlValue {
+  if (control.kind === 'toggle') {
+    return typeof value === 'boolean' ? value : getDefaultControlValue(control)
+  }
+  return typeof value === 'number' && Number.isFinite(value)
+    ? value
+    : getDefaultControlValue(control)
+}
+
+function resolveControlLabel(control: Control): string {
+  if (control.label) return control.label
+  return control.kind === 'toggle' ? 'Power' : 'Value'
+}
+
+function getNormalizedControlValues(
+  interactive: Interactive,
+  values: ControlValue[] | undefined,
+): ControlValue[] {
+  return interactive.controls.map((control, index) =>
+    normalizeControlValue(control, values?.[index]),
+  )
+}
 
 export function ItemPanel() {
   const selectedId = useViewer((s) => s.selection.selectedIds[0])
@@ -24,8 +67,20 @@ export function ItemPanel() {
   const node = useScene((s) =>
     selectedId ? (s.nodes[selectedId as AnyNode['id']] as ItemNode | undefined) : undefined,
   )
+  const interactive = node?.asset.interactive
+  const isLightItem = hasLightEffect(interactive)
+  const controlValues = useInteractive((state) =>
+    selectedId ? state.items[selectedId as AnyNode['id']]?.controlValues : undefined,
+  )
 
   const [uniformScale, setUniformScale] = useState(true)
+
+  useEffect(() => {
+    if (!(selectedId && interactive)) return
+    useInteractive
+      .getState()
+      .initItem(selectedId as AnyNode['id'], interactive, node?.interactiveValues)
+  }, [interactive, node?.interactiveValues, selectedId])
 
   const handleUpdate = useCallback(
     (updates: Partial<ItemNode>) => {
@@ -63,11 +118,36 @@ export function ItemPanel() {
       asset: node.asset,
       parentId: node.parentId,
       side: node.side,
+      interactiveValues: node.interactiveValues,
       metadata: { isNew: true },
     })
     setMovingNode(proto)
     setSelection({ selectedIds: [] })
   }, [node, setMovingNode, setSelection])
+
+  const handleInteractiveChange = useCallback(
+    (index: number, value: ControlValue) => {
+      if (!(selectedId && node?.asset.interactive)) return
+      const currentValues = getNormalizedControlValues(
+        node.asset.interactive,
+        controlValues ?? node.interactiveValues,
+      )
+      const control = node.asset.interactive.controls[index]
+      if (!control) return
+
+      const nextValues = [...currentValues]
+      nextValues[index] = normalizeControlValue(control, value)
+
+      useInteractive
+        .getState()
+        .initItem(selectedId as AnyNode['id'], node.asset.interactive, currentValues)
+      useInteractive
+        .getState()
+        .setControlValue(selectedId as AnyNode['id'], index, nextValues[index])
+      updateNode(selectedId as AnyNode['id'], { interactiveValues: nextValues })
+    },
+    [controlValues, node, selectedId, updateNode],
+  )
 
   const handleDelete = useCallback(() => {
     if (!selectedId) return
@@ -92,6 +172,45 @@ export function ItemPanel() {
         <InspectorStat label="Depth" value={`${itemDepth.toFixed(2)} m`} />
         <InspectorStat label="Attach" value={node.asset.attachTo ?? 'free'} />
       </InspectorSummary>
+
+      {isLightItem && interactive && (
+        <PanelSection title="Light">
+          {interactive.controls.map((control, index) => {
+            const value = normalizeControlValue(
+              control,
+              controlValues?.[index] ?? node.interactiveValues?.[index],
+            )
+
+            if (control.kind === 'toggle') {
+              return (
+                <ToggleControl
+                  checked={Boolean(value)}
+                  key={index}
+                  label={resolveControlLabel(control)}
+                  onChange={(checked) => handleInteractiveChange(index, checked)}
+                />
+              )
+            }
+
+            const step = control.kind === 'slider' ? control.step : 1
+            const precision = step < 1 ? 2 : 0
+
+            return (
+              <SliderControl
+                key={index}
+                label={resolveControlLabel(control)}
+                max={control.max}
+                min={control.min}
+                onChange={(nextValue) => handleInteractiveChange(index, nextValue)}
+                precision={precision}
+                step={step}
+                unit={control.unit}
+                value={typeof value === 'number' ? value : Number(getDefaultControlValue(control))}
+              />
+            )
+          })}
+        </PanelSection>
+      )}
 
       <PanelSection title="Position">
         <SliderControl

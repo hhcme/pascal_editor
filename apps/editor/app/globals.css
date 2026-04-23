@@ -282,6 +282,21 @@
   box-shadow: 8px 0 28px rgb(0 0 0 / 22%);
 }
 
+.editor-docked-inspector {
+  background: var(--editor-panel);
+  border-left: 1px solid var(--editor-panel-border);
+  box-shadow: -10px 0 28px rgb(24 33 45 / 6%);
+}
+
+.editor-docked-panel {
+  background: var(--editor-panel);
+  backdrop-filter: blur(18px) saturate(1.1);
+}
+
+.dark .editor-docked-inspector {
+  box-shadow: -10px 0 28px rgb(0 0 0 / 20%);
+}
+
 @media (max-width: 700px) {
   .editor-left-panel {
     max-height: calc(100dvh - 156px);

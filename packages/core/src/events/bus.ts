@@ -1,6 +1,6 @@
 import type { ThreeEvent } from '@react-three/fiber'
-import type { Object3D } from 'three'
 import mitt from 'mitt'
+import type { Object3D } from 'three'
 import type {
   BuildingNode,
   CeilingNode,
@@ -11,6 +11,7 @@ import type {
   RoofNode,
   RoofSegmentNode,
   SiteNode,
+  SketchLineNode,
   SlabNode,
   StairNode,
   StairSegmentNode,
@@ -56,6 +57,7 @@ export type SlabEvent = NodeEvent<SlabNode>
 export type CeilingEvent = NodeEvent<CeilingNode>
 export type RoofEvent = NodeEvent<RoofNode>
 export type RoofSegmentEvent = NodeEvent<RoofSegmentNode>
+export type SketchLineEvent = NodeEvent<SketchLineNode>
 export type StairEvent = NodeEvent<StairNode>
 export type StairSegmentEvent = NodeEvent<StairSegmentNode>
 export type WindowEvent = NodeEvent<WindowNode>
@@ -87,6 +89,8 @@ export interface CameraControlEvent {
   nodeId: AnyNode['id']
 }
 
+export type CameraViewDirection = 'front' | 'left' | 'right' | 'back' | 'top' | 'bottom'
+
 export interface ThumbnailGenerateEvent {
   projectId: string
   captureMode?: 'standard' | 'viewport' | 'area'
@@ -107,6 +111,7 @@ type CameraControlEvents = {
   'camera-controls:top-view': undefined
   'camera-controls:orbit-cw': undefined
   'camera-controls:orbit-ccw': undefined
+  'camera-controls:view-direction': { direction: CameraViewDirection }
   'camera-controls:generate-thumbnail': ThumbnailGenerateEvent
 }
 
@@ -147,6 +152,7 @@ type EditorEvents = GridEvents &
   NodeEvents<'ceiling', CeilingEvent> &
   NodeEvents<'roof', RoofEvent> &
   NodeEvents<'roof-segment', RoofSegmentEvent> &
+  NodeEvents<'sketch-line', SketchLineEvent> &
   NodeEvents<'stair', StairEvent> &
   NodeEvents<'stair-segment', StairSegmentEvent> &
   NodeEvents<'window', WindowEvent> &

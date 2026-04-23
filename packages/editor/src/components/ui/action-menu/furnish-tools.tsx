@@ -22,6 +22,12 @@ export const furnishTools: FurnishToolConfig[] = [
   },
   {
     id: 'item',
+    iconSrc: '/icons/environment.png',
+    label: 'Lighting',
+    catalogCategory: 'lighting',
+  },
+  {
+    id: 'item',
     iconSrc: '/icons/appliance.png',
     label: 'Appliance',
     catalogCategory: 'appliance',

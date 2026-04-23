@@ -1,21 +1,25 @@
 'use client'
 
-import { Icon } from '@iconify/react'
 import { type LevelNode, useScene } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
-import { type LucideIcon, Trash2 } from 'lucide-react'
 import Image from 'next/image'
 import { cn } from './../../../lib/utils'
-import useEditor from './../../../store/use-editor'
+import useEditor, { isSketchStructureTool } from './../../../store/use-editor'
 import { ActionButton } from './action-button'
 
-type ControlId = 'select' | 'box-select' | 'site-edit' | 'build' | 'furnish' | 'zone' | 'delete'
+type ControlId =
+  | 'select'
+  | 'box-select'
+  | 'site-edit'
+  | 'sketch'
+  | 'build'
+  | 'furnish'
+  | 'zone'
+  | 'delete'
 
 type ControlConfig = {
   id: ControlId
-  icon?: LucideIcon
-  iconifyIcon?: string
-  imageSrc?: string
+  imageSrc: string
   label: string
   shortcut?: string
   color: string
@@ -34,7 +38,7 @@ const controls: ControlConfig[] = [
   },
   {
     id: 'box-select',
-    iconifyIcon: 'mdi:select-drag',
+    imageSrc: '/icons/box-select.svg',
     label: 'Box select',
     color: 'hover:bg-accent',
     activeColor: 'bg-primary/10 text-primary ring-1 ring-primary/20 hover:bg-primary/15',
@@ -45,6 +49,13 @@ const controls: ControlConfig[] = [
     label: 'Edit site',
     color: 'hover:bg-accent',
     activeColor: 'bg-primary/10 text-primary ring-1 ring-primary/20 hover:bg-primary/15',
+  },
+  {
+    id: 'sketch',
+    imageSrc: '/icons/sketch-line.svg',
+    label: '2D Sketch',
+    color: 'hover:bg-blue-500/20 hover:text-blue-400',
+    activeColor: 'bg-blue-500/20 text-blue-400',
   },
   {
     id: 'build',
@@ -72,7 +83,7 @@ const controls: ControlConfig[] = [
   },
   {
     id: 'delete',
-    icon: Trash2,
+    imageSrc: '/icons/delete.svg',
     label: 'Delete',
     shortcut: 'D',
     color: 'hover:bg-red-500/20 hover:text-red-400',
@@ -83,11 +94,13 @@ const controls: ControlConfig[] = [
 export function ControlModes() {
   const mode = useEditor((state) => state.mode)
   const phase = useEditor((state) => state.phase)
+  const tool = useEditor((state) => state.tool)
   const selectionTool = useEditor((state) => state.floorplanSelectionTool)
   const setMode = useEditor((state) => state.setMode)
   const setPhase = useEditor((state) => state.setPhase)
   const setStructureLayer = useEditor((state) => state.setStructureLayer)
   const setSelectionTool = useEditor((state) => state.setFloorplanSelectionTool)
+  const setTool = useEditor((state) => state.setTool)
   const levelId = useViewer((s) => s.selection.levelId)
 
   // Only subscribe to the primitive `level` number — when walls are added to
@@ -102,6 +115,7 @@ export function ControlModes() {
   const isSiteEditing = phase === 'site'
   const isGroundFloor = levelIndex === 0
   const canEnterSiteEdit = isGroundFloor || isSiteEditing
+  const isSketchTool = phase === 'structure' && mode === 'build' && isSketchStructureTool(tool)
 
   const structureLayer = useEditor((state) => state.structureLayer)
 
@@ -110,8 +124,14 @@ export function ControlModes() {
     if (id === 'select') return mode === 'select' && selectionTool === 'click'
     if (id === 'box-select') return mode === 'select' && selectionTool === 'marquee'
     if (id === 'site-edit') return false
+    if (id === 'sketch') return isSketchTool
     if (id === 'build')
-      return mode === 'build' && phase === 'structure' && structureLayer === 'elements'
+      return (
+        mode === 'build' &&
+        phase === 'structure' &&
+        structureLayer === 'elements' &&
+        !isSketchTool
+      )
     if (id === 'furnish') return mode === 'build' && phase === 'furnish'
     if (id === 'zone')
       return mode === 'build' && phase === 'structure' && structureLayer === 'zones'
@@ -146,6 +166,15 @@ export function ControlModes() {
     } else if (id === 'box-select') {
       setMode('select')
       setSelectionTool('marquee')
+    } else if (id === 'sketch') {
+      if (getIsActive('sketch')) {
+        setMode('select')
+      } else {
+        setPhase('structure')
+        setStructureLayer('elements')
+        setMode('build')
+        setTool('sketch-line')
+      }
     } else if (id === 'build') {
       // Toggle: if already in structure build, go back to select
       if (getIsActive('build')) {
@@ -178,9 +207,8 @@ export function ControlModes() {
   return (
     <div className="flex items-center gap-1">
       {controls.map((c) => {
-        const ModeIcon = c.icon
-        const isImageMode = Boolean(c.imageSrc)
         const isSiteButton = c.id === 'site-edit'
+        const isDeleteButton = c.id === 'delete'
         const isActive = getIsActive(c.id)
         const isDisabled = isSiteButton && !canEnterSiteEdit
 
@@ -194,13 +222,13 @@ export function ControlModes() {
                   : canEnterSiteEdit
                     ? 'opacity-70 grayscale hover:bg-accent hover:opacity-100 hover:grayscale-0'
                     : 'cursor-not-allowed opacity-35 grayscale'
-                : !(isImageMode || isActive) && c.color,
-              !(isSiteButton || isImageMode) && isActive && c.activeColor,
-              !isSiteButton &&
-                isImageMode &&
-                isActive &&
-                'bg-primary/10 text-primary ring-1 ring-primary/20 hover:bg-primary/15',
-              !isSiteButton && isImageMode && !isActive && 'hover:bg-accent',
+                : isActive
+                  ? isDeleteButton
+                    ? c.activeColor
+                    : 'bg-primary/10 text-primary ring-1 ring-primary/20 hover:bg-primary/15'
+                  : isDeleteButton
+                    ? c.color
+                    : 'hover:bg-accent',
             )}
             disabled={isDisabled}
             key={c.id}
@@ -218,28 +246,22 @@ export function ControlModes() {
             size="icon"
             variant="ghost"
           >
-            {c.imageSrc ? (
-              <Image
-                alt={c.label}
-                className={cn(
-                  'h-[28px] w-[28px] object-contain transition-[opacity,filter] duration-200',
-                  isSiteButton
-                    ? isActive
-                      ? 'opacity-100 grayscale-0'
-                      : ''
-                    : isActive
-                      ? 'opacity-100 grayscale-0'
-                      : 'opacity-60 grayscale group-hover:opacity-100 group-hover:grayscale-0',
-                )}
-                height={28}
-                src={c.imageSrc}
-                width={28}
-              />
-            ) : c.iconifyIcon ? (
-              <Icon color="currentColor" height={18} icon={c.iconifyIcon} width={18} />
-            ) : (
-              ModeIcon && <ModeIcon className="h-5 w-5" />
-            )}
+            <Image
+              alt={c.label}
+              className={cn(
+                'h-[28px] w-[28px] object-contain transition-[opacity,filter] duration-200',
+                isSiteButton
+                  ? isActive
+                    ? 'opacity-100 grayscale-0'
+                    : ''
+                  : isActive
+                    ? 'opacity-100 grayscale-0'
+                    : 'opacity-60 grayscale group-hover:opacity-100 group-hover:grayscale-0',
+              )}
+              height={28}
+              src={c.imageSrc}
+              width={28}
+            />
           </ActionButton>
         )
       })}

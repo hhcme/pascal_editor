@@ -6,6 +6,7 @@ export type LightRegistration = {
   effect: LightEffect
   toggleIndex: number
   sliderIndex: number
+  temperatureIndex: number
   sliderMin: number
   sliderMax: number
   hasSlider: boolean
@@ -22,7 +23,12 @@ export const useItemLightPool = create<ItemLightPoolStore>((set) => ({
 
   register: (key, nodeId, effect, interactive) => {
     const toggleIndex = interactive.controls.findIndex((c) => c.kind === 'toggle')
-    const sliderIndex = interactive.controls.findIndex((c) => c.kind === 'slider')
+    const sliderIndex = interactive.controls.findIndex(
+      (c) => c.kind === 'slider' && !/temp|色温/i.test(c.label),
+    )
+    const temperatureIndex = interactive.controls.findIndex(
+      (c) => c.kind === 'slider' && (/temp|色温/i.test(c.label) || c.unit === 'K'),
+    )
     const sliderControl =
       sliderIndex >= 0 ? (interactive.controls[sliderIndex] as SliderControl) : null
 
@@ -31,6 +37,7 @@ export const useItemLightPool = create<ItemLightPoolStore>((set) => ({
       effect,
       toggleIndex,
       sliderIndex,
+      temperatureIndex,
       hasSlider: sliderControl !== null,
       sliderMin: sliderControl?.min ?? 0,
       sliderMax: sliderControl?.max ?? 1,

@@ -10,13 +10,49 @@ import { ItemPanel } from './item-panel'
 import { ReferencePanel } from './reference-panel'
 import { RoofPanel } from './roof-panel'
 import { RoofSegmentPanel } from './roof-segment-panel'
+import { SketchLinePanel } from './sketch-line-panel'
 import { SlabPanel } from './slab-panel'
 import { StairPanel } from './stair-panel'
 import { StairSegmentPanel } from './stair-segment-panel'
 import { WallPanel } from './wall-panel'
 import { WindowPanel } from './window-panel'
 
-export function PanelManager() {
+type InspectorPanelType =
+  | 'reference'
+  | 'item'
+  | 'roof'
+  | 'roof-segment'
+  | 'stair'
+  | 'stair-segment'
+  | 'slab'
+  | 'sketch-line'
+  | 'ceiling'
+  | 'wall'
+  | 'fence'
+  | 'door'
+  | 'window'
+
+function isInspectorPanelType(nodeType: string | null): nodeType is InspectorPanelType {
+  switch (nodeType) {
+    case 'item':
+    case 'roof':
+    case 'roof-segment':
+    case 'stair':
+    case 'stair-segment':
+    case 'slab':
+    case 'sketch-line':
+    case 'ceiling':
+    case 'wall':
+    case 'fence':
+    case 'door':
+    case 'window':
+      return true
+    default:
+      return false
+  }
+}
+
+export function useInspectorPanelType(): InspectorPanelType | null {
   const selectedIds = useViewer((s) => s.selection.selectedIds)
   const selectedReferenceId = useEditor((s) => s.selectedReferenceId)
   // Only subscribe to the *type* of the single-selected node — string primitive
@@ -27,14 +63,19 @@ export function PanelManager() {
     return id ? (s.nodes[id as AnyNodeId]?.type ?? null) : null
   })
 
-  // Show reference panel if a reference is selected
-  if (selectedReferenceId) {
-    return <ReferencePanel />
-  }
+  if (selectedReferenceId) return 'reference'
+  if (isInspectorPanelType(selectedNodeType)) return selectedNodeType
+  return null
+}
+
+export function PanelManager() {
+  const panelType = useInspectorPanelType()
 
   // Show appropriate panel based on selected node type
-  if (selectedNodeType) {
-    switch (selectedNodeType) {
+  if (panelType) {
+    switch (panelType) {
+      case 'reference':
+        return <ReferencePanel />
       case 'item':
         return <ItemPanel />
       case 'roof':
@@ -47,6 +88,8 @@ export function PanelManager() {
         return <StairSegmentPanel />
       case 'slab':
         return <SlabPanel />
+      case 'sketch-line':
+        return <SketchLinePanel />
       case 'ceiling':
         return <CeilingPanel />
       case 'wall':

@@ -5,8 +5,10 @@ import {
   type AnyNodeId,
   type CeilingNode,
   DoorNode,
+  emitter,
   FenceNode,
   ItemNode,
+  type NodeEvent,
   RoofNode,
   RoofSegmentNode,
   type SlabNode,
@@ -26,6 +28,7 @@ import * as THREE from 'three'
 import { sfxEmitter } from '../../lib/sfx-bus'
 import useEditor from '../../store/use-editor'
 import { NodeActionMenu } from './node-action-menu'
+import { SelectionTransformGizmo } from './selection-transform-gizmo'
 
 const ALLOWED_TYPES = [
   'item',
@@ -39,9 +42,28 @@ const ALLOWED_TYPES = [
   'fence',
   'slab',
   'ceiling',
-]
+] as const
+const ALLOWED_TYPE_SET = new Set<string>(ALLOWED_TYPES)
 const DELETE_ONLY_TYPES: string[] = []
 const HOLE_TYPES = ['slab', 'ceiling']
+
+function preventNativeContextMenu(event: NodeEvent) {
+  event.nativeEvent.nativeEvent?.preventDefault()
+}
+
+function resolveActionMenuNode(node: AnyNode): AnyNode | null {
+  if (node.type === 'roof-segment' && node.parentId) {
+    const parentNode = useScene.getState().nodes[node.parentId as AnyNodeId]
+    return parentNode?.type === 'roof' ? parentNode : node
+  }
+
+  if (node.type === 'stair-segment' && node.parentId) {
+    const parentNode = useScene.getState().nodes[node.parentId as AnyNodeId]
+    return parentNode?.type === 'stair' ? parentNode : node
+  }
+
+  return ALLOWED_TYPE_SET.has(node.type) ? node : null
+}
 
 export function FloatingActionMenu() {
   const selectedIds = useViewer((s) => s.selection.selectedIds)
@@ -59,6 +81,7 @@ export function FloatingActionMenu() {
   const startEndpointGroupRef = useRef<THREE.Group>(null)
   const endEndpointGroupRef = useRef<THREE.Group>(null)
   const [altPressed, setAltPressed] = useState(false)
+  const [actionMenuNodeId, setActionMenuNodeId] = useState<AnyNodeId | null>(null)
 
   // Only show for single selection of specific types
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : null
@@ -66,7 +89,11 @@ export function FloatingActionMenu() {
   // Subscribe just to the selected node so unrelated scene updates do not
   // re-render this menu.
   const node = useScene((s) => (selectedId ? (s.nodes[selectedId as AnyNodeId] ?? null) : null))
-  const isValidType = node ? ALLOWED_TYPES.includes(node.type) : false
+  const isValidType = node ? ALLOWED_TYPE_SET.has(node.type) : false
+  const canRenderSelectionOverlays =
+    Boolean(selectedId && node && isValidType && !isFloorplanHovered && mode !== 'delete') &&
+    !movingWallEndpoint
+  const shouldShowActionMenu = canRenderSelectionOverlays && actionMenuNodeId === selectedId
 
   // Boolean selector, only re-renders when curving availability actually flips.
   const canCurveSelectedWall = useScene((s) => {
@@ -84,6 +111,59 @@ export function FloatingActionMenu() {
       return false
     })
   })
+
+  useEffect(() => {
+    const handleContextMenu = (event: NodeEvent) => {
+      if (useViewer.getState().cameraDragging) return
+      if (useEditor.getState().mode === 'delete') return
+
+      const actionNode = resolveActionMenuNode(event.node)
+      if (!actionNode) return
+
+      event.stopPropagation()
+      preventNativeContextMenu(event)
+      useViewer.getState().setSelection({ selectedIds: [actionNode.id] })
+      setActionMenuNodeId(actionNode.id as AnyNodeId)
+    }
+
+    ALLOWED_TYPES.forEach((type) => {
+      emitter.on(`${type}:context-menu` as any, handleContextMenu as any)
+    })
+
+    return () => {
+      ALLOWED_TYPES.forEach((type) => {
+        emitter.off(`${type}:context-menu` as any, handleContextMenu as any)
+      })
+    }
+  }, [])
+
+  useEffect(() => {
+    const closeActionMenu = () => setActionMenuNodeId(null)
+
+    ALLOWED_TYPES.forEach((type) => {
+      emitter.on(`${type}:click` as any, closeActionMenu as any)
+    })
+    emitter.on('grid:click', closeActionMenu)
+
+    return () => {
+      ALLOWED_TYPES.forEach((type) => {
+        emitter.off(`${type}:click` as any, closeActionMenu as any)
+      })
+      emitter.off('grid:click', closeActionMenu)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (actionMenuNodeId && (!selectedId || actionMenuNodeId !== selectedId)) {
+      setActionMenuNodeId(null)
+    }
+  }, [actionMenuNodeId, selectedId])
+
+  useEffect(() => {
+    if (actionMenuNodeId && !canRenderSelectionOverlays) {
+      setActionMenuNodeId(null)
+    }
+  }, [actionMenuNodeId, canRenderSelectionOverlays])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -114,7 +194,7 @@ export function FloatingActionMenu() {
   }, [])
 
   useFrame(() => {
-    if (!(selectedId && isValidType && groupRef.current)) return
+    if (!(shouldShowActionMenu && selectedId && groupRef.current)) return
 
     const obj = sceneRegistry.nodes.get(selectedId)
     if (obj) {
@@ -394,39 +474,38 @@ export function FloatingActionMenu() {
     [node?.type, selectedId, setSelection],
   )
 
-  if (
-    !(selectedId && node && isValidType && !isFloorplanHovered && mode !== 'delete') ||
-    movingWallEndpoint
-  )
-    return null
+  if (!canRenderSelectionOverlays) return null
 
   return (
     <group>
-      <group ref={groupRef}>
-        <Html
-          center
-          style={{
-            pointerEvents: 'auto',
-            touchAction: 'none',
-          }}
-          zIndexRange={[100, 0]}
-        >
-          <NodeActionMenu
-            onAddHole={node && HOLE_TYPES.includes(node.type) ? handleAddHole : undefined}
-            onCurve={canCurveSelectedWall ? handleCurve : undefined}
-            onDelete={handleDelete}
-            onDuplicate={
-              node && !DELETE_ONLY_TYPES.includes(node.type) && !HOLE_TYPES.includes(node.type)
-                ? handleDuplicate
-                : undefined
-            }
-            onMove={node && !DELETE_ONLY_TYPES.includes(node.type) ? handleMove : undefined}
-            onPointerDown={(e) => e.stopPropagation()}
-            onPointerUp={(e) => e.stopPropagation()}
-          />
-        </Html>
-      </group>
-      {node?.type === 'wall' && (
+      {shouldShowActionMenu && (
+        <group ref={groupRef}>
+          <Html
+            center
+            style={{
+              pointerEvents: 'auto',
+              touchAction: 'none',
+            }}
+            zIndexRange={[100, 0]}
+          >
+            <NodeActionMenu
+              onAddHole={node && HOLE_TYPES.includes(node.type) ? handleAddHole : undefined}
+              onCurve={canCurveSelectedWall ? handleCurve : undefined}
+              onDelete={handleDelete}
+              onDuplicate={
+                node && !DELETE_ONLY_TYPES.includes(node.type) && !HOLE_TYPES.includes(node.type)
+                  ? handleDuplicate
+                  : undefined
+              }
+              onMove={node && !DELETE_ONLY_TYPES.includes(node.type) ? handleMove : undefined}
+              onPointerDown={(e) => e.stopPropagation()}
+              onPointerUp={(e) => e.stopPropagation()}
+            />
+          </Html>
+        </group>
+      )}
+      {node?.type === 'item' && <SelectionTransformGizmo node={node as ItemNode} />}
+      {shouldShowActionMenu && node?.type === 'wall' && (
         <>
           <group ref={startEndpointGroupRef}>
             <Html

@@ -5,6 +5,26 @@ import type { Object3D } from 'three'
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import {
+  clampSunProgress,
+  DEFAULT_SUN_STUDY_STATE,
+  getNearestSunTimeOfDay,
+  getSunProgressForTimeOfDay,
+  resolveSunProgress,
+  type SunStudyState,
+  type SunTimeOfDay,
+} from '../lib/sun-study'
+import {
+  clampWeatherIntensity,
+  clampWeatherParticleSize,
+  clampWeatherWindSpeed,
+  DEFAULT_WEATHER_STATE,
+  normalizeWeatherWindDirection,
+  resolveWeatherOption,
+  resolveWeatherState,
+  type WeatherMode,
+  type WeatherState,
+} from '../lib/weather'
 
 type SelectionPath = {
   buildingId: BuildingNode['id'] | null
@@ -60,6 +80,23 @@ type ViewerState = {
 
   showGrid: boolean
   setShowGrid: (show: boolean) => void
+
+  showCompass: boolean
+  setShowCompass: (show: boolean) => void
+
+  sunStudy: SunStudyState
+  setSunStudy: (updates: Partial<SunStudyState>) => void
+  setSunStudyEnabled: (enabled: boolean) => void
+  setSunTimeOfDay: (timeOfDay: SunTimeOfDay) => void
+  setSunProgress: (progress: number) => void
+
+  weather: WeatherState
+  setWeatherMode: (mode: WeatherMode) => void
+  setWeatherIntensity: (intensity: number) => void
+  setWeatherParticleSize: (size: number) => void
+  setWeatherWindDirection: (directionDeg: number) => void
+  setWeatherWindSpeed: (speed: number) => void
+  setWeatherSoundEnabled: (enabled: boolean) => void
 
   projectId: string | null
   setProjectId: (id: string | null) => void
@@ -153,6 +190,102 @@ const useViewer = create<ViewerState>()(
           return { showGrid: show, projectPreferences }
         }),
 
+      showCompass: true,
+      setShowCompass: (show) => set({ showCompass: show }),
+
+      sunStudy: DEFAULT_SUN_STUDY_STATE,
+      setSunStudy: (updates) =>
+        set((state) => ({
+          sunStudy: {
+            ...state.sunStudy,
+            ...updates,
+            progress: resolveSunProgress(
+              updates.timeOfDay ?? state.sunStudy.timeOfDay,
+              updates.progress ?? state.sunStudy.progress,
+            ),
+          },
+        })),
+      setSunStudyEnabled: (enabled) =>
+        set((state) => ({
+          sunStudy: {
+            ...state.sunStudy,
+            enabled,
+            progress: resolveSunProgress(state.sunStudy.timeOfDay, state.sunStudy.progress),
+          },
+        })),
+      setSunTimeOfDay: (timeOfDay) =>
+        set((state) => ({
+          sunStudy: {
+            ...state.sunStudy,
+            enabled: true,
+            timeOfDay,
+            progress: getSunProgressForTimeOfDay(timeOfDay),
+          },
+        })),
+      setSunProgress: (progress) =>
+        set((state) => {
+          const sunProgress = clampSunProgress(progress)
+
+          return {
+            sunStudy: {
+              ...state.sunStudy,
+              enabled: true,
+              progress: sunProgress,
+              timeOfDay: getNearestSunTimeOfDay(sunProgress),
+            },
+          }
+        }),
+
+      weather: DEFAULT_WEATHER_STATE,
+      setWeatherMode: (mode) =>
+        set((state) => {
+          const option = resolveWeatherOption(mode)
+          const weather = resolveWeatherState(state.weather)
+
+          return {
+            weather: {
+              ...weather,
+              mode: option.id,
+              intensity: option.id === 'clear' ? 0 : option.intensity,
+            },
+          }
+        }),
+      setWeatherIntensity: (intensity) =>
+        set((state) => ({
+          weather: {
+            ...resolveWeatherState(state.weather),
+            intensity: clampWeatherIntensity(intensity),
+          },
+        })),
+      setWeatherParticleSize: (size) =>
+        set((state) => ({
+          weather: {
+            ...resolveWeatherState(state.weather),
+            particleSize: clampWeatherParticleSize(size),
+          },
+        })),
+      setWeatherWindDirection: (directionDeg) =>
+        set((state) => ({
+          weather: {
+            ...resolveWeatherState(state.weather),
+            windDirectionDeg: normalizeWeatherWindDirection(directionDeg),
+          },
+        })),
+      setWeatherWindSpeed: (speed) =>
+        set((state) => ({
+          weather: {
+            ...resolveWeatherState(state.weather),
+            windSpeed: clampWeatherWindSpeed(speed),
+          },
+        })),
+      setWeatherSoundEnabled: (enabled) =>
+        set((state) => ({
+          weather: {
+            ...resolveWeatherState(state.weather),
+            soundEnabled: enabled,
+          },
+        })),
+
       projectId: null,
       setProjectId: (id) =>
         set((state) => {
@@ -222,6 +355,9 @@ const useViewer = create<ViewerState>()(
         levelMode: state.levelMode,
         wallMode: state.wallMode,
         projectPreferences: state.projectPreferences,
+        showCompass: state.showCompass,
+        sunStudy: state.sunStudy,
+        weather: state.weather,
       }),
     },
   ),

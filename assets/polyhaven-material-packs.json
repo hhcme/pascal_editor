@@ -1,0 +1,957 @@
+{
+  "version": 1,
+  "provider": "poly-haven",
+  "providerName": "Poly Haven",
+  "homepage": "https://polyhaven.com/",
+  "licenseId": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "downloadResolution": "1k",
+  "downloadFormat": "jpg",
+  "userAgent": "FindtopBuildingEditorAssetImporter/0.1 (local development)",
+  "packs": [
+    {
+      "assetId": "wood_table_001",
+      "materialId": "polyhaven-wood-table-001",
+      "directory": "polyhaven-wood-table-001",
+      "label": "Wood Table 001",
+      "category": "wood",
+      "colorFamily": "wood",
+      "finish": "satin",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "wood",
+        "table"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/wood_table_001"
+    },
+    {
+      "assetId": "brick_4",
+      "materialId": "polyhaven-brick-4",
+      "directory": "polyhaven-brick-4",
+      "label": "Brick 4",
+      "category": "building",
+      "colorFamily": "red",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "brick",
+        "wall"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brick_4"
+    },
+    {
+      "assetId": "concrete_layers_02",
+      "materialId": "polyhaven-concrete-layers-02",
+      "directory": "polyhaven-concrete-layers-02",
+      "label": "Concrete Layers 02",
+      "category": "building",
+      "colorFamily": "gray",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "concrete",
+        "layered"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/concrete_layers_02"
+    },
+    {
+      "assetId": "plaster_grey_04",
+      "materialId": "polyhaven-plaster-grey-04",
+      "directory": "polyhaven-plaster-grey-04",
+      "label": "Plaster Grey 04",
+      "category": "wall-covering",
+      "colorFamily": "gray",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "plaster",
+        "wall"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/plaster_grey_04"
+    },
+    {
+      "assetId": "interior_tiles",
+      "materialId": "polyhaven-interior-tiles",
+      "directory": "polyhaven-interior-tiles",
+      "label": "Interior Tiles",
+      "category": "tile",
+      "colorFamily": "mixed",
+      "finish": "glossy",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "tile",
+        "interior"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/interior_tiles"
+    },
+    {
+      "assetId": "brown_leather",
+      "materialId": "polyhaven-brown-leather",
+      "directory": "polyhaven-brown-leather",
+      "label": "Brown Leather",
+      "category": "leather",
+      "colorFamily": "brown",
+      "finish": "satin",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "leather",
+        "brown"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brown_leather"
+    },
+    {
+      "assetId": "brick_floor_003",
+      "materialId": "polyhaven-brick-floor-003",
+      "directory": "polyhaven-brick-floor-003",
+      "label": "Brick Floor 003",
+      "category": "building",
+      "colorFamily": "brown",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "brick",
+        "floor"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brick_floor_003"
+    },
+    {
+      "assetId": "brown_planks_03",
+      "materialId": "polyhaven-brown-planks-03",
+      "directory": "polyhaven-brown-planks-03",
+      "label": "Brown Planks 03",
+      "category": "wood",
+      "colorFamily": "wood",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "wood",
+        "planks"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brown_planks_03"
+    },
+    {
+      "assetId": "grey_cartago_03",
+      "materialId": "polyhaven-grey-cartago-03",
+      "directory": "polyhaven-grey-cartago-03",
+      "label": "Grey Cartago 03",
+      "category": "tile",
+      "colorFamily": "gray",
+      "finish": "satin",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "tile",
+        "floor"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/grey_cartago_03"
+    },
+    {
+      "assetId": "concrete_wall_001",
+      "materialId": "polyhaven-concrete-wall-001",
+      "directory": "polyhaven-concrete-wall-001",
+      "label": "Concrete Wall 001",
+      "category": "building",
+      "colorFamily": "gray",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "concrete",
+        "wall"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/concrete_wall_001"
+    },
+    {
+      "assetId": "marble_01",
+      "materialId": "polyhaven-marble-01",
+      "directory": "polyhaven-marble-01",
+      "label": "Marble 01",
+      "category": "stone",
+      "colorFamily": "white",
+      "finish": "glossy",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "marble",
+        "stone"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/marble_01"
+    },
+    {
+      "assetId": "blue_floor_tiles_01",
+      "materialId": "polyhaven-blue-floor-tiles-01",
+      "directory": "polyhaven-blue-floor-tiles-01",
+      "label": "Blue Floor Tiles 01",
+      "category": "tile",
+      "colorFamily": "blue",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "brick",
+        "floor",
+        "tile"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/blue_floor_tiles_01"
+    },
+    {
+      "assetId": "brick_crosswalk",
+      "materialId": "polyhaven-brick-crosswalk",
+      "directory": "polyhaven-brick-crosswalk",
+      "label": "Brick Crosswalk",
+      "category": "building",
+      "colorFamily": "mixed",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "brick",
+        "floor",
+        "crosswalk"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brick_crosswalk"
+    },
+    {
+      "assetId": "brick_floor",
+      "materialId": "polyhaven-brick-floor",
+      "directory": "polyhaven-brick-floor",
+      "label": "Brick Floor",
+      "category": "building",
+      "colorFamily": "brown",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "brick",
+        "floor",
+        "herringbone"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brick_floor"
+    },
+    {
+      "assetId": "brick_moss_001",
+      "materialId": "polyhaven-brick-moss-001",
+      "directory": "polyhaven-brick-moss-001",
+      "label": "Brick Moss 001",
+      "category": "building",
+      "colorFamily": "green",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "brick",
+        "floor",
+        "moss"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brick_moss_001"
+    },
+    {
+      "assetId": "brick_pavement_02",
+      "materialId": "polyhaven-brick-pavement-02",
+      "directory": "polyhaven-brick-pavement-02",
+      "label": "Brick Pavement 02",
+      "category": "building",
+      "colorFamily": "brown",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "brick",
+        "floor",
+        "pavement"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brick_pavement_02"
+    },
+    {
+      "assetId": "brick_wall_001",
+      "materialId": "polyhaven-brick-wall-001",
+      "directory": "polyhaven-brick-wall-001",
+      "label": "Brick Wall 001",
+      "category": "building",
+      "colorFamily": "red",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "brick",
+        "wall"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brick_wall_001"
+    },
+    {
+      "assetId": "brown_floor_tiles",
+      "materialId": "polyhaven-brown-floor-tiles",
+      "directory": "polyhaven-brown-floor-tiles",
+      "label": "Brown Floor Tiles",
+      "category": "tile",
+      "colorFamily": "brown",
+      "finish": "satin",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "tile",
+        "floor"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brown_floor_tiles"
+    },
+    {
+      "assetId": "checkered_pavement_tiles",
+      "materialId": "polyhaven-checkered-pavement-tiles",
+      "directory": "polyhaven-checkered-pavement-tiles",
+      "label": "Checkered Pavement Tiles",
+      "category": "tile",
+      "colorFamily": "mixed",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "tile",
+        "floor",
+        "pavement"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/checkered_pavement_tiles"
+    },
+    {
+      "assetId": "concrete_tiles_02",
+      "materialId": "polyhaven-concrete-tiles-02",
+      "directory": "polyhaven-concrete-tiles-02",
+      "label": "Concrete Tiles 02",
+      "category": "tile",
+      "colorFamily": "gray",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "tile",
+        "floor",
+        "concrete"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/concrete_tiles_02"
+    },
+    {
+      "assetId": "dirty_tiles",
+      "materialId": "polyhaven-dirty-tiles",
+      "directory": "polyhaven-dirty-tiles",
+      "label": "Dirty Tiles",
+      "category": "tile",
+      "colorFamily": "mixed",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "tile",
+        "floor",
+        "dirty"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/dirty_tiles"
+    },
+    {
+      "assetId": "terrazzo_tiles",
+      "materialId": "polyhaven-terrazzo-tiles",
+      "directory": "polyhaven-terrazzo-tiles",
+      "label": "Terrazzo Tiles",
+      "category": "tile",
+      "colorFamily": "mixed",
+      "finish": "satin",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "tile",
+        "floor",
+        "terrazzo"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/terrazzo_tiles"
+    },
+    {
+      "assetId": "black_painted_planks",
+      "materialId": "polyhaven-black-painted-planks",
+      "directory": "polyhaven-black-painted-planks",
+      "label": "Black Painted Planks",
+      "category": "wood",
+      "colorFamily": "black",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "wood",
+        "planks",
+        "painted"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/black_painted_planks"
+    },
+    {
+      "assetId": "blue_painted_planks",
+      "materialId": "polyhaven-blue-painted-planks",
+      "directory": "polyhaven-blue-painted-planks",
+      "label": "Blue Painted Planks",
+      "category": "wood",
+      "colorFamily": "blue",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "wood",
+        "planks",
+        "painted"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/blue_painted_planks"
+    },
+    {
+      "assetId": "brown_planks_04",
+      "materialId": "polyhaven-brown-planks-04",
+      "directory": "polyhaven-brown-planks-04",
+      "label": "Brown Planks 04",
+      "category": "wood",
+      "colorFamily": "wood",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "wood",
+        "planks"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brown_planks_04"
+    },
+    {
+      "assetId": "brown_planks_05",
+      "materialId": "polyhaven-brown-planks-05",
+      "directory": "polyhaven-brown-planks-05",
+      "label": "Brown Planks 05",
+      "category": "wood",
+      "colorFamily": "wood",
+      "finish": "satin",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "wood",
+        "planks"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brown_planks_05"
+    },
+    {
+      "assetId": "beam_wall_01",
+      "materialId": "polyhaven-beam-wall-01",
+      "directory": "polyhaven-beam-wall-01",
+      "label": "Beam Wall 01",
+      "category": "wood",
+      "colorFamily": "wood",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "wood",
+        "wall",
+        "beams"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/beam_wall_01"
+    },
+    {
+      "assetId": "anti_slip_concrete",
+      "materialId": "polyhaven-anti-slip-concrete",
+      "directory": "polyhaven-anti-slip-concrete",
+      "label": "Anti Slip Concrete",
+      "category": "building",
+      "colorFamily": "gray",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "concrete",
+        "floor"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/anti_slip_concrete"
+    },
+    {
+      "assetId": "brushed_concrete",
+      "materialId": "polyhaven-brushed-concrete",
+      "directory": "polyhaven-brushed-concrete",
+      "label": "Brushed Concrete",
+      "category": "building",
+      "colorFamily": "gray",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "concrete",
+        "floor"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brushed_concrete"
+    },
+    {
+      "assetId": "concrete_block_wall",
+      "materialId": "polyhaven-concrete-block-wall",
+      "directory": "polyhaven-concrete-block-wall",
+      "label": "Concrete Block Wall",
+      "category": "building",
+      "colorFamily": "gray",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "concrete",
+        "wall"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/concrete_block_wall"
+    },
+    {
+      "assetId": "beige_wall_001",
+      "materialId": "polyhaven-beige-wall-001",
+      "directory": "polyhaven-beige-wall-001",
+      "label": "Beige Wall 001",
+      "category": "wall-covering",
+      "colorFamily": "yellow",
+      "finish": "matte",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "plaster",
+        "wall"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/beige_wall_001"
+    },
+    {
+      "assetId": "blue_plaster_weathered",
+      "materialId": "polyhaven-blue-plaster-weathered",
+      "directory": "polyhaven-blue-plaster-weathered",
+      "label": "Blue Plaster Weathered",
+      "category": "wall-covering",
+      "colorFamily": "blue",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "plaster",
+        "wall"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/blue_plaster_weathered"
+    },
+    {
+      "assetId": "fabric_leather_01",
+      "materialId": "polyhaven-fabric-leather-01",
+      "directory": "polyhaven-fabric-leather-01",
+      "label": "Fabric Leather 01",
+      "category": "leather",
+      "colorFamily": "brown",
+      "finish": "satin",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "leather",
+        "upholstery"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/fabric_leather_01"
+    },
+    {
+      "assetId": "fabric_leather_02",
+      "materialId": "polyhaven-fabric-leather-02",
+      "directory": "polyhaven-fabric-leather-02",
+      "label": "Fabric Leather 02",
+      "category": "leather",
+      "colorFamily": "brown",
+      "finish": "satin",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "leather",
+        "upholstery"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/fabric_leather_02"
+    },
+    {
+      "assetId": "denim_fabric",
+      "materialId": "polyhaven-denim-fabric",
+      "directory": "polyhaven-denim-fabric",
+      "label": "Denim Fabric",
+      "category": "fabric",
+      "colorFamily": "blue",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "fabric",
+        "denim"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/denim_fabric"
+    },
+    {
+      "assetId": "cotton_jersey",
+      "materialId": "polyhaven-cotton-jersey",
+      "directory": "polyhaven-cotton-jersey",
+      "label": "Cotton Jersey",
+      "category": "fabric",
+      "colorFamily": "white",
+      "finish": "matte",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "fabric",
+        "cotton"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/cotton_jersey"
+    },
+    {
+      "assetId": "brick_gravel",
+      "materialId": "polyhaven-brick-gravel",
+      "directory": "polyhaven-brick-gravel",
+      "label": "Brick Gravel",
+      "category": "building",
+      "colorFamily": "red",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "brick",
+        "rough",
+        "uneven",
+        "gravel"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brick_gravel"
+    },
+    {
+      "assetId": "brick_pavement",
+      "materialId": "polyhaven-brick-pavement",
+      "directory": "polyhaven-brick-pavement",
+      "label": "Brick Pavement",
+      "category": "building",
+      "colorFamily": "red",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "brick",
+        "pavement",
+        "sidewalk",
+        "bricks"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brick_pavement"
+    },
+    {
+      "assetId": "brick_pavement_03",
+      "materialId": "polyhaven-brick-pavement-03",
+      "directory": "polyhaven-brick-pavement-03",
+      "label": "Brick Pavement 03",
+      "category": "building",
+      "colorFamily": "red",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "brick",
+        "rough",
+        "uneven",
+        "bricks"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brick_pavement_03"
+    },
+    {
+      "assetId": "granite_tile_03",
+      "materialId": "polyhaven-granite-tile-03",
+      "directory": "polyhaven-granite-tile-03",
+      "label": "Granite Tile 03",
+      "category": "tile",
+      "colorFamily": "mixed",
+      "finish": "satin",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "tile",
+        "granite",
+        "granite tile",
+        "granite blocks",
+        "wall"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/granite_tile_03"
+    },
+    {
+      "assetId": "grey_cartago_01",
+      "materialId": "polyhaven-grey-cartago-01",
+      "directory": "polyhaven-grey-cartago-01",
+      "label": "Grey Cartago 01",
+      "category": "tile",
+      "colorFamily": "gray",
+      "finish": "satin",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "tile",
+        "rock",
+        "tiles",
+        "marble",
+        "flooring"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/grey_cartago_01"
+    },
+    {
+      "assetId": "rectangular_facade_tiles",
+      "materialId": "polyhaven-rectangular-facade-tiles",
+      "directory": "polyhaven-rectangular-facade-tiles",
+      "label": "Rectangular Facade Tiles",
+      "category": "tile",
+      "colorFamily": "gray",
+      "finish": "satin",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "tile",
+        "tiles",
+        "rectangular",
+        "building facade",
+        "wall"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/rectangular_facade_tiles"
+    },
+    {
+      "assetId": "bark_brown_01",
+      "materialId": "polyhaven-bark-brown-01",
+      "directory": "polyhaven-bark-brown-01",
+      "label": "Bark Brown 01",
+      "category": "wood",
+      "colorFamily": "brown",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "wood",
+        "bark",
+        "tree",
+        "forest",
+        "knots"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/bark_brown_01"
+    },
+    {
+      "assetId": "bark_brown_02",
+      "materialId": "polyhaven-bark-brown-02",
+      "directory": "polyhaven-bark-brown-02",
+      "label": "Bark Brown 02",
+      "category": "wood",
+      "colorFamily": "brown",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "wood",
+        "bark",
+        "tree",
+        "forest",
+        "knots"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/bark_brown_02"
+    },
+    {
+      "assetId": "bark_willow",
+      "materialId": "polyhaven-bark-willow",
+      "directory": "polyhaven-bark-willow",
+      "label": "Bark Willow",
+      "category": "wood",
+      "colorFamily": "brown",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "wood",
+        "willow",
+        "bark",
+        "tree",
+        "forest"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/bark_willow"
+    },
+    {
+      "assetId": "asphalt_floor",
+      "materialId": "polyhaven-asphalt-floor",
+      "directory": "polyhaven-asphalt-floor",
+      "label": "Asphalt Floor",
+      "category": "building",
+      "colorFamily": "brown",
+      "finish": "satin",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "concrete",
+        "flat",
+        "asphalt",
+        "brown",
+        "even"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/asphalt_floor"
+    },
+    {
+      "assetId": "brushed_concrete_03",
+      "materialId": "polyhaven-brushed-concrete-03",
+      "directory": "polyhaven-brushed-concrete-03",
+      "label": "Brushed Concrete 03",
+      "category": "building",
+      "colorFamily": "red",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "concrete",
+        "rough",
+        "weathered",
+        "dirty",
+        "dry"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brushed_concrete_03"
+    },
+    {
+      "assetId": "brushed_concrete_2",
+      "materialId": "polyhaven-brushed-concrete-2",
+      "directory": "polyhaven-brushed-concrete-2",
+      "label": "Brushed Concrete 2",
+      "category": "building",
+      "colorFamily": "red",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "concrete",
+        "rough",
+        "weathered",
+        "dirty",
+        "discolored"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/brushed_concrete_2"
+    },
+    {
+      "assetId": "beige_wall_002",
+      "materialId": "polyhaven-beige-wall-002",
+      "directory": "polyhaven-beige-wall-002",
+      "label": "Beige Wall 002",
+      "category": "wall-covering",
+      "colorFamily": "red",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "plaster",
+        "beige",
+        "painted",
+        "suburb",
+        "house"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/beige_wall_002"
+    },
+    {
+      "assetId": "concrete_debris",
+      "materialId": "polyhaven-concrete-debris",
+      "directory": "polyhaven-concrete-debris",
+      "label": "Concrete Debris",
+      "category": "wall-covering",
+      "colorFamily": "gray",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "plaster",
+        "stones",
+        "dry",
+        "debris",
+        "crumbling"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/concrete_debris"
+    },
+    {
+      "assetId": "concrete_floor_painted",
+      "materialId": "polyhaven-concrete-floor-painted",
+      "directory": "polyhaven-concrete-floor-painted",
+      "label": "Concrete Floor Painted",
+      "category": "wall-covering",
+      "colorFamily": "red",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "plaster",
+        "painted",
+        "rough",
+        "textured",
+        "urban"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/concrete_floor_painted"
+    },
+    {
+      "assetId": "bi_stretch",
+      "materialId": "polyhaven-bi-stretch",
+      "directory": "polyhaven-bi-stretch",
+      "label": "Bi Stretch",
+      "category": "fabric",
+      "colorFamily": "yellow",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "fabric",
+        "yellow",
+        "fine",
+        "flexible",
+        "bi stretch"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/bi_stretch"
+    },
+    {
+      "assetId": "caban",
+      "materialId": "polyhaven-caban",
+      "directory": "polyhaven-caban",
+      "label": "Caban",
+      "category": "fabric",
+      "colorFamily": "mixed",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "fabric",
+        "orange",
+        "fluffy",
+        "textile"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/caban"
+    },
+    {
+      "assetId": "crepe_georgette",
+      "materialId": "polyhaven-crepe-georgette",
+      "directory": "polyhaven-crepe-georgette",
+      "label": "Crepe Georgette",
+      "category": "fabric",
+      "colorFamily": "mixed",
+      "finish": "rough",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "fabric",
+        "fluffy",
+        "teal",
+        "fine",
+        "crepe"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/crepe_georgette"
+    },
+    {
+      "assetId": "leather_white",
+      "materialId": "polyhaven-leather-white",
+      "directory": "polyhaven-leather-white",
+      "label": "Leather White",
+      "category": "leather",
+      "colorFamily": "white",
+      "finish": "satin",
+      "tags": [
+        "polyhaven",
+        "cc0",
+        "leather",
+        "white",
+        "smooth",
+        "new"
+      ],
+      "sourceUrl": "https://polyhaven.com/a/leather_white"
+    }
+  ]
+}

@@ -14,6 +14,9 @@ import { useViewer } from '@pascal-app/viewer'
 import {
   Camera,
   ChevronDown,
+  Compass,
+  Eye,
+  EyeOff,
   Loader2,
   MoreHorizontal,
   Pencil,
@@ -25,6 +28,7 @@ import {
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
 import { memo, useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
+import { MetricControl } from './../../../../../components/ui/controls/metric-control'
 import { ColorDot } from './../../../../../components/ui/primitives/color-dot'
 import {
   Popover,
@@ -33,11 +37,68 @@ import {
 } from './../../../../../components/ui/primitives/popover'
 import { deleteLevelWithFallbackSelection } from './../../../../../lib/level-selection'
 import { cn } from './../../../../../lib/utils'
+import {
+  isZoneLabelHidden,
+  withZoneLabelHidden,
+} from './../../../../../lib/zone-label-visibility'
 import useEditor from './../../../../../store/use-editor'
 import { useUploadStore } from '../../../../../store/use-upload'
 import { InlineRenameInput } from './inline-rename-input'
 import { focusTreeNode, TreeNode } from './tree-node'
 import { TreeNodeDragProvider } from './tree-node-drag'
+
+const BUILDING_ORIENTATION_OPTIONS = [
+  { label: '北', shortLabel: 'N', degrees: 0 },
+  { label: '东北', shortLabel: 'NE', degrees: 45 },
+  { label: '东', shortLabel: 'E', degrees: 90 },
+  { label: '东南', shortLabel: 'SE', degrees: 135 },
+  { label: '南', shortLabel: 'S', degrees: 180 },
+  { label: '西南', shortLabel: 'SW', degrees: 225 },
+  { label: '西', shortLabel: 'W', degrees: 270 },
+  { label: '西北', shortLabel: 'NW', degrees: 315 },
+] as const
+
+const BUILDING_ORIENTATION_STEPS = [-5, -1, 1, 5] as const
+
+function normalizeDegrees(degrees: number): number {
+  const normalized = ((degrees % 360) + 360) % 360
+  return Object.is(normalized, -0) ? 0 : normalized
+}
+
+function radiansToDegrees(radians: number): number {
+  return normalizeDegrees((-radians * 180) / Math.PI)
+}
+
+function degreesToRadians(degrees: number): number {
+  return (-normalizeDegrees(degrees) * Math.PI) / 180
+}
+
+function getCircularDegreeDistance(a: number, b: number): number {
+  const distance = Math.abs(normalizeDegrees(a) - normalizeDegrees(b))
+  return Math.min(distance, 360 - distance)
+}
+
+function getNearestBuildingOrientation(degrees: number) {
+  return BUILDING_ORIENTATION_OPTIONS.reduce((nearest, option) =>
+    getCircularDegreeDistance(degrees, option.degrees) <
+    getCircularDegreeDistance(degrees, nearest.degrees)
+      ? option
+      : nearest,
+  )
+}
+
+function getBuildingOrientationText(degrees: number): string {
+  const nearest = getNearestBuildingOrientation(degrees)
+  const distance = getCircularDegreeDistance(degrees, nearest.degrees)
+  const prefix =
+    distance < 0.05
+      ? nearest.label
+      : distance <= 5
+        ? `接近${nearest.label}`
+        : `偏向${nearest.label}`
+
+  return `${prefix} ${degrees.toFixed(1)}°`
+}
 
 // ============================================================================
 // PROPERTY LINE SECTION
@@ -917,6 +978,93 @@ const LevelsSection = memo(function LevelsSection({
   )
 })
 
+const BuildingOrientationSection = memo(function BuildingOrientationSection({
+  building,
+}: {
+  building: BuildingNode
+}) {
+  const updateNode = useScene((state) => state.updateNode)
+  const currentDegrees = radiansToDegrees(building.rotation[1] ?? 0)
+  const orientationText = getBuildingOrientationText(currentDegrees)
+
+  const handleOrientationChange = (degrees: number) => {
+    updateNode(building.id, {
+      rotation: [
+        building.rotation[0] ?? 0,
+        degreesToRadians(degrees),
+        building.rotation[2] ?? 0,
+      ],
+    })
+  }
+
+  const handleStepChange = (deltaDegrees: number) => {
+    handleOrientationChange(currentDegrees + deltaDegrees)
+  }
+
+  return (
+    <div className="relative border-border/50 border-b px-3 py-2.5">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
+          <Compass className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate font-medium text-xs">建筑朝向</span>
+        </div>
+        <span className="font-mono text-foreground text-xs tabular-nums">
+          {currentDegrees.toFixed(1)}°
+        </span>
+      </div>
+      <div className="mb-2 truncate text-muted-foreground text-xs">{orientationText}</div>
+      <div className="grid grid-cols-4 gap-1.5">
+        {BUILDING_ORIENTATION_OPTIONS.map((option) => {
+          const isActive = getCircularDegreeDistance(currentDegrees, option.degrees) < 0.05
+
+          return (
+            <button
+              className={cn(
+                'flex h-8 min-w-0 cursor-pointer items-center justify-center gap-1 rounded-md border text-xs transition-colors',
+                isActive
+                  ? 'border-primary/35 bg-primary/10 text-primary'
+                  : 'border-border/55 bg-card text-muted-foreground hover:bg-accent/55 hover:text-foreground',
+              )}
+              key={option.shortLabel}
+              onClick={() => handleOrientationChange(option.degrees)}
+              title={`${option.label} ${option.degrees}°`}
+              type="button"
+            >
+              <span className="font-mono font-semibold">{option.shortLabel}</span>
+              <span>{option.label}</span>
+            </button>
+          )
+        })}
+      </div>
+      <div className="mt-2 grid grid-cols-4 gap-1.5">
+        {BUILDING_ORIENTATION_STEPS.map((step) => (
+          <button
+            className="flex h-7 cursor-pointer items-center justify-center rounded-md border border-border/55 bg-card font-mono text-muted-foreground text-xs tabular-nums transition-colors hover:bg-accent/55 hover:text-foreground"
+            key={step}
+            onClick={() => handleStepChange(step)}
+            title={`${step > 0 ? '+' : ''}${step}°`}
+            type="button"
+          >
+            {step > 0 ? '+' : ''}
+            {step}°
+          </button>
+        ))}
+      </div>
+      <MetricControl
+        className="mt-2 h-9"
+        label="角度"
+        max={359.9}
+        min={0}
+        onChange={handleOrientationChange}
+        precision={1}
+        step={1}
+        unit="°"
+        value={currentDegrees}
+      />
+    </div>
+  )
+})
+
 const LayerToggle = memo(function LayerToggle() {
   const structureLayer = useEditor((state) => state.structureLayer)
   const setStructureLayer = useEditor((state) => state.setStructureLayer)
@@ -1061,6 +1209,7 @@ const ZoneItem = memo(function ZoneItem({ zone, isLast }: { zone: ZoneNode; isLa
 
   const isSelected = selectedZoneId === zone.id
   const isHovered = hoveredId === zone.id
+  const isLabelHidden = isZoneLabelHidden(zone)
 
   const itemRef = useRef<HTMLDivElement>(null)
 
@@ -1093,6 +1242,13 @@ const ZoneItem = memo(function ZoneItem({ zone, isLast }: { zone: ZoneNode; isLa
 
   const handleColorChange = (color: string) => {
     updateNode(zone.id, { color })
+  }
+
+  const handleToggleLabel = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    updateNode(zone.id, {
+      metadata: withZoneLabelHidden(zone, !isLabelHidden),
+    })
   }
 
   return (
@@ -1129,15 +1285,33 @@ const ZoneItem = memo(function ZoneItem({ zone, isLast }: { zone: ZoneNode; isLa
         <ColorDot color={zone.color} onChange={handleColorChange} />
       </span>
       <div className="min-w-0 flex-1 pr-1">
-        <InlineRenameInput
-          defaultName={defaultName}
-          isEditing={isEditing}
-          nodeId={zone.id}
-          onStartEditing={() => setIsEditing(true)}
-          onStopEditing={() => setIsEditing(false)}
-        />
+        <div className={cn(isLabelHidden && 'text-muted-foreground line-through')}>
+          <InlineRenameInput
+            defaultName={defaultName}
+            isEditing={isEditing}
+            nodeId={zone.id}
+            onStartEditing={() => setIsEditing(true)}
+            onStopEditing={() => setIsEditing(false)}
+          />
+        </div>
       </div>
       <div className="flex items-center gap-0.5">
+        <button
+          aria-label={isLabelHidden ? 'Show label' : 'Hide label'}
+          className={cn(
+            'flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 transition-colors hover:bg-black/5 hover:text-foreground group-hover/row:opacity-100 dark:hover:bg-white/10',
+            isLabelHidden && 'opacity-100',
+          )}
+          onClick={handleToggleLabel}
+          title={isLabelHidden ? 'Show label' : 'Hide label'}
+          type="button"
+        >
+          {isLabelHidden ? (
+            <EyeOff className="h-3 w-3 opacity-50" />
+          ) : (
+            <Eye className="h-3 w-3" />
+          )}
+        </button>
         {/* Camera snapshot button */}
         <Popover onOpenChange={setCameraPopoverOpen} open={cameraPopoverOpen}>
           <PopoverTrigger asChild>
@@ -1239,6 +1413,7 @@ const ContentSection = memo(function ContentSection() {
   const setPhase = useEditor((state) => state.setPhase)
   const setMode = useEditor((state) => state.setMode)
   const setTool = useEditor((state) => state.setTool)
+  const updateNodes = useScene((state) => state.updateNodes)
 
   const level = useScene((s) =>
     selectedLevelId ? ((s.nodes[selectedLevelId] as LevelNode | undefined) ?? null) : null,
@@ -1271,12 +1446,42 @@ const ContentSection = memo(function ContentSection() {
       setTool('zone')
     }
 
+    const areAllZoneLabelsHidden =
+      levelZones.length > 0 && levelZones.every((zone) => isZoneLabelHidden(zone))
+
+    const handleToggleAllZoneLabels = () => {
+      const nextHidden = !areAllZoneLabelsHidden
+      updateNodes(
+        levelZones.map((zone) => ({
+          id: zone.id,
+          data: {
+            metadata: withZoneLabelHidden(zone, nextHidden),
+          },
+        })),
+      )
+    }
+
     if (levelZones.length === 0) {
       return <TreeEmptyState actionLabel="Add one" onAction={handleAddZone} title="No zones" />
     }
 
     return (
       <div className="flex flex-col">
+        <div className="flex h-8 items-center justify-end border-border/50 border-b bg-muted/40 px-2">
+          <button
+            aria-label={areAllZoneLabelsHidden ? 'Show all labels' : 'Hide all labels'}
+            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
+            onClick={handleToggleAllZoneLabels}
+            title={areAllZoneLabelsHidden ? 'Show all labels' : 'Hide all labels'}
+            type="button"
+          >
+            {areAllZoneLabelsHidden ? (
+              <EyeOff className="h-3 w-3 opacity-50" />
+            ) : (
+              <Eye className="h-3 w-3" />
+            )}
+          </button>
+        </div>
         {levelZones.map((zone, index) => (
           <ZoneItem isLast={index === levelZones.length - 1} key={zone.id} zone={zone} />
         ))}
@@ -1451,6 +1656,7 @@ const BuildingItem = memo(function BuildingItem({
           >
             <div className="flex min-h-0 w-full flex-1 flex-col">
               <div className="flex shrink-0 flex-col">
+                <BuildingOrientationSection building={building} />
                 <LevelsSection
                   onDeleteAsset={onDeleteAsset}
                   onUploadAsset={onUploadAsset}

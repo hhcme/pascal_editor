@@ -17,6 +17,8 @@ import {
   type RoofNode,
   type RoofSegmentEvent,
   type RoofSegmentNode,
+  type SketchLineEvent,
+  type SketchLineNode,
   type SiteEvent,
   type SiteNode,
   type SlabEvent,
@@ -47,6 +49,7 @@ type NodeConfig = {
   ceiling: { node: CeilingNode; event: CeilingEvent }
   roof: { node: RoofNode; event: RoofEvent }
   'roof-segment': { node: RoofSegmentNode; event: RoofSegmentEvent }
+  'sketch-line': { node: SketchLineNode; event: SketchLineEvent }
   stair: { node: StairNode; event: StairEvent }
   'stair-segment': { node: StairSegmentNode; event: StairSegmentEvent }
   window: { node: WindowNode; event: WindowEvent }
@@ -56,6 +59,8 @@ type NodeConfig = {
 type NodeType = keyof NodeConfig
 
 export function useNodeEvents<T extends NodeType>(node: NodeConfig[T]['node'], type: T) {
+  const walkthroughMode = useViewer((state) => state.walkthroughMode)
+
   const emit = (suffix: EventSuffix, e: ThreeEvent<PointerEvent>) => {
     const eventKey = `${type}:${suffix}` as `${T}:${EventSuffix}`
     const localPoint = e.object.worldToLocal(e.point.clone())
@@ -72,6 +77,8 @@ export function useNodeEvents<T extends NodeType>(node: NodeConfig[T]['node'], t
 
     emitter.emit(eventKey, payload)
   }
+
+  if (walkthroughMode) return {}
 
   return {
     onPointerDown: (e: ThreeEvent<PointerEvent>) => {

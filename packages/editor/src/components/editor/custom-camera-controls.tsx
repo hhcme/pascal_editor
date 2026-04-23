@@ -1,7 +1,7 @@
 'use client'
 
 import { type CameraControlEvent, emitter, sceneRegistry, useScene } from '@pascal-app/core'
-import { useViewer, WalkthroughControls, ZONE_LAYER } from '@pascal-app/viewer'
+import { useViewer, ZONE_LAYER } from '@pascal-app/viewer'
 import { CameraControls, CameraControlsImpl } from '@react-three/drei'
 import { useThree } from '@react-three/fiber'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
@@ -18,6 +18,31 @@ const tempSize = new Vector3()
 const tempTarget = new Vector3()
 const DEFAULT_MAX_POLAR_ANGLE = Math.PI / 2 - 0.1
 const DEBUG_MAX_POLAR_ANGLE = Math.PI - 0.05
+const SIDE_VIEW_POLAR_ANGLE = Math.PI / 2 - 0.12
+
+type CameraViewDirection = 'front' | 'left' | 'right' | 'back' | 'top' | 'bottom'
+
+type CameraViewDirectionPayload = {
+  direction: CameraViewDirection
+}
+
+const viewDirectionEmitter = emitter as unknown as {
+  on: (
+    type: 'camera-controls:view-direction',
+    handler: (event: CameraViewDirectionPayload) => void,
+  ) => void
+  off: (
+    type: 'camera-controls:view-direction',
+    handler: (event: CameraViewDirectionPayload) => void,
+  ) => void
+}
+
+const VIEW_DIRECTION_AZIMUTHS: Partial<Record<CameraViewDirection, number>> = {
+  front: 0,
+  right: Math.PI / 2,
+  back: Math.PI,
+  left: -Math.PI / 2,
+}
 
 export const CustomCameraControls = () => {
   const controls = useRef<CameraControlsImpl>(null!)
@@ -368,6 +393,7 @@ export const CustomCameraControls = () => {
     const handleTopView = () => {
       if (!controls.current) return
 
+      controls.current.maxPolarAngle = maxPolarAngle
       const currentPolarAngle = controls.current.polarAngle
 
       // Toggle: if already near top view (< 0.1 radians ≈ 5.7°), go back to 45°
@@ -401,6 +427,24 @@ export const CustomCameraControls = () => {
       controls.current.rotateTo(target, currentPolar, true)
     }
 
+    const handleViewDirection = ({ direction }: { direction: CameraViewDirection }) => {
+      if (!controls.current) return
+
+      const allowBottomView = direction === 'bottom'
+      const targetMaxPolarAngle = allowBottomView ? DEBUG_MAX_POLAR_ANGLE : maxPolarAngle
+      controls.current.maxPolarAngle = targetMaxPolarAngle
+
+      const targetPolar =
+        direction === 'top'
+          ? 0
+          : allowBottomView
+            ? DEBUG_MAX_POLAR_ANGLE
+            : Math.min(SIDE_VIEW_POLAR_ANGLE, targetMaxPolarAngle)
+      const targetAzimuth = VIEW_DIRECTION_AZIMUTHS[direction] ?? controls.current.azimuthAngle
+
+      controls.current.rotateTo(targetAzimuth, targetPolar, true)
+    }
+
     const handleNodeFocus = ({ nodeId }: CameraControlEvent) => {
       focusNode(nodeId)
     }
@@ -411,6 +455,7 @@ export const CustomCameraControls = () => {
     emitter.on('camera-controls:top-view', handleTopView)
     emitter.on('camera-controls:orbit-cw', handleOrbitCW)
     emitter.on('camera-controls:orbit-ccw', handleOrbitCCW)
+    viewDirectionEmitter.on('camera-controls:view-direction', handleViewDirection)
 
     return () => {
       emitter.off('camera-controls:capture', handleNodeCapture)
@@ -419,8 +464,9 @@ export const CustomCameraControls = () => {
       emitter.off('camera-controls:top-view', handleTopView)
       emitter.off('camera-controls:orbit-cw', handleOrbitCW)
       emitter.off('camera-controls:orbit-ccw', handleOrbitCCW)
+      viewDirectionEmitter.off('camera-controls:view-direction', handleViewDirection)
     }
-  }, [focusNode])
+  }, [focusNode, maxPolarAngle])
 
   const onTransitionStart = useCallback(() => {
     useViewer.getState().setCameraDragging(true)
@@ -431,7 +477,7 @@ export const CustomCameraControls = () => {
   }, [])
 
   if (walkthroughMode) {
-    return <WalkthroughControls />
+    return null
   }
 
   return (
