@@ -32,12 +32,22 @@ const DEFAULT_ACTIVE_SIDEBAR_PANEL = 'site'
 const DEFAULT_FLOORPLAN_PANE_RATIO = 0.5
 const MIN_FLOORPLAN_PANE_RATIO = 0.15
 const MAX_FLOORPLAN_PANE_RATIO = 0.85
+export const DEFAULT_FIRST_PERSON_FLY_CLEARANCE = 5.5
+export const MIN_FIRST_PERSON_FLY_CLEARANCE = 0.5
+export const MAX_FIRST_PERSON_FLY_CLEARANCE = 80
 
-export type ViewMode = '3d' | '2d' | 'split'
+export type ViewMode = '3d' | '2d' | 'split' | 'tri-view'
 export type SplitOrientation = 'horizontal' | 'vertical'
 export type FirstPersonNavigationMode = 'walk' | 'fly'
 export type FirstPersonSpeedPreset = 'inspect' | 'walk' | 'quick' | 'fly'
 export type FirstPersonEyeHeightPreset = 'adult' | 'child'
+export type ViewpointEntrySource = '3d' | 'floorplan'
+export type ViewpointEntryTarget = {
+  x: number
+  z: number
+  source: ViewpointEntrySource
+  yaw?: number
+}
 
 export type Phase = 'site' | 'structure' | 'furnish'
 
@@ -49,6 +59,8 @@ export type StructureTool =
   | 'sketch-line'
   | 'sketch-rectangle'
   | 'sketch-construction-line'
+  | 'sketch-circle'
+  | 'sketch-arc'
   | 'smart-dimension'
   | 'fence'
   | 'room'
@@ -71,13 +83,20 @@ export type SiteTool = 'property-line'
 
 export type SketchStructureTool = Extract<
   StructureTool,
-  'sketch-line' | 'sketch-rectangle' | 'sketch-construction-line' | 'smart-dimension'
+  | 'sketch-line'
+  | 'sketch-rectangle'
+  | 'sketch-construction-line'
+  | 'sketch-circle'
+  | 'sketch-arc'
+  | 'smart-dimension'
 >
 
 export const SKETCH_STRUCTURE_TOOLS: readonly SketchStructureTool[] = [
   'sketch-line',
   'sketch-rectangle',
   'sketch-construction-line',
+  'sketch-circle',
+  'sketch-arc',
   'smart-dimension',
 ]
 
@@ -181,7 +200,7 @@ type EditorState = {
   // Preview mode (viewer-like experience inside the editor)
   isPreviewMode: boolean
   setPreviewMode: (preview: boolean) => void
-  // View mode (3D only, 2D only, or split 2D+3D)
+  // View mode (3D only, 2D only, split 2D+3D, or CAD multi-view)
   viewMode: ViewMode
   setViewMode: (mode: ViewMode) => void
   splitOrientation: SplitOrientation
@@ -198,16 +217,28 @@ type EditorState = {
   setWallEditOperation: (operation: WallEditOperation | null) => void
   gridSnapStep: GridSnapStep
   setGridSnapStep: (step: GridSnapStep) => void
+  isInspectorPinned: boolean
+  setInspectorPinned: (pinned: boolean) => void
   // First-person walkthrough mode (street view)
   isFirstPersonMode: boolean
   _viewModeBeforeFirstPerson: ViewMode | null
-  setFirstPersonMode: (enabled: boolean) => void
+  setFirstPersonMode: (enabled: boolean, restoreViewMode?: ViewMode | null) => void
   firstPersonNavigationMode: FirstPersonNavigationMode
   setFirstPersonNavigationMode: (mode: FirstPersonNavigationMode) => void
   firstPersonSpeedPreset: FirstPersonSpeedPreset
   setFirstPersonSpeedPreset: (preset: FirstPersonSpeedPreset) => void
   firstPersonEyeHeightPreset: FirstPersonEyeHeightPreset
   setFirstPersonEyeHeightPreset: (preset: FirstPersonEyeHeightPreset) => void
+  firstPersonFlyClearance: number
+  setFirstPersonFlyClearance: (height: number) => void
+  // Viewpoint camera placement mode: choose a standing point before entering first person.
+  isViewpointPlacementMode: boolean
+  _viewModeBeforeViewpointPlacement: ViewMode | null
+  viewpointEntryTarget: ViewpointEntryTarget | null
+  setViewpointPlacementMode: (enabled: boolean) => void
+  requestViewpointEntry: (target: ViewpointEntryTarget) => void
+  completeViewpointPlacement: () => void
+  clearViewpointEntry: () => void
   // Development-only camera debug flag for inspecting underside geometry
   allowUndergroundCamera: boolean
   setAllowUndergroundCamera: (enabled: boolean) => void
@@ -229,6 +260,8 @@ type PersistedEditorLayoutState = Pick<
   | 'splitOrientation'
   | 'floorplanSelectionTool'
   | 'gridSnapStep'
+  | 'isInspectorPinned'
+  | 'firstPersonFlyClearance'
 >
 type PersistedEditorState = PersistedEditorUiState & PersistedEditorLayoutState
 
@@ -248,6 +281,8 @@ export const DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE: PersistedEditorLayoutState =
   splitOrientation: 'horizontal',
   floorplanSelectionTool: 'click',
   gridSnapStep: 0.5,
+  isInspectorPinned: false,
+  firstPersonFlyClearance: DEFAULT_FIRST_PERSON_FLY_CLEARANCE,
 }
 
 const GRID_SNAP_STEPS: GridSnapStep[] = [0.5, 0.25, 0.1, 0.05]
@@ -268,6 +303,14 @@ function normalizeFloorplanPaneRatio(value: unknown): number {
   return Math.min(MAX_FLOORPLAN_PANE_RATIO, Math.max(MIN_FLOORPLAN_PANE_RATIO, value))
 }
 
+export function normalizeFirstPersonFlyClearance(value: unknown): number {
+  if (!(typeof value === 'number' && Number.isFinite(value))) {
+    return DEFAULT_FIRST_PERSON_FLY_CLEARANCE
+  }
+
+  return Math.min(MAX_FIRST_PERSON_FLY_CLEARANCE, Math.max(MIN_FIRST_PERSON_FLY_CLEARANCE, value))
+}
+
 export function normalizePersistedEditorUiState(
   state: Partial<PersistedEditorUiState> | null | undefined,
 ): PersistedEditorUiState {
@@ -276,12 +319,17 @@ export function normalizePersistedEditorUiState(
 
   // Migrate old isFloorplanOpen to viewMode
   let viewMode: ViewMode = '3d'
-  if (state?.viewMode === '2d' || state?.viewMode === '3d' || state?.viewMode === 'split') {
+  if (
+    state?.viewMode === '2d' ||
+    state?.viewMode === '3d' ||
+    state?.viewMode === 'split' ||
+    state?.viewMode === 'tri-view'
+  ) {
     viewMode = state.viewMode
   } else if (state?.isFloorplanOpen) {
     viewMode = 'split'
   }
-  const isFloorplanOpen = viewMode !== '3d'
+  const isFloorplanOpen = viewMode === '2d' || viewMode === 'split'
 
   if (phase === 'site') {
     return {
@@ -357,6 +405,8 @@ function normalizePersistedEditorLayoutState(
     gridSnapStep: GRID_SNAP_STEPS.includes(state?.gridSnapStep as GridSnapStep)
       ? (state?.gridSnapStep as GridSnapStep)
       : DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE.gridSnapStep,
+    isInspectorPinned: state?.isInspectorPinned === true,
+    firstPersonFlyClearance: normalizeFirstPersonFlyClearance(state?.firstPersonFlyClearance),
   }
 }
 
@@ -572,7 +622,14 @@ const useEditor = create<EditorState>()(
         }
       },
       viewMode: DEFAULT_PERSISTED_EDITOR_UI_STATE.viewMode,
-      setViewMode: (mode) => set({ viewMode: mode, isFloorplanOpen: mode !== '3d' }),
+      setViewMode: (mode) =>
+        set({
+          viewMode: mode,
+          isFloorplanOpen: mode === '2d' || mode === 'split',
+          isViewpointPlacementMode: false,
+          _viewModeBeforeViewpointPlacement: null,
+          viewpointEntryTarget: null,
+        }),
       splitOrientation: DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE.splitOrientation,
       setSplitOrientation: (orientation) => set({ splitOrientation: orientation }),
       isFloorplanOpen: DEFAULT_PERSISTED_EDITOR_UI_STATE.isFloorplanOpen,
@@ -590,6 +647,8 @@ const useEditor = create<EditorState>()(
       setWallEditOperation: (operation) => set({ wallEditOperation: operation }),
       gridSnapStep: DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE.gridSnapStep,
       setGridSnapStep: (step) => set({ gridSnapStep: step }),
+      isInspectorPinned: DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE.isInspectorPinned,
+      setInspectorPinned: (pinned) => set({ isInspectorPinned: pinned }),
       allowUndergroundCamera: false,
       setAllowUndergroundCamera: (enabled) => set({ allowUndergroundCamera: enabled }),
       isFirstPersonMode: false,
@@ -600,9 +659,58 @@ const useEditor = create<EditorState>()(
       setFirstPersonSpeedPreset: (preset) => set({ firstPersonSpeedPreset: preset }),
       firstPersonEyeHeightPreset: 'adult',
       setFirstPersonEyeHeightPreset: (preset) => set({ firstPersonEyeHeightPreset: preset }),
-      setFirstPersonMode: (enabled) => {
+      firstPersonFlyClearance: DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE.firstPersonFlyClearance,
+      setFirstPersonFlyClearance: (height) =>
+        set({ firstPersonFlyClearance: normalizeFirstPersonFlyClearance(height) }),
+      isViewpointPlacementMode: false,
+      _viewModeBeforeViewpointPlacement: null as ViewMode | null,
+      viewpointEntryTarget: null as ViewpointEntryTarget | null,
+      setViewpointPlacementMode: (enabled) => {
         if (enabled) {
           const currentViewMode = get().viewMode
+
+          selectDefaultBuildingAndLevel()
+          useViewer.getState().setCameraMode('perspective')
+          set({
+            isViewpointPlacementMode: true,
+            _viewModeBeforeViewpointPlacement: currentViewMode,
+            viewpointEntryTarget: null,
+            viewMode: '3d',
+            isFloorplanOpen: false,
+            mode: 'select',
+            tool: null,
+            catalogCategory: null,
+          })
+          return
+        }
+
+        const previousViewMode = get()._viewModeBeforeViewpointPlacement
+        set({
+          isViewpointPlacementMode: false,
+          _viewModeBeforeViewpointPlacement: null,
+          viewpointEntryTarget: null,
+          ...(previousViewMode
+            ? {
+                viewMode: previousViewMode,
+                isFloorplanOpen: previousViewMode === '2d' || previousViewMode === 'split',
+              }
+            : {}),
+        })
+      },
+      requestViewpointEntry: (target) => set({ viewpointEntryTarget: target }),
+      completeViewpointPlacement: () => {
+        const previousViewMode = get()._viewModeBeforeViewpointPlacement
+        get().setFirstPersonMode(true, previousViewMode)
+        set({
+          isViewpointPlacementMode: false,
+          _viewModeBeforeViewpointPlacement: null,
+          viewpointEntryTarget: null,
+        })
+      },
+      clearViewpointEntry: () => set({ viewpointEntryTarget: null }),
+      setFirstPersonMode: (enabled, restoreViewMode) => {
+        if (enabled) {
+          const currentViewMode = restoreViewMode ?? get().viewMode
           const viewer = useViewer.getState()
           viewer.setCameraMode('perspective')
           viewer.setWallMode('up')
@@ -612,6 +720,9 @@ const useEditor = create<EditorState>()(
           viewer.outliner.hoveredObjects.length = 0
           set({
             isFirstPersonMode: true,
+            isViewpointPlacementMode: false,
+            _viewModeBeforeViewpointPlacement: null,
+            viewpointEntryTarget: null,
             _viewModeBeforeFirstPerson: currentViewMode,
             viewMode: '3d',
             isFloorplanOpen: false,
@@ -626,7 +737,12 @@ const useEditor = create<EditorState>()(
           set({
             isFirstPersonMode: false,
             _viewModeBeforeFirstPerson: null,
-            ...(prevMode ? { viewMode: prevMode, isFloorplanOpen: prevMode !== '3d' } : {}),
+            isViewpointPlacementMode: false,
+            _viewModeBeforeViewpointPlacement: null,
+            viewpointEntryTarget: null,
+            ...(prevMode
+              ? { viewMode: prevMode, isFloorplanOpen: prevMode === '2d' || prevMode === 'split' }
+              : {}),
           })
         }
       },
@@ -668,6 +784,8 @@ const useEditor = create<EditorState>()(
         splitOrientation: state.splitOrientation,
         floorplanSelectionTool: state.floorplanSelectionTool,
         gridSnapStep: state.gridSnapStep,
+        isInspectorPinned: state.isInspectorPinned,
+        firstPersonFlyClearance: state.firstPersonFlyClearance,
       }),
     },
   ),

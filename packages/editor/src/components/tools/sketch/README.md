@@ -2,7 +2,8 @@
 
 The 2D sketch feature is intentionally split between geometry utilities and floorplan UI modules.
 
-- `sketch-geometry.ts` owns pure geometry: rectangle segment creation, profile detection, driven length/orientation edits, and unsupported profile checks.
+- `@pascal-app/core` owns true circular sketch geometry sampling and measurement for circles/arcs.
+- `sketch-geometry.ts` owns pure line geometry: rectangle segment creation, profile detection, driven length/orientation edits, and unsupported profile checks.
 - `components/editor/floorplan/sketch-state.ts` owns transient drawing state for line, rectangle, and smart dimension input.
 - `components/editor/floorplan/sketch-actions.tsx` owns scene mutations: sketch creation, dimension actions, relation toggles, deletion, and profile conversion.
 - `components/editor/floorplan/sketch-edit.ts` owns endpoint and whole-line drag state.
@@ -11,6 +12,7 @@ The 2D sketch feature is intentionally split between geometry utilities and floo
 Supported V0 behavior:
 
 - Sketch line and construction line drawing.
+- Persisted true circle/arc sketch node model and pure circular geometry helpers.
 - Rectangle sketch creation with horizontal/vertical relations.
 - Endpoint snapping to existing sketch endpoints while drawing sketch lines and rectangles.
 - Coincident endpoint links are persisted when drawing snapped or chained sketch geometry.

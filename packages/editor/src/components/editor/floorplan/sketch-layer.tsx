@@ -2,8 +2,10 @@
 
 import {
   getSketchLineMidpointHandlePoint,
+  sampleSketchCircleCenterline,
   sampleSketchLineCenterline,
   type Point2D,
+  type SketchCircleNode,
   type SketchLineNode,
 } from '@pascal-app/core'
 import {
@@ -594,6 +596,125 @@ export const FloorplanSketchLayer = memo(function FloorplanSketchLayer({
                   />
                 </g>
               ) : null,
+            )}
+          </g>
+        )
+      })}
+    </>
+  )
+})
+
+export const FloorplanSketchCircleLayer = memo(function FloorplanSketchCircleLayer({
+  canSelectSketchCircles,
+  highlightedIdSet,
+  hoveredSketchCircleId,
+  isDeleteMode,
+  onSketchCircleClick,
+  onSketchCircleHoverChange,
+  palette,
+  selectedIdSet,
+  sketchCircles,
+}: {
+  canSelectSketchCircles: boolean
+  highlightedIdSet: ReadonlySet<string>
+  hoveredSketchCircleId: SketchCircleNode['id'] | null
+  isDeleteMode: boolean
+  onSketchCircleClick: (circle: SketchCircleNode, event: ReactMouseEvent<SVGElement>) => void
+  onSketchCircleHoverChange: (circleId: SketchCircleNode['id'] | null) => void
+  palette: FloorplanSketchPalette
+  selectedIdSet: ReadonlySet<string>
+  sketchCircles: SketchCircleNode[]
+}) {
+  if (sketchCircles.length === 0) {
+    return null
+  }
+
+  return (
+    <>
+      {sketchCircles.map((circle) => {
+        const isSelected = selectedIdSet.has(circle.id)
+        const isHighlighted = highlightedIdSet.has(circle.id)
+        const isHovered = canSelectSketchCircles && hoveredSketchCircleId === circle.id
+        const isDeleteHovered = isDeleteMode && isHovered
+        const path = formatSvgPath(sampleSketchCircleCenterline(circle))
+        const stroke = isDeleteHovered
+          ? palette.deleteStroke
+          : isSelected || isHighlighted
+            ? palette.selectedStroke
+            : circle.construction
+              ? palette.measurementStroke
+              : palette.draftStroke
+        const baseOpacity = circle.construction ? 0.58 : 0.86
+        const strokeWidth = circle.construction
+          ? isSelected || isHighlighted
+            ? FLOORPLAN_SKETCH_CONSTRUCTION_LINE_SELECTED_STROKE_WIDTH
+            : FLOORPLAN_SKETCH_CONSTRUCTION_LINE_STROKE_WIDTH
+          : isSelected || isHighlighted
+            ? FLOORPLAN_SKETCH_LINE_SELECTED_STROKE_WIDTH
+            : FLOORPLAN_SKETCH_LINE_STROKE_WIDTH
+        const center = toSvgPlanPoint(circle.center)
+
+        return (
+          <g
+            key={circle.id}
+            onPointerEnter={
+              canSelectSketchCircles ? () => onSketchCircleHoverChange(circle.id) : undefined
+            }
+            onPointerLeave={
+              canSelectSketchCircles ? () => onSketchCircleHoverChange(null) : undefined
+            }
+          >
+            <path
+              d={path}
+              fill="none"
+              pointerEvents="none"
+              stroke={stroke}
+              strokeLinecap="round"
+              strokeOpacity={isHovered || isSelected || isHighlighted ? 0.2 : 0}
+              strokeWidth={FLOORPLAN_WALL_HOVER_GLOW_STROKE_WIDTH}
+              style={{ transition: FLOORPLAN_HOVER_TRANSITION }}
+              vectorEffect="non-scaling-stroke"
+            />
+            <path
+              d={path}
+              fill="none"
+              pointerEvents="none"
+              stroke={stroke}
+              strokeDasharray={circle.construction ? '0.16 0.1' : undefined}
+              strokeLinecap="round"
+              strokeOpacity={isDeleteHovered ? 0.92 : baseOpacity}
+              strokeWidth={strokeWidth}
+              vectorEffect="non-scaling-stroke"
+            />
+            {(isSelected || isHighlighted || isHovered) && (
+              <circle
+                cx={center.x}
+                cy={center.y}
+                fill={palette.surface}
+                fillOpacity={0.94}
+                pointerEvents="none"
+                r={FLOORPLAN_SKETCH_COINCIDENT_HANDLE_RADIUS * 0.78}
+                stroke={palette.selectedStroke}
+                strokeOpacity={0.72}
+                strokeWidth={FLOORPLAN_SKETCH_COINCIDENT_HANDLE_STROKE_WIDTH}
+                vectorEffect="non-scaling-stroke"
+              />
+            )}
+            {canSelectSketchCircles && (
+              <path
+                d={path}
+                fill="none"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onSketchCircleClick(circle, event)
+                }}
+                pointerEvents="stroke"
+                stroke="transparent"
+                strokeLinecap="round"
+                strokeWidth={FLOORPLAN_SKETCH_LINE_HIT_STROKE_WIDTH}
+                style={{ cursor: EDITOR_CURSOR }}
+                vectorEffect="non-scaling-stroke"
+              />
             )}
           </g>
         )

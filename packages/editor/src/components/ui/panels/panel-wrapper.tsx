@@ -1,23 +1,34 @@
 'use client'
 
 import { createContext, useContext, type ReactNode } from 'react'
-import { ChevronLeft, RotateCcw, X } from 'lucide-react'
+import { ChevronLeft, Pin, PinOff, RotateCcw, X } from 'lucide-react'
 import Image from 'next/image'
 import { cn } from '../../../lib/utils'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../primitives/tooltip'
 
 type PanelSurfaceMode = 'floating' | 'docked'
 
-const PanelSurfaceModeContext = createContext<PanelSurfaceMode>('floating')
+type PanelSurfaceContextValue = {
+  mode: PanelSurfaceMode
+  isPinned?: boolean
+  onPinnedChange?: (pinned: boolean) => void
+}
+
+const PanelSurfaceModeContext = createContext<PanelSurfaceContextValue>({ mode: 'floating' })
 
 export function PanelSurfaceProvider({
   children,
+  isPinned,
   mode,
+  onPinnedChange,
 }: {
   children: ReactNode
+  isPinned?: boolean
   mode: PanelSurfaceMode
+  onPinnedChange?: (pinned: boolean) => void
 }) {
   return (
-    <PanelSurfaceModeContext.Provider value={mode}>
+    <PanelSurfaceModeContext.Provider value={{ mode, isPinned, onPinnedChange }}>
       {children}
     </PanelSurfaceModeContext.Provider>
   )
@@ -44,8 +55,11 @@ export function PanelWrapper({
   className,
   width = 340,
 }: PanelWrapperProps) {
-  const panelSurfaceMode = useContext(PanelSurfaceModeContext)
+  const { mode: panelSurfaceMode, isPinned = false, onPinnedChange } =
+    useContext(PanelSurfaceModeContext)
   const isDocked = panelSurfaceMode === 'docked'
+  const canPinPanel = isDocked && onPinnedChange
+  const pinLabel = isPinned ? 'Unpin inspector' : 'Pin inspector'
 
   return (
     <div
@@ -76,6 +90,25 @@ export function PanelWrapper({
         </div>
 
         <div className="flex items-center gap-1">
+          {canPinPanel && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  aria-label={pinLabel}
+                  aria-pressed={isPinned}
+                  className={cn(
+                    'flex h-7 w-7 items-center justify-center rounded-md bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground',
+                    isPinned && 'bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary',
+                  )}
+                  onClick={() => onPinnedChange?.(!isPinned)}
+                  type="button"
+                >
+                  {isPinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{pinLabel}</TooltipContent>
+            </Tooltip>
+          )}
           {onReset && (
             <button
               className="flex h-7 w-7 items-center justify-center rounded-md bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"

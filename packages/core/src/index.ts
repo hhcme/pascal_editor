@@ -102,6 +102,16 @@ export {
   type WallMiterData,
 } from './systems/wall/wall-mitering'
 export {
+  getSketchCircleArcSweep,
+  getSketchCircleBounds,
+  getSketchCirclePathLength,
+  getSketchCirclePointAt,
+  isSketchCircleArc,
+  isSketchCircleRadiusValid,
+  sampleSketchCircleCenterline,
+  type SketchCircleBounds,
+} from './systems/sketch/sketch-circle-curve'
+export {
   getClampedSketchLineCurveOffset,
   getMaxSketchLineCurveOffset,
   getSketchLineChordFrame,

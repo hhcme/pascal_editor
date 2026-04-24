@@ -35,7 +35,7 @@ import { EditorCommands } from '../ui/command-palette/editor-commands'
 import { FloatingLevelSelector } from '../ui/floating-level-selector'
 import { HelperManager } from '../ui/helpers/helper-manager'
 import { PanelManager, useInspectorPanelType } from '../ui/panels/panel-manager'
-import { PanelSurfaceProvider } from '../ui/panels/panel-wrapper'
+import { PanelSurfaceProvider, PanelWrapper } from '../ui/panels/panel-wrapper'
 import { ErrorBoundary } from '../ui/primitives/error-boundary'
 import { useSidebarStore } from '../ui/primitives/sidebar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/primitives/tooltip'
@@ -45,6 +45,7 @@ import type { ExtraPanel } from '../ui/sidebar/icon-rail'
 import { SettingsPanel, type SettingsPanelProps } from '../ui/sidebar/panels/settings-panel'
 import { SitePanel, type SitePanelProps } from '../ui/sidebar/panels/site-panel'
 import type { SidebarTab } from '../ui/sidebar/tab-bar'
+import { CadMultiViewRenderer } from './cad-multi-view-renderer'
 import { CustomCameraControls } from './custom-camera-controls'
 import { EditorLayoutV2 } from './editor-layout-v2'
 import { ExportManager } from './export-manager'
@@ -58,6 +59,10 @@ import { PresetThumbnailGenerator } from './preset-thumbnail-generator'
 import { SelectionManager } from './selection-manager'
 import { SiteEdgeLabels } from './site-edge-labels'
 import { ThumbnailGenerator } from './thumbnail-generator'
+import {
+  ViewpointPlacementController,
+  ViewpointPlacementOverlay,
+} from './viewpoint-camera-placement'
 import { WallMeasurementLabel } from './wall-measurement-label'
 
 const CAMERA_CONTROLS_HINT_DISMISSED_STORAGE_KEY = 'editor-camera-controls-hint-dismissed:v1'
@@ -163,6 +168,16 @@ function EditorSceneCrashFallback() {
         </div>
       </div>
     </div>
+  )
+}
+
+function InspectorEmptyPanel() {
+  return (
+    <PanelWrapper title="Properties">
+      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-muted-foreground text-sm">
+        No selection
+      </div>
+    </PanelWrapper>
   )
 }
 
@@ -311,9 +326,14 @@ type CameraControlHint = {
 const EDITOR_CAMERA_CONTROL_HINTS: CameraControlHint[] = [
   {
     action: 'Pan',
-    keys: [{ value: 'Space' }, { value: 'Left click' }],
+    keys: [{ value: 'Middle click' }],
+    alternativeKeys: [{ value: 'Space' }, { value: 'Left click' }],
   },
-  { action: 'Rotate', keys: [{ value: 'Right click' }] },
+  {
+    action: 'Rotate',
+    keys: [{ value: 'Left click' }],
+    alternativeKeys: [{ value: 'Right click' }],
+  },
   { action: 'Zoom', keys: [{ value: 'Scroll' }] },
 ]
 
@@ -513,11 +533,13 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
   isVersionPreviewMode,
   isLoading,
   isFirstPersonMode,
+  isCadMultiView,
   onThumbnailCapture,
 }: {
   isVersionPreviewMode: boolean
   isLoading: boolean
   isFirstPersonMode: boolean
+  isCadMultiView: boolean
   onThumbnailCapture?: (blob: Blob) => void
 }) {
   return (
@@ -536,8 +558,10 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
       {!isLoading && !isFirstPersonMode && (
         <Grid cellColor="#aaa" fadeDistance={500} sectionColor="#ccc" />
       )}
+      {isCadMultiView && <CadMultiViewRenderer />}
       {!(isLoading || isVersionPreviewMode) && !isFirstPersonMode && <ToolManager />}
       {isFirstPersonMode && <FirstPersonControls />}
+      {!isVersionPreviewMode && !isFirstPersonMode && <ViewpointPlacementController />}
       {!isFirstPersonMode && <CustomCameraControls />}
       <ThumbnailGenerator onThumbnailCapture={onThumbnailCapture} />
       <PresetThumbnailGenerator />
@@ -584,6 +608,31 @@ function DeleteCursorLayer({
 
   if (!(active && position)) return null
   return <DeleteCursorBadge position={position} />
+}
+
+function CadMultiViewOverlay() {
+  const labelClass =
+    'pointer-events-none absolute left-3 top-3 rounded-md border border-border/50 bg-background/90 px-2.5 py-1 font-semibold text-[11px] text-foreground shadow-sm'
+
+  return (
+    <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-10">
+      <div className="absolute inset-y-0 left-1/2 w-px bg-border/60" />
+      <div className="absolute top-1/2 right-0 left-0 h-px bg-border/60" />
+
+      <div className="pointer-events-auto absolute top-0 left-0 h-1/2 w-1/2 cursor-default">
+        <div className={labelClass}>俯视图</div>
+      </div>
+      <div className="pointer-events-auto absolute top-0 right-0 h-1/2 w-1/2 cursor-default">
+        <div className={labelClass}>正视图</div>
+      </div>
+      <div className="pointer-events-auto absolute bottom-0 left-0 h-1/2 w-1/2 cursor-default">
+        <div className={labelClass}>右视图</div>
+      </div>
+      <div className="absolute right-0 bottom-0 h-1/2 w-1/2">
+        <div className={labelClass}>3D</div>
+      </div>
+    </div>
+  )
 }
 
 // ── Viewer canvas: memoized, subscribes to viewMode/floorplanPaneRatio internally ──
@@ -654,8 +703,9 @@ const ViewerCanvas = memo(function ViewerCanvas({
     writeCameraControlsHintDismissed(true)
   }, [])
 
+  const isCadMultiView = viewMode === 'tri-view'
   const show2d = viewMode === '2d' || viewMode === 'split'
-  const show3d = viewMode === '3d' || viewMode === 'split'
+  const show3d = viewMode === '3d' || viewMode === 'split' || isCadMultiView
 
   return (
     <ErrorBoundary fallback={<EditorSceneCrashFallback />}>
@@ -698,14 +748,19 @@ const ViewerCanvas = memo(function ViewerCanvas({
             />
           ) : null}
           <SelectionPersistenceManager enabled={hasLoadedInitialScene && !showLoader} />
-          <Viewer selectionManager="custom">
+          <Viewer postProcessing={!isCadMultiView} selectionManager="custom">
             <ViewerSceneContent
+              isCadMultiView={isCadMultiView}
               isFirstPersonMode={isFirstPersonMode}
               isLoading={isLoading}
               isVersionPreviewMode={isVersionPreviewMode}
               onThumbnailCapture={onThumbnailCapture}
             />
           </Viewer>
+          {!isLoading && !isVersionPreviewMode && !isFirstPersonMode ? (
+            <ViewpointPlacementOverlay />
+          ) : null}
+          {isCadMultiView ? <CadMultiViewOverlay /> : null}
         </div>
       </div>
       {!(isLoading || isVersionPreviewMode) && <ZoneLabelEditorSystem />}
@@ -754,6 +809,8 @@ export default function Editor({
   const isPreviewMode = useEditor((s) => s.isPreviewMode)
   const isFirstPersonMode = useEditor((s) => s.isFirstPersonMode)
   const inspectorPanelType = useInspectorPanelType()
+  const isInspectorPinned = useEditor((s) => s.isInspectorPinned)
+  const setInspectorPinned = useEditor((s) => s.setInspectorPinned)
 
   const sidebarWidth = useSidebarStore((s) => s.width)
   const isSidebarCollapsed = useSidebarStore((s) => s.isCollapsed)
@@ -885,6 +942,8 @@ export default function Editor({
     }
 
     const tabBarTabs = sidebarTabs?.map(({ id, label }) => ({ id, label })) ?? []
+    const shouldShowInspector =
+      !isFirstPersonMode && !isVersionPreviewMode && (inspectorPanelType || isInspectorPinned)
 
     return (
       <PresetsProvider adapter={presetsAdapter}>
@@ -903,9 +962,13 @@ export default function Editor({
           <>
             <EditorLayoutV2
               inspector={
-                !isFirstPersonMode && !isVersionPreviewMode && inspectorPanelType ? (
-                  <PanelSurfaceProvider mode="docked">
-                    <PanelManager />
+                shouldShowInspector ? (
+                  <PanelSurfaceProvider
+                    isPinned={isInspectorPinned}
+                    mode="docked"
+                    onPinnedChange={setInspectorPinned}
+                  >
+                    {inspectorPanelType ? <PanelManager /> : <InspectorEmptyPanel />}
                   </PanelSurfaceProvider>
                 ) : null
               }

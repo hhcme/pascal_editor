@@ -1,6 +1,5 @@
 import { Agentation } from 'agentation'
 import { GeistPixelSquare } from 'geist/font/pixel'
-import { Barlow } from 'next/font/google'
 import localFont from 'next/font/local'
 import Script from 'next/script'
 import './globals.css'
@@ -14,13 +13,6 @@ const geistMono = localFont({
   variable: '--font-geist-mono',
 })
 
-const barlow = Barlow({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-barlow',
-  display: 'swap',
-})
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -28,7 +20,7 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      className={`${geistSans.variable} ${geistMono.variable} ${GeistPixelSquare.variable} ${barlow.variable}`}
+      className={`${geistSans.variable} ${geistMono.variable} ${GeistPixelSquare.variable}`}
       lang="en"
       suppressHydrationWarning
     >

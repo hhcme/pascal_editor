@@ -5,6 +5,8 @@ import {
   type AnyNode,
   type AnyNodeId,
   type Point2D,
+  type SketchCircleNode,
+  SketchCircleNode as SketchCircleNodeSchema,
   type SketchLineEndpointReference,
   type SketchLineNode,
   SketchLineNode as SketchLineNodeSchema,
@@ -41,6 +43,8 @@ import { createWallOnCurrentLevel, type WallPlanPoint } from '../../tools/wall/w
 import type { WallSketchSnapTarget } from '../../tools/wall/wall-sketch'
 import type { NodeActionMenuExtraAction } from '../node-action-menu'
 import type {
+  SketchArcDraft,
+  SketchCircleDraft,
   SketchDimensionInputState,
   SketchLineDraft,
   SketchRectangleDraft,
@@ -79,9 +83,13 @@ type UseFloorplanSketchActionsArgs = {
   unit: UnitSystem
   sketchLineDraft: SketchLineDraft | null
   sketchRectangleDraft: SketchRectangleDraft | null
+  sketchCircleDraft: SketchCircleDraft | null
+  sketchArcDraft: SketchArcDraft | null
   sketchDimensionInput: SketchDimensionInputState | null
   setSketchLineDraft: Dispatch<SetStateAction<SketchLineDraft | null>>
   setSketchRectangleDraft: Dispatch<SetStateAction<SketchRectangleDraft | null>>
+  setSketchCircleDraft: Dispatch<SetStateAction<SketchCircleDraft | null>>
+  setSketchArcDraft: Dispatch<SetStateAction<SketchArcDraft | null>>
   setSketchDimensionInput: Dispatch<SetStateAction<SketchDimensionInputState | null>>
   sketchLineById: ReadonlyMap<SketchLineNode['id'], SketchLineNode>
   selectedSketchLineEntry: FloorplanSketchLineEntry | null
@@ -135,6 +143,10 @@ function crossPoint(a: WallPlanPoint, b: WallPlanPoint): number {
 
 function getPointDistance(a: WallPlanPoint, b: WallPlanPoint): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1])
+}
+
+function getAngleFromCenter(center: WallPlanPoint, point: WallPlanPoint): number {
+  return Math.atan2(point[1] - center[1], point[0] - center[0])
 }
 
 function getUnitVector(start: WallPlanPoint, end: WallPlanPoint): WallPlanPoint | null {
@@ -416,9 +428,13 @@ export function useFloorplanSketchActions({
   unit,
   sketchLineDraft,
   sketchRectangleDraft,
+  sketchCircleDraft,
+  sketchArcDraft,
   sketchDimensionInput,
   setSketchLineDraft,
   setSketchRectangleDraft,
+  setSketchCircleDraft,
+  setSketchArcDraft,
   setSketchDimensionInput,
   sketchLineById,
   selectedSketchLineEntry,
@@ -535,6 +551,46 @@ export function useFloorplanSketchActions({
       sfxEmitter.emit('sfx:structure-build')
       setSelection({ selectedIds: createdLines.map((line) => line.id) })
       return createdLines.map((line) => line.id)
+    },
+    [levelId, setSelection],
+  )
+
+  const createSketchCircleOnCurrentLevel = useCallback(
+    ({
+      center,
+      endAngle = Math.PI * 2,
+      kind,
+      radius,
+      startAngle = 0,
+    }: {
+      center: WallPlanPoint
+      endAngle?: number
+      kind: SketchCircleNode['kind']
+      radius: number
+      startAngle?: number
+    }) => {
+      if (!levelId || !(Number.isFinite(radius) && radius > SKETCH_EPSILON)) {
+        return null
+      }
+
+      const { createNode, nodes } = useScene.getState()
+      const sketchCircleCount = Object.values(nodes).filter(
+        (node) => node.type === 'sketch-circle',
+      ).length
+      const sketchCircle = SketchCircleNodeSchema.parse({
+        name: `${kind === 'arc' ? '草图圆弧' : '草图圆'} ${sketchCircleCount + 1}`,
+        kind,
+        center,
+        radius,
+        startAngle,
+        endAngle,
+        dimensions: { radius },
+      })
+
+      createNode(sketchCircle, levelId as AnyNodeId)
+      sfxEmitter.emit('sfx:structure-build')
+      setSelection({ selectedIds: [sketchCircle.id] })
+      return sketchCircle.id
     },
     [levelId, setSelection],
   )
@@ -790,6 +846,88 @@ export function useFloorplanSketchActions({
       setWallSketchSnapResult,
       showWallEditFeedback,
       sketchRectangleDraft,
+    ],
+  )
+
+  const handleSketchCirclePlacementPoint = useCallback(
+    (point: WallPlanPoint) => {
+      if (!sketchCircleDraft) {
+        setSketchCircleDraft({ center: point, edge: point })
+        setCursorPoint(point)
+        return
+      }
+
+      const radius = getPointDistance(sketchCircleDraft.center, point)
+      const createdId = createSketchCircleOnCurrentLevel({
+        center: sketchCircleDraft.center,
+        kind: 'circle',
+        radius,
+      })
+      if (!createdId) {
+        return
+      }
+
+      setSketchCircleDraft(null)
+      setCursorPoint(point)
+      setWallSketchSnapResult(null)
+      showWallEditFeedback('已生成草图圆。')
+    },
+    [
+      createSketchCircleOnCurrentLevel,
+      setCursorPoint,
+      setSketchCircleDraft,
+      setWallSketchSnapResult,
+      showWallEditFeedback,
+      sketchCircleDraft,
+    ],
+  )
+
+  const handleSketchArcPlacementPoint = useCallback(
+    (point: WallPlanPoint) => {
+      if (!sketchArcDraft) {
+        setSketchArcDraft({ center: point, end: point })
+        setCursorPoint(point)
+        return
+      }
+
+      if (!sketchArcDraft.start) {
+        if (getPointDistance(sketchArcDraft.center, point) <= SKETCH_EPSILON) {
+          return
+        }
+
+        setSketchArcDraft({ ...sketchArcDraft, start: point, end: point })
+        setCursorPoint(point)
+        return
+      }
+
+      const radius = getPointDistance(sketchArcDraft.center, sketchArcDraft.start)
+      if (getPointDistance(sketchArcDraft.start, point) <= SKETCH_EPSILON) {
+        return
+      }
+
+      const createdId = createSketchCircleOnCurrentLevel({
+        center: sketchArcDraft.center,
+        kind: 'arc',
+        radius,
+        startAngle: getAngleFromCenter(sketchArcDraft.center, sketchArcDraft.start),
+        endAngle: getAngleFromCenter(sketchArcDraft.center, point),
+      })
+      if (!createdId) {
+        return
+      }
+
+      setSketchArcDraft(null)
+      setCursorPoint(point)
+      setWallSketchSnapResult(null)
+      showWallEditFeedback('已生成草图圆弧。')
+    },
+    [
+      createSketchCircleOnCurrentLevel,
+      setCursorPoint,
+      setSketchArcDraft,
+      setWallSketchSnapResult,
+      showWallEditFeedback,
+      sketchArcDraft,
     ],
   )
 
@@ -1553,9 +1691,12 @@ export function useFloorplanSketchActions({
   return {
     createSketchLineOnCurrentLevel,
     createSketchLinesOnCurrentLevel,
+    createSketchCircleOnCurrentLevel,
     runSketchLineEditResult,
     handleSketchLinePlacementPoint,
     handleSketchRectanglePlacementPoint,
+    handleSketchCirclePlacementPoint,
+    handleSketchArcPlacementPoint,
     handleSketchLineSplitAtPoint,
     handleSketchLineOperationClick,
     sketchLineEditOperation,

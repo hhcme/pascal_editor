@@ -106,9 +106,9 @@ const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
         note: 'Drag with the middle mouse button, or hold Space while dragging with the left mouse button.',
       },
       {
-        keys: ['Right click'],
+        keys: ['Left click', 'Right click'],
         action: 'Orbit camera',
-        note: 'Drag with the right mouse button.',
+        note: 'Drag with the left or right mouse button. Object selection and tool interactions take priority.',
       },
     ],
   },

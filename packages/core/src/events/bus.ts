@@ -11,6 +11,7 @@ import type {
   RoofNode,
   RoofSegmentNode,
   SiteNode,
+  SketchCircleNode,
   SketchLineNode,
   SlabNode,
   StairNode,
@@ -57,6 +58,7 @@ export type SlabEvent = NodeEvent<SlabNode>
 export type CeilingEvent = NodeEvent<CeilingNode>
 export type RoofEvent = NodeEvent<RoofNode>
 export type RoofSegmentEvent = NodeEvent<RoofSegmentNode>
+export type SketchCircleEvent = NodeEvent<SketchCircleNode>
 export type SketchLineEvent = NodeEvent<SketchLineNode>
 export type StairEvent = NodeEvent<StairNode>
 export type StairSegmentEvent = NodeEvent<StairSegmentNode>
@@ -152,6 +154,7 @@ type EditorEvents = GridEvents &
   NodeEvents<'ceiling', CeilingEvent> &
   NodeEvents<'roof', RoofEvent> &
   NodeEvents<'roof-segment', RoofSegmentEvent> &
+  NodeEvents<'sketch-circle', SketchCircleEvent> &
   NodeEvents<'sketch-line', SketchLineEvent> &
   NodeEvents<'stair', StairEvent> &
   NodeEvents<'stair-segment', StairSegmentEvent> &

@@ -41,64 +41,21 @@ import {
   isZoneLabelHidden,
   withZoneLabelHidden,
 } from './../../../../../lib/zone-label-visibility'
+import {
+  degreesToRadians,
+  getCircularDegreeDistance,
+  getOrientationText,
+  getSiteOrientationDegrees,
+  ORIENTATION_OPTIONS,
+  ORIENTATION_STEPS,
+  radiansToDegrees,
+  withSiteOrientationDegrees,
+} from '../../../../../lib/orientation'
 import useEditor from './../../../../../store/use-editor'
 import { useUploadStore } from '../../../../../store/use-upload'
 import { InlineRenameInput } from './inline-rename-input'
 import { focusTreeNode, TreeNode } from './tree-node'
 import { TreeNodeDragProvider } from './tree-node-drag'
-
-const BUILDING_ORIENTATION_OPTIONS = [
-  { label: '北', shortLabel: 'N', degrees: 0 },
-  { label: '东北', shortLabel: 'NE', degrees: 45 },
-  { label: '东', shortLabel: 'E', degrees: 90 },
-  { label: '东南', shortLabel: 'SE', degrees: 135 },
-  { label: '南', shortLabel: 'S', degrees: 180 },
-  { label: '西南', shortLabel: 'SW', degrees: 225 },
-  { label: '西', shortLabel: 'W', degrees: 270 },
-  { label: '西北', shortLabel: 'NW', degrees: 315 },
-] as const
-
-const BUILDING_ORIENTATION_STEPS = [-5, -1, 1, 5] as const
-
-function normalizeDegrees(degrees: number): number {
-  const normalized = ((degrees % 360) + 360) % 360
-  return Object.is(normalized, -0) ? 0 : normalized
-}
-
-function radiansToDegrees(radians: number): number {
-  return normalizeDegrees((-radians * 180) / Math.PI)
-}
-
-function degreesToRadians(degrees: number): number {
-  return (-normalizeDegrees(degrees) * Math.PI) / 180
-}
-
-function getCircularDegreeDistance(a: number, b: number): number {
-  const distance = Math.abs(normalizeDegrees(a) - normalizeDegrees(b))
-  return Math.min(distance, 360 - distance)
-}
-
-function getNearestBuildingOrientation(degrees: number) {
-  return BUILDING_ORIENTATION_OPTIONS.reduce((nearest, option) =>
-    getCircularDegreeDistance(degrees, option.degrees) <
-    getCircularDegreeDistance(degrees, nearest.degrees)
-      ? option
-      : nearest,
-  )
-}
-
-function getBuildingOrientationText(degrees: number): string {
-  const nearest = getNearestBuildingOrientation(degrees)
-  const distance = getCircularDegreeDistance(degrees, nearest.degrees)
-  const prefix =
-    distance < 0.05
-      ? nearest.label
-      : distance <= 5
-        ? `接近${nearest.label}`
-        : `偏向${nearest.label}`
-
-  return `${prefix} ${degrees.toFixed(1)}°`
-}
 
 // ============================================================================
 // PROPERTY LINE SECTION
@@ -978,27 +935,45 @@ const LevelsSection = memo(function LevelsSection({
   )
 })
 
-const BuildingOrientationSection = memo(function BuildingOrientationSection({
-  building,
+const OrientationToggleButton = memo(function OrientationToggleButton({
+  isOpen,
+  onClick,
+  title,
 }: {
-  building: BuildingNode
+  isOpen: boolean
+  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void
+  title: string
 }) {
-  const updateNode = useScene((state) => state.updateNode)
-  const currentDegrees = radiansToDegrees(building.rotation[1] ?? 0)
-  const orientationText = getBuildingOrientationText(currentDegrees)
+  return (
+    <button
+      aria-pressed={isOpen}
+      className={cn(
+        'flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground',
+        isOpen && 'bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary',
+      )}
+      onClick={onClick}
+      onDoubleClick={(event) => event.stopPropagation()}
+      title={title}
+      type="button"
+    >
+      <Compass className="h-3.5 w-3.5" />
+    </button>
+  )
+})
 
-  const handleOrientationChange = (degrees: number) => {
-    updateNode(building.id, {
-      rotation: [
-        building.rotation[0] ?? 0,
-        degreesToRadians(degrees),
-        building.rotation[2] ?? 0,
-      ],
-    })
-  }
+const OrientationSettingsSection = memo(function OrientationSettingsSection({
+  title,
+  currentDegrees,
+  onChange,
+}: {
+  title: string
+  currentDegrees: number
+  onChange: (degrees: number) => void
+}) {
+  const orientationText = getOrientationText(currentDegrees)
 
   const handleStepChange = (deltaDegrees: number) => {
-    handleOrientationChange(currentDegrees + deltaDegrees)
+    onChange(currentDegrees + deltaDegrees)
   }
 
   return (
@@ -1006,7 +981,7 @@ const BuildingOrientationSection = memo(function BuildingOrientationSection({
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
           <Compass className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate font-medium text-xs">建筑朝向</span>
+          <span className="truncate font-medium text-xs">{title}</span>
         </div>
         <span className="font-mono text-foreground text-xs tabular-nums">
           {currentDegrees.toFixed(1)}°
@@ -1014,7 +989,7 @@ const BuildingOrientationSection = memo(function BuildingOrientationSection({
       </div>
       <div className="mb-2 truncate text-muted-foreground text-xs">{orientationText}</div>
       <div className="grid grid-cols-4 gap-1.5">
-        {BUILDING_ORIENTATION_OPTIONS.map((option) => {
+        {ORIENTATION_OPTIONS.map((option) => {
           const isActive = getCircularDegreeDistance(currentDegrees, option.degrees) < 0.05
 
           return (
@@ -1026,7 +1001,7 @@ const BuildingOrientationSection = memo(function BuildingOrientationSection({
                   : 'border-border/55 bg-card text-muted-foreground hover:bg-accent/55 hover:text-foreground',
               )}
               key={option.shortLabel}
-              onClick={() => handleOrientationChange(option.degrees)}
+              onClick={() => onChange(option.degrees)}
               title={`${option.label} ${option.degrees}°`}
               type="button"
             >
@@ -1037,7 +1012,7 @@ const BuildingOrientationSection = memo(function BuildingOrientationSection({
         })}
       </div>
       <div className="mt-2 grid grid-cols-4 gap-1.5">
-        {BUILDING_ORIENTATION_STEPS.map((step) => (
+        {ORIENTATION_STEPS.map((step) => (
           <button
             className="flex h-7 cursor-pointer items-center justify-center rounded-md border border-border/55 bg-card font-mono text-muted-foreground text-xs tabular-nums transition-colors hover:bg-accent/55 hover:text-foreground"
             key={step}
@@ -1055,13 +1030,59 @@ const BuildingOrientationSection = memo(function BuildingOrientationSection({
         label="角度"
         max={359.9}
         min={0}
-        onChange={handleOrientationChange}
+        onChange={onChange}
         precision={1}
         step={1}
         unit="°"
         value={currentDegrees}
       />
     </div>
+  )
+})
+
+const SiteOrientationSection = memo(function SiteOrientationSection({ site }: { site: SiteNode }) {
+  const updateNode = useScene((state) => state.updateNode)
+  const currentDegrees = getSiteOrientationDegrees(site)
+
+  const handleOrientationChange = (degrees: number) => {
+    updateNode(site.id, {
+      metadata: withSiteOrientationDegrees(site, degrees),
+    })
+  }
+
+  return (
+    <OrientationSettingsSection
+      currentDegrees={currentDegrees}
+      onChange={handleOrientationChange}
+      title="场地朝向"
+    />
+  )
+})
+
+const BuildingOrientationSection = memo(function BuildingOrientationSection({
+  building,
+}: {
+  building: BuildingNode
+}) {
+  const updateNode = useScene((state) => state.updateNode)
+  const currentDegrees = radiansToDegrees(building.rotation[1] ?? 0)
+
+  const handleOrientationChange = (degrees: number) => {
+    updateNode(building.id, {
+      rotation: [
+        building.rotation[0] ?? 0,
+        degreesToRadians(degrees),
+        building.rotation[2] ?? 0,
+      ],
+    })
+  }
+
+  return (
+    <OrientationSettingsSection
+      currentDegrees={currentDegrees}
+      onChange={handleOrientationChange}
+      title="建筑朝向"
+    />
   )
 })
 
@@ -1513,6 +1534,8 @@ const BuildingItem = memo(function BuildingItem({
   isBuildingActive,
   buildingCameraOpen,
   setBuildingCameraOpen,
+  buildingOrientationOpenId,
+  setBuildingOrientationOpenId,
   projectId,
   onUploadAsset,
   onDeleteAsset,
@@ -1521,6 +1544,8 @@ const BuildingItem = memo(function BuildingItem({
   isBuildingActive: boolean
   buildingCameraOpen: string | null
   setBuildingCameraOpen: (id: string | null) => void
+  buildingOrientationOpenId: string | null
+  setBuildingOrientationOpenId: (id: string | null) => void
   projectId?: string
   onUploadAsset?: (projectId: string, levelId: string, file: File, type: 'scan' | 'guide') => void
   onDeleteAsset?: (projectId: string, url: string) => void
@@ -1530,6 +1555,8 @@ const BuildingItem = memo(function BuildingItem({
   const setPhase = useEditor((state) => state.setPhase)
   const updateNode = useScene((state) => state.updateNode)
   const itemRef = useRef<HTMLDivElement>(null)
+  const isOrientationOpen = buildingOrientationOpenId === building.id
+  const isOrientationVisible = isBuildingActive && isOrientationOpen
 
   useEffect(() => {
     if (isBuildingActive && itemRef.current) {
@@ -1546,6 +1573,15 @@ const BuildingItem = memo(function BuildingItem({
 
   const handleDoubleClick = () => {
     focusTreeNode(building.id)
+  }
+
+  const handleOrientationToggle = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation()
+    setSelection({ buildingId: building.id })
+    if (phase === 'site') {
+      setPhase('structure')
+    }
+    setBuildingOrientationOpenId(isOrientationVisible ? null : building.id)
   }
 
   return (
@@ -1573,6 +1609,11 @@ const BuildingItem = memo(function BuildingItem({
             src="/icons/building.png"
           />
           <span className="truncate font-semibold text-sm">{building.name || 'Building'}</span>
+          <OrientationToggleButton
+            isOpen={isOrientationVisible}
+            onClick={handleOrientationToggle}
+            title="建筑朝向"
+          />
         </div>
         <Popover
           onOpenChange={(open) => setBuildingCameraOpen(open ? building.id : null)}
@@ -1656,7 +1697,19 @@ const BuildingItem = memo(function BuildingItem({
           >
             <div className="flex min-h-0 w-full flex-1 flex-col">
               <div className="flex shrink-0 flex-col">
-                <BuildingOrientationSection building={building} />
+                <AnimatePresence initial={false}>
+                  {isOrientationVisible && (
+                    <motion.div
+                      animate={{ height: 'auto', opacity: 1 }}
+                      className="overflow-hidden"
+                      exit={{ height: 0, opacity: 0 }}
+                      initial={{ height: 0, opacity: 0 }}
+                      transition={{ type: 'spring', bounce: 0, duration: 0.3 }}
+                    >
+                      <BuildingOrientationSection building={building} />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
                 <LevelsSection
                   onDeleteAsset={onDeleteAsset}
                   onUploadAsset={onUploadAsset}
@@ -1684,14 +1737,14 @@ export interface SitePanelProps {
 
 export function SitePanel({ projectId, onUploadAsset, onDeleteAsset }: SitePanelProps = {}) {
   const rootNodeIds = useScene((state) => state.rootNodeIds)
-  const updateNode = useScene((state) => state.updateNode)
   const selectedBuildingId = useViewer((state) => state.selection.buildingId)
-  const setSelection = useViewer((state) => state.setSelection)
   const phase = useEditor((state) => state.phase)
   const setPhase = useEditor((state) => state.setPhase)
 
   const [siteCameraOpen, setSiteCameraOpen] = useState(false)
   const [buildingCameraOpen, setBuildingCameraOpen] = useState<string | null>(null)
+  const [siteOrientationOpen, setSiteOrientationOpen] = useState(false)
+  const [buildingOrientationOpenId, setBuildingOrientationOpenId] = useState<string | null>(null)
 
   const siteNode = useScene((s) =>
     rootNodeIds[0] ? ((s.nodes[rootNodeIds[0]] as SiteNode | undefined) ?? null) : null,
@@ -1707,6 +1760,7 @@ export function SitePanel({ projectId, onUploadAsset, onDeleteAsset }: SitePanel
         .filter((node): node is BuildingNode => node?.type === 'building')
     }),
   )
+  const isSiteOrientationVisible = phase === 'site' && siteOrientationOpen
 
   return (
     <LayoutGroup>
@@ -1733,6 +1787,15 @@ export function SitePanel({ projectId, onUploadAsset, onDeleteAsset }: SitePanel
                 src="/icons/site.png"
               />
               <span className="truncate font-semibold text-sm">{siteNode.name || 'Site'}</span>
+              <OrientationToggleButton
+                isOpen={isSiteOrientationVisible}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setPhase('site')
+                  setSiteOrientationOpen((open) => (phase === 'site' ? !open : true))
+                }}
+                title="场地朝向"
+              />
             </div>
             <CameraPopover
               buttonClassName={cn(
@@ -1762,6 +1825,19 @@ export function SitePanel({ projectId, onUploadAsset, onDeleteAsset }: SitePanel
                 layout="position"
                 transition={{ type: 'spring', bounce: 0, duration: 0.4 }}
               >
+                <AnimatePresence initial={false}>
+                  {isSiteOrientationVisible && siteNode && (
+                    <motion.div
+                      animate={{ height: 'auto', opacity: 1 }}
+                      className="overflow-hidden"
+                      exit={{ height: 0, opacity: 0 }}
+                      initial={{ height: 0, opacity: 0 }}
+                      transition={{ type: 'spring', bounce: 0, duration: 0.3 }}
+                    >
+                      <SiteOrientationSection site={siteNode} />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
                 <PropertyLineSection />
               </motion.div>
             )}
@@ -1783,12 +1859,14 @@ export function SitePanel({ projectId, onUploadAsset, onDeleteAsset }: SitePanel
                   <BuildingItem
                     building={building}
                     buildingCameraOpen={buildingCameraOpen}
+                    buildingOrientationOpenId={buildingOrientationOpenId}
                     isBuildingActive={isBuildingActive}
                     key={building.id}
                     onDeleteAsset={onDeleteAsset}
                     onUploadAsset={onUploadAsset}
                     projectId={projectId}
                     setBuildingCameraOpen={setBuildingCameraOpen}
+                    setBuildingOrientationOpenId={setBuildingOrientationOpenId}
                   />
                 )
               })}

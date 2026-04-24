@@ -8,7 +8,7 @@ import {
   useScene,
 } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
-import { MoreVertical, Plus, Trash2 } from 'lucide-react'
+import { Eye, EyeOff, Layers, MoreVertical, Plus, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { deleteLevelWithFallbackSelection } from '../../lib/level-selection'
@@ -91,15 +91,32 @@ function LevelInlineRename({
 function LevelRow({
   level,
   isSelected,
+  isVisible,
+  hasHiddenLevels,
   onSelect,
+  onShowAll,
+  onShowOnly,
   onRequestDelete,
+  onToggleVisibility,
 }: {
   level: LevelNode
   isSelected: boolean
+  isVisible: boolean
+  hasHiddenLevels: boolean
   onSelect: () => void
+  onShowAll: () => void
+  onShowOnly: () => void
   onRequestDelete: () => void
+  onToggleVisibility: () => void
 }) {
   const [isEditing, setIsEditing] = useState(false)
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const visibilityLabel = isVisible ? 'Hide level' : 'Show level'
+
+  const handleMenuAction = useCallback((action: () => void) => {
+    action()
+    setIsMenuOpen(false)
+  }, [])
 
   return (
     <div className="group/level">
@@ -113,6 +130,7 @@ function LevelRow({
         <div
           className={cn(
             'flex items-center rounded-md transition-colors',
+            !isVisible && 'opacity-60',
             isSelected
               ? 'bg-primary/10 text-primary'
               : 'text-muted-foreground/70 hover:bg-accent hover:text-foreground',
@@ -131,12 +149,29 @@ function LevelRow({
             <span className="truncate">{getLevelDisplayLabel(level)}</span>
           </button>
 
+          <button
+            aria-label={visibilityLabel}
+            className={cn(
+              'flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground/40 transition-colors hover:text-foreground',
+              !isVisible && 'text-muted-foreground opacity-100',
+            )}
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleVisibility()
+            }}
+            title={visibilityLabel}
+            type="button"
+          >
+            {isVisible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+          </button>
+
           {/* Vertical three-dot menu — inside the pill */}
-          <Popover>
+          <Popover onOpenChange={setIsMenuOpen} open={isMenuOpen}>
             <PopoverTrigger asChild>
               <button
                 className="flex h-5 w-4 shrink-0 items-center justify-center text-muted-foreground/40 opacity-0 transition-all hover:text-foreground group-hover/level:opacity-100"
                 onClick={(e) => e.stopPropagation()}
+                title="Level actions"
                 type="button"
               >
                 <MoreVertical className="h-3 w-3" />
@@ -144,10 +179,46 @@ function LevelRow({
             </PopoverTrigger>
             <PopoverContent align="start" className="w-36 p-1" side="right" sideOffset={8}>
               <button
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-muted-foreground text-xs transition-colors hover:bg-accent hover:text-foreground"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleMenuAction(onToggleVisibility)
+                }}
+                type="button"
+              >
+                {isVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                {visibilityLabel}
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-muted-foreground text-xs transition-colors hover:bg-accent hover:text-foreground"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleMenuAction(onShowOnly)
+                }}
+                type="button"
+              >
+                <Eye className="h-3 w-3" />
+                Hide other levels
+              </button>
+              {hasHiddenLevels && (
+                <button
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-muted-foreground text-xs transition-colors hover:bg-accent hover:text-foreground"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleMenuAction(onShowAll)
+                  }}
+                  type="button"
+                >
+                  <Layers className="h-3 w-3" />
+                  Show all levels
+                </button>
+              )}
+              <div className="my-1 h-px bg-border/70" />
+              <button
                 className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-muted-foreground text-xs transition-colors hover:bg-destructive/10 hover:text-destructive"
                 onClick={(e) => {
                   e.stopPropagation()
-                  onRequestDelete()
+                  handleMenuAction(onRequestDelete)
                 }}
                 type="button"
               >
@@ -169,6 +240,7 @@ export function FloatingLevelSelector() {
   const levelId = useViewer((s) => s.selection.levelId)
   const setSelection = useViewer((s) => s.setSelection)
   const createNode = useScene((s) => s.createNode)
+  const updateNode = useScene((s) => s.updateNode)
   const updateNodes = useScene((s) => s.updateNodes)
 
   const [deletingLevel, setDeletingLevel] = useState<LevelNode | null>(null)
@@ -251,9 +323,45 @@ export function FloatingLevelSelector() {
     setDeletingLevel(null)
   }, [deletingLevel])
 
+  const handleToggleVisibility = useCallback(
+    (level: LevelNode) => {
+      updateNode(level.id, { visible: level.visible === false })
+    },
+    [updateNode],
+  )
+
+  const handleShowOnly = useCallback(
+    (level: LevelNode) => {
+      updateNodes(
+        levels.map((entry) => ({
+          id: entry.id as AnyNodeId,
+          data: { visible: entry.id === level.id } as Partial<AnyNode>,
+        })),
+      )
+      setSelection(
+        resolvedBuildingId
+          ? { buildingId: resolvedBuildingId, levelId: level.id }
+          : { levelId: level.id },
+      )
+    },
+    [levels, resolvedBuildingId, setSelection, updateNodes],
+  )
+
+  const handleShowAll = useCallback(() => {
+    updateNodes(
+      levels
+        .filter((level) => level.visible === false)
+        .map((level) => ({
+          id: level.id as AnyNodeId,
+          data: { visible: true } as Partial<AnyNode>,
+        })),
+    )
+  }, [levels, updateNodes])
+
   if (levels.length === 0) return null
 
   const reversedLevels = [...levels].reverse()
+  const hasHiddenLevels = levels.some((level) => level.visible === false)
 
   const addButtonClass =
     'absolute left-1/2 z-10 flex h-4 w-4 -translate-x-1/2 items-center justify-center rounded-full border border-border/80 bg-background text-muted-foreground/60 shadow-md transition-colors hover:bg-accent hover:text-foreground'
@@ -292,8 +400,12 @@ export function FloatingLevelSelector() {
               return (
                 <div className="relative" key={level.id}>
                   <LevelRow
+                    hasHiddenLevels={hasHiddenLevels}
                     isSelected={isSelected}
+                    isVisible={level.visible !== false}
                     level={level}
+                    onShowAll={handleShowAll}
+                    onShowOnly={() => handleShowOnly(level)}
                     onRequestDelete={() => setDeletingLevel(level)}
                     onSelect={() =>
                       setSelection(
@@ -302,6 +414,7 @@ export function FloatingLevelSelector() {
                           : { levelId: level.id },
                       )
                     }
+                    onToggleVisibility={() => handleToggleVisibility(level)}
                   />
 
                   {showGapBelow && (

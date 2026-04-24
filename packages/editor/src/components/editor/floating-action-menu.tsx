@@ -23,8 +23,10 @@ import { useViewer } from '@pascal-app/viewer'
 import { Html } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import { Move } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { float } from 'three/tsl'
+import { useStore } from 'zustand'
 import { sfxEmitter } from '../../lib/sfx-bus'
 import useEditor from '../../store/use-editor'
 import { NodeActionMenu } from './node-action-menu'
@@ -46,9 +48,139 @@ const ALLOWED_TYPES = [
 const ALLOWED_TYPE_SET = new Set<string>(ALLOWED_TYPES)
 const DELETE_ONLY_TYPES: string[] = []
 const HOLE_TYPES = ['slab', 'ceiling']
+const ACTION_MENU_TRANSPARENT_METADATA_KEY = 'actionMenuTransparent'
+const MANAGED_TRANSPARENCY_STATE_KEY = '__actionMenuTransparencyState'
+const TRANSPARENT_OPACITY = 0.22
+const transparentOpacityNode = float(TRANSPARENT_OPACITY)
+
+type ManagedTransparencyState = {
+  original: THREE.Material | THREE.Material[]
+  transparent: THREE.Material | THREE.Material[]
+}
+
+type ActionMenuAnchor = [number, number, number]
+
+type ManagedMesh = THREE.Mesh & {
+  userData: THREE.Mesh['userData'] & {
+    [MANAGED_TRANSPARENCY_STATE_KEY]?: ManagedTransparencyState
+  }
+}
 
 function preventNativeContextMenu(event: NodeEvent) {
   event.nativeEvent.nativeEvent?.preventDefault()
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function isNodeTransparentFromActionMenu(node: AnyNode | null | undefined): boolean {
+  return isRecord(node?.metadata) && node.metadata[ACTION_MENU_TRANSPARENT_METADATA_KEY] === true
+}
+
+function getActionMenuTransparencyMetadata(node: AnyNode, enabled: boolean) {
+  const metadata = isRecord(node.metadata) ? { ...node.metadata } : {}
+
+  if (enabled) {
+    metadata[ACTION_MENU_TRANSPARENT_METADATA_KEY] = true
+  } else {
+    delete metadata[ACTION_MENU_TRANSPARENT_METADATA_KEY]
+  }
+
+  return metadata
+}
+
+function cloneTransparentMaterial(material: THREE.Material): THREE.Material {
+  const clone = material.clone()
+  clone.transparent = true
+  clone.opacity = Math.min(material.opacity ?? 1, TRANSPARENT_OPACITY)
+  if ('opacityNode' in clone) {
+    clone.opacityNode = transparentOpacityNode
+  }
+  clone.depthWrite = false
+  clone.side = THREE.DoubleSide
+  clone.needsUpdate = true
+  return clone
+}
+
+function cloneTransparentMaterialInput(
+  material: THREE.Material | THREE.Material[],
+): THREE.Material | THREE.Material[] {
+  return Array.isArray(material)
+    ? material.map((entry) => cloneTransparentMaterial(entry))
+    : cloneTransparentMaterial(material)
+}
+
+function disposeMaterialInput(material: THREE.Material | THREE.Material[]) {
+  if (Array.isArray(material)) {
+    material.forEach((entry) => {
+      entry.dispose()
+    })
+    return
+  }
+
+  material.dispose()
+}
+
+function hasMeshMaterial(object: THREE.Object3D): object is ManagedMesh {
+  return Boolean((object as THREE.Mesh).isMesh && (object as THREE.Mesh).material)
+}
+
+function applyManagedTransparency(mesh: ManagedMesh) {
+  const state = mesh.userData[MANAGED_TRANSPARENCY_STATE_KEY]
+
+  if (state && mesh.material === state.transparent) {
+    return
+  }
+
+  if (state) {
+    disposeMaterialInput(state.transparent)
+  }
+
+  const original = mesh.material
+  const transparent = cloneTransparentMaterialInput(original)
+  mesh.userData[MANAGED_TRANSPARENCY_STATE_KEY] = { original, transparent }
+  mesh.material = transparent
+}
+
+function restoreManagedTransparency(mesh: ManagedMesh) {
+  const state = mesh.userData[MANAGED_TRANSPARENCY_STATE_KEY]
+  if (!state) return
+
+  if (mesh.material === state.transparent) {
+    mesh.material = state.original
+  }
+
+  disposeMaterialInput(state.transparent)
+  delete mesh.userData[MANAGED_TRANSPARENCY_STATE_KEY]
+}
+
+function objectHasManagedTransparency(object: THREE.Object3D): boolean {
+  let found = false
+  object.traverse((child) => {
+    if (!found && hasMeshMaterial(child) && child.userData[MANAGED_TRANSPARENCY_STATE_KEY]) {
+      found = true
+    }
+  })
+  return found
+}
+
+function setObjectManagedTransparency(object: THREE.Object3D, enabled: boolean) {
+  object.traverse((child) => {
+    if (!hasMeshMaterial(child)) return
+    if (enabled) {
+      applyManagedTransparency(child)
+    } else {
+      restoreManagedTransparency(child)
+    }
+  })
+}
+
+function setObjectVisibleNow(nodeId: string, visible: boolean) {
+  const object = sceneRegistry.nodes.get(nodeId)
+  if (object) {
+    object.visible = visible
+  }
 }
 
 function resolveActionMenuNode(node: AnyNode): AnyNode | null {
@@ -76,12 +208,30 @@ export function FloatingActionMenu() {
   const setCurvingWall = useEditor((s) => s.setCurvingWall)
   const setSelection = useViewer((s) => s.setSelection)
   const setEditingHole = useEditor((s) => s.setEditingHole)
+  const canUndo = useStore(useScene.temporal, (state) => state.pastStates.length > 0)
+  const canRedo = useStore(useScene.temporal, (state) => state.futureStates.length > 0)
+  const canShowAll = useScene((state) =>
+    Object.values(state.nodes).some((entry) => entry.visible === false),
+  )
 
   const groupRef = useRef<THREE.Group>(null)
   const startEndpointGroupRef = useRef<THREE.Group>(null)
   const endEndpointGroupRef = useRef<THREE.Group>(null)
   const [altPressed, setAltPressed] = useState(false)
   const [actionMenuNodeId, setActionMenuNodeId] = useState<AnyNodeId | null>(null)
+  const [actionMenuAnchor, setActionMenuAnchor] = useState<ActionMenuAnchor | null>(null)
+  const transparentNodeIdKey = useScene((s) =>
+    Object.values(s.nodes)
+      .filter((sceneNode) => ALLOWED_TYPE_SET.has(sceneNode.type))
+      .filter(isNodeTransparentFromActionMenu)
+      .map((sceneNode) => sceneNode.id)
+      .sort()
+      .join('\n'),
+  )
+  const transparentNodeIds = useMemo(
+    () => new Set(transparentNodeIdKey ? transparentNodeIdKey.split('\n') : []),
+    [transparentNodeIdKey],
+  )
 
   // Only show for single selection of specific types
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : null
@@ -90,6 +240,7 @@ export function FloatingActionMenu() {
   // re-render this menu.
   const node = useScene((s) => (selectedId ? (s.nodes[selectedId as AnyNodeId] ?? null) : null))
   const isValidType = node ? ALLOWED_TYPE_SET.has(node.type) : false
+  const isTransparent = isNodeTransparentFromActionMenu(node)
   const canRenderSelectionOverlays =
     Boolean(selectedId && node && isValidType && !isFloorplanHovered && mode !== 'delete') &&
     !movingWallEndpoint
@@ -124,6 +275,7 @@ export function FloatingActionMenu() {
       preventNativeContextMenu(event)
       useViewer.getState().setSelection({ selectedIds: [actionNode.id] })
       setActionMenuNodeId(actionNode.id as AnyNodeId)
+      setActionMenuAnchor(event.position)
     }
 
     ALLOWED_TYPES.forEach((type) => {
@@ -138,7 +290,10 @@ export function FloatingActionMenu() {
   }, [])
 
   useEffect(() => {
-    const closeActionMenu = () => setActionMenuNodeId(null)
+    const closeActionMenu = () => {
+      setActionMenuNodeId(null)
+      setActionMenuAnchor(null)
+    }
 
     ALLOWED_TYPES.forEach((type) => {
       emitter.on(`${type}:click` as any, closeActionMenu as any)
@@ -156,12 +311,14 @@ export function FloatingActionMenu() {
   useEffect(() => {
     if (actionMenuNodeId && (!selectedId || actionMenuNodeId !== selectedId)) {
       setActionMenuNodeId(null)
+      setActionMenuAnchor(null)
     }
   }, [actionMenuNodeId, selectedId])
 
   useEffect(() => {
     if (actionMenuNodeId && !canRenderSelectionOverlays) {
       setActionMenuNodeId(null)
+      setActionMenuAnchor(null)
     }
   }, [actionMenuNodeId, canRenderSelectionOverlays])
 
@@ -194,18 +351,30 @@ export function FloatingActionMenu() {
   }, [])
 
   useFrame(() => {
+    sceneRegistry.nodes.forEach((object, nodeId) => {
+      const enabled = transparentNodeIds.has(nodeId)
+      if (enabled || objectHasManagedTransparency(object)) {
+        setObjectManagedTransparency(object, enabled)
+      }
+    })
+  })
+
+  useFrame(() => {
     if (!(shouldShowActionMenu && selectedId && groupRef.current)) return
 
     const obj = sceneRegistry.nodes.get(selectedId)
     if (obj) {
-      // Calculate bounding box in world space
-      const box = new THREE.Box3().setFromObject(obj)
-      if (!box.isEmpty()) {
-        const center = box.getCenter(new THREE.Vector3())
-        // Position above the object, with extra offset for walls/slabs to avoid covering measurement labels
-        const isStructural = node && [...DELETE_ONLY_TYPES, ...HOLE_TYPES].includes(node.type)
-        const yOffset = isStructural ? 0.8 : 0.3
-        groupRef.current.position.set(center.x, box.max.y + yOffset, center.z)
+      if (actionMenuAnchor) {
+        groupRef.current.position.set(actionMenuAnchor[0], actionMenuAnchor[1], actionMenuAnchor[2])
+      } else {
+        // Fallback for any legacy path that opens the menu without a pointer hit.
+        const box = new THREE.Box3().setFromObject(obj)
+        if (!box.isEmpty()) {
+          const center = box.getCenter(new THREE.Vector3())
+          const isStructural = node && [...DELETE_ONLY_TYPES, ...HOLE_TYPES].includes(node.type)
+          const yOffset = isStructural ? 0.8 : 0.3
+          groupRef.current.position.set(center.x, box.max.y + yOffset, center.z)
+        }
       }
 
       if (node?.type === 'wall') {
@@ -256,6 +425,63 @@ export function FloatingActionMenu() {
       setSelection({ selectedIds: [] })
     },
     [node, setMovingNode, setSelection],
+  )
+  const handleHide = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      if (!selectedId) return
+      updateNode(selectedId as AnyNodeId, { visible: false })
+      setObjectVisibleNow(selectedId, false)
+      setActionMenuNodeId(null)
+      setActionMenuAnchor(null)
+      setSelection({ selectedIds: [] })
+    },
+    [selectedId, setSelection, updateNode],
+  )
+  const handleShowAll = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    const hiddenNodes = Object.values(useScene.getState().nodes).filter(
+      (entry) => entry.visible === false,
+    )
+    if (hiddenNodes.length > 0) {
+      useScene.getState().updateNodes(
+        hiddenNodes.map((entry) => ({
+          id: entry.id,
+          data: { visible: true },
+        })),
+      )
+      hiddenNodes.forEach((entry) => {
+        setObjectVisibleNow(entry.id, true)
+      })
+    }
+    setActionMenuNodeId(null)
+    setActionMenuAnchor(null)
+  }, [])
+  const handleUndo = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    setActionMenuNodeId(null)
+    setActionMenuAnchor(null)
+    useScene.temporal.getState().undo()
+  }, [])
+  const handleRedo = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    setActionMenuNodeId(null)
+    setActionMenuAnchor(null)
+    useScene.temporal.getState().redo()
+  }, [])
+  const handleToggleTransparency = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      if (!(node && selectedId)) return
+      sfxEmitter.emit('sfx:item-pick')
+      updateNode(
+        selectedId as AnyNodeId,
+        {
+          metadata: getActionMenuTransparencyMetadata(node, !isNodeTransparentFromActionMenu(node)),
+        } as Partial<AnyNode>,
+      )
+    },
+    [node, selectedId, updateNode],
   )
   const handleCurve = useCallback(
     (e: React.MouseEvent) => {
@@ -468,6 +694,8 @@ export function FloatingActionMenu() {
       } else {
         sfxEmitter.emit('sfx:structure-delete')
       }
+      setActionMenuNodeId(null)
+      setActionMenuAnchor(null)
       setSelection({ selectedIds: [] })
       useScene.getState().deleteNode(selectedId as AnyNodeId)
     },
@@ -481,7 +709,6 @@ export function FloatingActionMenu() {
       {shouldShowActionMenu && (
         <group ref={groupRef}>
           <Html
-            center
             style={{
               pointerEvents: 'auto',
               touchAction: 'none',
@@ -489,6 +716,10 @@ export function FloatingActionMenu() {
             zIndexRange={[100, 0]}
           >
             <NodeActionMenu
+              canRedo={canRedo}
+              canShowAll={canShowAll}
+              canUndo={canUndo}
+              isTransparent={isTransparent}
               onAddHole={node && HOLE_TYPES.includes(node.type) ? handleAddHole : undefined}
               onCurve={canCurveSelectedWall ? handleCurve : undefined}
               onDelete={handleDelete}
@@ -497,9 +728,14 @@ export function FloatingActionMenu() {
                   ? handleDuplicate
                   : undefined
               }
+              onHide={handleHide}
               onMove={node && !DELETE_ONLY_TYPES.includes(node.type) ? handleMove : undefined}
               onPointerDown={(e) => e.stopPropagation()}
               onPointerUp={(e) => e.stopPropagation()}
+              onRedo={handleRedo}
+              onShowAll={handleShowAll}
+              onToggleTransparency={handleToggleTransparency}
+              onUndo={handleUndo}
             />
           </Html>
         </group>

@@ -5,20 +5,59 @@ import { useViewer, ZONE_LAYER } from '@pascal-app/viewer'
 import { CameraControls, CameraControlsImpl } from '@react-three/drei'
 import { useThree } from '@react-three/fiber'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { Box3, Vector3 } from 'three'
+import { Box3, type Object3D, Raycaster, Vector2, Vector3 } from 'three'
 import { EDITOR_LAYER } from '../../lib/constants'
 import useEditor from '../../store/use-editor'
 
 const currentTarget = new Vector3()
 const tempBox = new Box3()
+const tempSceneBounds = new Box3()
+const tempSceneObjectBox = new Box3()
 const tempCenter = new Vector3()
 const tempDelta = new Vector3()
+const tempOrbitCenter = new Vector3()
 const tempPosition = new Vector3()
 const tempSize = new Vector3()
 const tempTarget = new Vector3()
 const DEFAULT_MAX_POLAR_ANGLE = Math.PI / 2 - 0.1
 const DEBUG_MAX_POLAR_ANGLE = Math.PI - 0.05
 const SIDE_VIEW_POLAR_ANGLE = Math.PI / 2 - 0.12
+const LEFT_CAMERA_DRAG_THRESHOLD_PX = 4
+const TRI_VIEW_INTERACTIVE_AREA = { x: 0.5, y: 0.5, width: 0.5, height: 0.5 }
+const FULL_INTERACTIVE_AREA = { x: 0, y: 0, width: 1, height: 1 }
+
+const EDITOR_INTERACTION_NODE_TYPES = [
+  'site',
+  'building',
+  'level',
+  'zone',
+  'wall',
+  'fence',
+  'item',
+  'slab',
+  'ceiling',
+  'roof',
+  'roof-segment',
+  'sketch-circle',
+  'sketch-line',
+  'stair',
+  'stair-segment',
+  'window',
+  'door',
+] as const
+
+type LeftMouseAction =
+  | typeof CameraControlsImpl.ACTION.ROTATE
+  | typeof CameraControlsImpl.ACTION.SCREEN_PAN
+  | typeof CameraControlsImpl.ACTION.NONE
+
+type LeftButtonGesture = {
+  pointerId: number
+  startX: number
+  startY: number
+  startedOnEditableNode: boolean
+  mode: 'pending-camera' | 'camera' | 'blocked'
+}
 
 type CameraViewDirection = 'front' | 'left' | 'right' | 'back' | 'top' | 'bottom'
 
@@ -44,8 +83,91 @@ const VIEW_DIRECTION_AZIMUTHS: Partial<Record<CameraViewDirection, number>> = {
   left: -Math.PI / 2,
 }
 
+function isVisibleInHierarchy(object: Object3D) {
+  let current: Object3D | null = object
+  while (current) {
+    if (!current.visible) return false
+    current = current.parent
+  }
+  return true
+}
+
+function isTransformControlsObject(object: Object3D) {
+  let current: Object3D | null = object
+  while (current) {
+    const candidate = current as Object3D & {
+      isTransformControls?: boolean
+      isTransformControlsGizmo?: boolean
+    }
+    if (
+      candidate.isTransformControls ||
+      candidate.isTransformControlsGizmo ||
+      current.type === 'TransformControlsGizmo'
+    ) {
+      return true
+    }
+    current = current.parent
+  }
+  return false
+}
+
+function hasActiveEditorPointerInteraction() {
+  const editor = useEditor.getState()
+
+  return (
+    editor.mode !== 'select' ||
+    editor.floorplanSelectionTool === 'marquee' ||
+    Boolean(
+      editor.tool ||
+        editor.movingNode ||
+        editor.movingWallEndpoint ||
+        editor.curvingWall ||
+        editor.editingHole,
+    )
+  )
+}
+
+function getEditorOrbitCenter(out: Vector3) {
+  tempSceneBounds.makeEmpty()
+
+  const scene = useScene.getState()
+  let hasRootBounds = false
+
+  for (const nodeId of scene.rootNodeIds) {
+    const object = sceneRegistry.nodes.get(String(nodeId))
+    if (!object || !isVisibleInHierarchy(object)) continue
+
+    tempSceneObjectBox.setFromObject(object)
+    if (tempSceneObjectBox.isEmpty()) continue
+
+    tempSceneBounds.union(tempSceneObjectBox)
+    hasRootBounds = true
+  }
+
+  if (!hasRootBounds) {
+    for (const object of sceneRegistry.nodes.values()) {
+      if (!isVisibleInHierarchy(object)) continue
+
+      tempSceneObjectBox.setFromObject(object)
+      if (!tempSceneObjectBox.isEmpty()) {
+        tempSceneBounds.union(tempSceneObjectBox)
+      }
+    }
+  }
+
+  if (tempSceneBounds.isEmpty()) return false
+
+  tempSceneBounds.getCenter(out)
+  return [out.x, out.y, out.z].every(Number.isFinite)
+}
+
 export const CustomCameraControls = () => {
   const controls = useRef<CameraControlsImpl>(null!)
+  const pointer = useRef(new Vector2())
+  const interactionRaycaster = useRef(new Raycaster())
+  const leftButtonGesture = useRef<LeftButtonGesture | null>(null)
+  const spacePressed = useRef(false)
+  const cameraDragResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isPreviewMode = useEditor((s) => s.isPreviewMode)
   const walkthroughMode = useViewer((s) => s.walkthroughMode)
   const allowUndergroundCamera = useEditor((s) => s.allowUndergroundCamera)
@@ -61,10 +183,14 @@ export const CustomCameraControls = () => {
 
   const camera = useThree((state) => state.camera)
   const raycaster = useThree((state) => state.raycaster)
+  const scene = useThree((state) => state.scene)
+  const gl = useThree((state) => state.gl)
   useEffect(() => {
     camera.layers.enable(EDITOR_LAYER)
     raycaster.layers.enable(EDITOR_LAYER)
     raycaster.layers.enable(ZONE_LAYER)
+    interactionRaycaster.current.layers.enable(EDITOR_LAYER)
+    interactionRaycaster.current.layers.enable(ZONE_LAYER)
   }, [camera, raycaster])
 
   const focusSceneObject = useCallback((nodeId: string | null, animated: boolean) => {
@@ -187,6 +313,7 @@ export const CustomCameraControls = () => {
 
   // Configure mouse buttons based on control mode and camera mode
   const cameraMode = useViewer((state) => state.cameraMode)
+  const viewMode = useEditor((state) => state.viewMode)
   const mouseButtons = useMemo(() => {
     // Use ZOOM for orthographic camera, DOLLY for perspective camera
     const wheelAction =
@@ -202,6 +329,237 @@ export const CustomCameraControls = () => {
     }
   }, [cameraMode, isPreviewMode])
 
+  const getIdleLeftMouseAction = useCallback((): LeftMouseAction => {
+    if (isPreviewMode) return CameraControlsImpl.ACTION.SCREEN_PAN
+    if (spacePressed.current) return CameraControlsImpl.ACTION.SCREEN_PAN
+    return CameraControlsImpl.ACTION.NONE
+  }, [isPreviewMode])
+
+  const syncMouseButtons = useCallback(
+    (leftAction: LeftMouseAction = getIdleLeftMouseAction()) => {
+      if (!controls.current) return
+
+      const wheelAction =
+        cameraMode === 'orthographic'
+          ? CameraControlsImpl.ACTION.ZOOM
+          : CameraControlsImpl.ACTION.DOLLY
+
+      controls.current.mouseButtons.wheel = wheelAction
+      controls.current.mouseButtons.middle = CameraControlsImpl.ACTION.SCREEN_PAN
+      controls.current.mouseButtons.right = CameraControlsImpl.ACTION.ROTATE
+      controls.current.mouseButtons.left = leftAction
+    },
+    [cameraMode, getIdleLeftMouseAction],
+  )
+
+  const syncLeftOrbitPoint = useCallback(() => {
+    if (!controls.current) return
+    if (!getEditorOrbitCenter(tempOrbitCenter)) return
+
+    controls.current.setOrbitPoint(tempOrbitCenter.x, tempOrbitCenter.y, tempOrbitCenter.z)
+  }, [])
+
+  const setInteractionRayFromPointer = useCallback(
+    (event: PointerEvent) => {
+      const rect = gl.domElement.getBoundingClientRect()
+      const viewportLeft = viewMode === 'tri-view' ? rect.left + rect.width * 0.5 : rect.left
+      const viewportTop = viewMode === 'tri-view' ? rect.top + rect.height * 0.5 : rect.top
+      const viewportWidth = viewMode === 'tri-view' ? rect.width * 0.5 : rect.width
+      const viewportHeight = viewMode === 'tri-view' ? rect.height * 0.5 : rect.height
+
+      pointer.current.x = ((event.clientX - viewportLeft) / viewportWidth) * 2 - 1
+      pointer.current.y = -((event.clientY - viewportTop) / viewportHeight) * 2 + 1
+      interactionRaycaster.current.setFromCamera(pointer.current, camera)
+    },
+    [camera, gl, viewMode],
+  )
+
+  useEffect(() => {
+    if (!controls.current) return
+
+    const control = controls.current
+    const canvas = gl.domElement
+
+    const resetViewport = () => {
+      control.setViewport(null, 0, 0, 0)
+      control.interactiveArea = FULL_INTERACTIVE_AREA
+    }
+
+    if (viewMode !== 'tri-view') {
+      resetViewport()
+      return
+    }
+
+    const updateViewport = () => {
+      const rect = canvas.getBoundingClientRect()
+      control.setViewport(rect.width * 0.5, 0, rect.width * 0.5, rect.height * 0.5)
+      control.interactiveArea = TRI_VIEW_INTERACTIVE_AREA
+    }
+
+    updateViewport()
+
+    const resizeObserver =
+      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateViewport) : null
+    resizeObserver?.observe(canvas)
+    window.addEventListener('resize', updateViewport)
+
+    return () => {
+      resizeObserver?.disconnect()
+      window.removeEventListener('resize', updateViewport)
+      resetViewport()
+    }
+  }, [gl, viewMode])
+
+  const hasTransformControlsHit = useCallback(() => {
+    const transformControlRoots: Object3D[] = []
+
+    scene.traverse((object) => {
+      if ((object as Object3D & { isTransformControls?: boolean }).isTransformControls) {
+        transformControlRoots.push(object)
+      }
+    })
+
+    if (transformControlRoots.length === 0) return false
+
+    return interactionRaycaster.current
+      .intersectObjects(transformControlRoots, true)
+      .some((intersection) => isTransformControlsObject(intersection.object))
+  }, [scene])
+
+  const hasEditableNodeHit = useCallback(() => {
+    const objects: Object3D[] = []
+    const seen = new Set<string>()
+
+    for (const type of EDITOR_INTERACTION_NODE_TYPES) {
+      for (const id of sceneRegistry.byType[type]) {
+        if (seen.has(id)) continue
+
+        const object = sceneRegistry.nodes.get(id)
+        if (!object || !isVisibleInHierarchy(object)) continue
+
+        seen.add(id)
+        objects.push(object)
+      }
+    }
+
+    if (objects.length === 0) return false
+
+    return interactionRaycaster.current.intersectObjects(objects, true).length > 0
+  }, [])
+
+  const scheduleCameraDragReset = useCallback(() => {
+    if (cameraDragResetTimer.current) {
+      clearTimeout(cameraDragResetTimer.current)
+    }
+
+    cameraDragResetTimer.current = setTimeout(() => {
+      cameraDragResetTimer.current = null
+      useViewer.getState().setCameraDragging(false)
+    }, 0)
+  }, [])
+
+  useEffect(() => {
+    const canvas = gl.domElement
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.button !== 0 || event.pointerType === 'touch') return
+
+      syncMouseButtons(getIdleLeftMouseAction())
+      leftButtonGesture.current = null
+
+      if (isPreviewMode || spacePressed.current) return
+
+      setInteractionRayFromPointer(event)
+
+      if (hasActiveEditorPointerInteraction() || hasTransformControlsHit()) {
+        syncMouseButtons(CameraControlsImpl.ACTION.NONE)
+        leftButtonGesture.current = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          startedOnEditableNode: false,
+          mode: 'blocked',
+        }
+        return
+      }
+
+      // Start with camera disabled so a short left click can still select or deselect.
+      // If the pointer moves past the drag threshold, the gesture becomes camera orbit.
+      syncMouseButtons(CameraControlsImpl.ACTION.NONE)
+      leftButtonGesture.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        startedOnEditableNode: hasEditableNodeHit(),
+        mode: 'pending-camera',
+      }
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const gesture = leftButtonGesture.current
+      if (!gesture || gesture.pointerId !== event.pointerId || gesture.mode !== 'pending-camera') {
+        return
+      }
+
+      if (useViewer.getState().cameraDragging || hasActiveEditorPointerInteraction()) {
+        gesture.mode = 'blocked'
+        syncMouseButtons(CameraControlsImpl.ACTION.NONE)
+        return
+      }
+
+      const dx = event.clientX - gesture.startX
+      const dy = event.clientY - gesture.startY
+      const threshold = gesture.startedOnEditableNode
+        ? LEFT_CAMERA_DRAG_THRESHOLD_PX * 2
+        : LEFT_CAMERA_DRAG_THRESHOLD_PX
+      if (Math.hypot(dx, dy) < threshold) return
+
+      syncLeftOrbitPoint()
+      gesture.mode = 'camera'
+      syncMouseButtons(CameraControlsImpl.ACTION.ROTATE)
+      useViewer.getState().setCameraDragging(true)
+    }
+
+    const handlePointerEnd = (event: PointerEvent) => {
+      const gesture = leftButtonGesture.current
+      if (!gesture || gesture.pointerId !== event.pointerId) return
+
+      const wasCameraGesture = gesture.mode === 'camera'
+      leftButtonGesture.current = null
+      syncMouseButtons(getIdleLeftMouseAction())
+
+      if (wasCameraGesture) {
+        scheduleCameraDragReset()
+      }
+    }
+
+    canvas.addEventListener('pointerdown', handlePointerDown, true)
+    document.addEventListener('pointermove', handlePointerMove, true)
+    document.addEventListener('pointerup', handlePointerEnd, true)
+    document.addEventListener('pointercancel', handlePointerEnd, true)
+
+    return () => {
+      canvas.removeEventListener('pointerdown', handlePointerDown, true)
+      document.removeEventListener('pointermove', handlePointerMove, true)
+      document.removeEventListener('pointerup', handlePointerEnd, true)
+      document.removeEventListener('pointercancel', handlePointerEnd, true)
+      if (cameraDragResetTimer.current) {
+        clearTimeout(cameraDragResetTimer.current)
+      }
+      leftButtonGesture.current = null
+    }
+  }, [
+    getIdleLeftMouseAction,
+    gl,
+    hasEditableNodeHit,
+    hasTransformControlsHit,
+    isPreviewMode,
+    scheduleCameraDragReset,
+    setInteractionRayFromPointer,
+    syncLeftOrbitPoint,
+    syncMouseButtons,
+  ])
+
   useEffect(() => {
     const keyState = {
       shiftRight: false,
@@ -214,25 +572,10 @@ export const CustomCameraControls = () => {
     const updateConfig = () => {
       if (!controls.current) return
 
-      const shift = keyState.shiftRight || keyState.shiftLeft
-      const control = keyState.controlRight || keyState.controlLeft
       const space = keyState.space
 
-      const wheelAction =
-        cameraMode === 'orthographic'
-          ? CameraControlsImpl.ACTION.ZOOM
-          : CameraControlsImpl.ACTION.DOLLY
-      controls.current.mouseButtons.wheel = wheelAction
-      controls.current.mouseButtons.middle = CameraControlsImpl.ACTION.SCREEN_PAN
-      controls.current.mouseButtons.right = CameraControlsImpl.ACTION.ROTATE
-      if (isPreviewMode) {
-        // In preview mode, left-click is always pan (viewer-style)
-        controls.current.mouseButtons.left = CameraControlsImpl.ACTION.SCREEN_PAN
-      } else if (space) {
-        controls.current.mouseButtons.left = CameraControlsImpl.ACTION.SCREEN_PAN
-      } else {
-        controls.current.mouseButtons.left = CameraControlsImpl.ACTION.NONE
-      }
+      spacePressed.current = space
+      syncMouseButtons()
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -283,7 +626,7 @@ export const CustomCameraControls = () => {
       document.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('keyup', onKeyUp)
     }
-  }, [cameraMode, isPreviewMode])
+  }, [syncMouseButtons])
 
   // Preview mode: auto-navigate camera to selected node (viewer behavior)
   const previewTargetNodeId = isPreviewMode
@@ -482,6 +825,7 @@ export const CustomCameraControls = () => {
 
   return (
     <CameraControls
+      dollyToCursor
       makeDefault
       maxDistance={100}
       maxPolarAngle={maxPolarAngle}

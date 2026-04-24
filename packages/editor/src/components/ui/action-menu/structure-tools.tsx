@@ -21,6 +21,8 @@ export const tools: ToolConfig[] = [
   { id: 'wall', iconSrc: '/icons/wall.png', label: 'Wall' },
   { id: 'sketch-line', iconSrc: '/icons/sketch-line.svg', label: '草图线' },
   { id: 'sketch-rectangle', iconSrc: '/icons/sketch-rectangle.svg', label: '草图矩形' },
+  { id: 'sketch-circle', iconSrc: '/icons/sketch-circle.svg', label: '草图圆' },
+  { id: 'sketch-arc', iconSrc: '/icons/sketch-arc.svg', label: '草图圆弧' },
   {
     id: 'sketch-construction-line',
     iconSrc: '/icons/sketch-construction-line.svg',

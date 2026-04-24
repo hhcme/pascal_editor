@@ -26,6 +26,8 @@ import {
   normalizeWallCurveOffset,
   type Point2D,
   type SiteNode,
+  sampleSketchCircleCenterline,
+  type SketchCircleNode,
   type SketchLineNode,
   SlabNode,
   type StairNode,
@@ -142,6 +144,7 @@ import {
 } from './floorplan/sketch-actions'
 import { useFloorplanSketchEdit } from './floorplan/sketch-edit'
 import {
+  FloorplanSketchCircleLayer,
   FloorplanSketchEditLayer,
   FloorplanSketchLayer,
   FloorplanSketchProfileLayer,
@@ -1299,6 +1302,22 @@ function formatPolygonPoints(points: Point2D[]): string {
       return `${svgPoint.x},${svgPoint.y}`
     })
     .join(' ')
+}
+
+function formatPolylinePath(points: Point2D[]): string {
+  const [firstPoint, ...restPoints] = points
+  if (!firstPoint) {
+    return ''
+  }
+
+  const firstSvgPoint = toSvgPoint(firstPoint)
+  return [
+    `M ${firstSvgPoint.x} ${firstSvgPoint.y}`,
+    ...restPoints.map((point) => {
+      const svgPoint = toSvgPoint(point)
+      return `L ${svgPoint.x} ${svgPoint.y}`
+    }),
+  ].join(' ')
 }
 
 function formatPolygonPath(points: Point2D[], holes: Point2D[][] = []): string {
@@ -5152,10 +5171,16 @@ type FloorplanSketchContextTarget =
       endpoint: 'start' | 'end'
       hasCoincident: boolean
     }
-  | { kind: 'sketch-drawing'; draft: 'line' | 'rectangle'; canCommit: boolean }
+  | { kind: 'sketch-drawing'; draft: 'line' | 'rectangle' | 'circle' | 'arc'; canCommit: boolean }
   | { kind: 'sketch-canvas'; hasSketchLines: boolean }
 
-type SketchContextTool = 'sketch-line' | 'sketch-rectangle' | 'sketch-construction-line' | 'smart-dimension'
+type SketchContextTool =
+  | 'sketch-line'
+  | 'sketch-rectangle'
+  | 'sketch-circle'
+  | 'sketch-arc'
+  | 'sketch-construction-line'
+  | 'smart-dimension'
 
 function invokeFloorplanAction(action: NodeActionMenuExtraAction | undefined) {
   if (!action?.onClick || action.disabled) {
@@ -5254,12 +5279,21 @@ const FloorplanSketchContextMenuContent = memo(function FloorplanSketchContextMe
   }
 
   if (target.kind === 'sketch-drawing') {
+    const draftLabel =
+      target.draft === 'rectangle'
+        ? '完成矩形'
+        : target.draft === 'circle'
+          ? '完成圆'
+          : target.draft === 'arc'
+            ? '完成圆弧'
+            : '完成当前线段'
+
     return (
       <ContextMenuContent className="w-56">
         <ContextMenuLabel>草图绘制</ContextMenuLabel>
         <ContextMenuItem disabled={!target.canCommit} onSelect={onCommitSketchDraft}>
           <Icon height={16} icon="mdi:check" width={16} />
-          <span>{target.draft === 'rectangle' ? '完成矩形' : '完成当前线段'}</span>
+          <span>{draftLabel}</span>
         </ContextMenuItem>
         <ContextMenuItem onSelect={onCancelSketchDraft}>
           <Icon height={16} icon="mdi:close" width={16} />
@@ -5375,6 +5409,14 @@ const FloorplanSketchContextMenuContent = memo(function FloorplanSketchContextMe
       <ContextMenuItem onSelect={() => onActivateTool('sketch-rectangle')}>
         <Icon height={16} icon="mdi:rectangle-outline" width={16} />
         <span>矩形</span>
+      </ContextMenuItem>
+      <ContextMenuItem onSelect={() => onActivateTool('sketch-circle')}>
+        <Icon height={16} icon="mdi:circle-outline" width={16} />
+        <span>圆</span>
+      </ContextMenuItem>
+      <ContextMenuItem onSelect={() => onActivateTool('sketch-arc')}>
+        <Icon height={16} icon="mdi:vector-curve" width={16} />
+        <span>圆弧</span>
       </ContextMenuItem>
       <ContextMenuItem onSelect={() => onActivateTool('sketch-construction-line')}>
         <Icon height={16} icon="mdi:vector-line" width={16} />
@@ -5808,6 +5850,22 @@ export function FloorplanPanel() {
         .filter((node): node is SketchLineNode => node?.type === 'sketch-line')
     }),
   )
+  const sketchCircles = useScene(
+    useShallow((state) => {
+      if (!levelId) {
+        return [] as SketchCircleNode[]
+      }
+
+      const nextLevelNode = state.nodes[levelId]
+      if (!nextLevelNode || nextLevelNode.type !== 'level') {
+        return [] as SketchCircleNode[]
+      }
+
+      return nextLevelNode.children
+        .map((childId) => state.nodes[childId])
+        .filter((node): node is SketchCircleNode => node?.type === 'sketch-circle')
+    }),
+  )
   const zones = useScene(
     useShallow((state) => {
       if (!levelId) {
@@ -5852,6 +5910,10 @@ export function FloorplanPanel() {
     setSketchLineDraft,
     sketchRectangleDraft,
     setSketchRectangleDraft,
+    sketchCircleDraft,
+    setSketchCircleDraft,
+    sketchArcDraft,
+    setSketchArcDraft,
     sketchDimensionInput,
     setSketchDimensionInput,
     clearSketchLinePlacementDraft,
@@ -5884,6 +5946,8 @@ export function FloorplanPanel() {
   const [hoveredOpeningId, setHoveredOpeningId] = useState<OpeningNode['id'] | null>(null)
   const [hoveredWallId, setHoveredWallId] = useState<WallNode['id'] | null>(null)
   const [hoveredSketchLineId, setHoveredSketchLineId] = useState<SketchLineNode['id'] | null>(null)
+  const [hoveredSketchCircleId, setHoveredSketchCircleId] =
+    useState<SketchCircleNode['id'] | null>(null)
   const [hoveredSlabId, setHoveredSlabId] = useState<SlabNode['id'] | null>(null)
   const [hoveredCeilingId, setHoveredCeilingId] = useState<CeilingNode['id'] | null>(null)
   const [hoveredFenceId, setHoveredFenceId] = useState<FenceNode['id'] | null>(null)
@@ -6036,6 +6100,16 @@ export function FloorplanPanel() {
           polygon: [toPoint2D(line.start), toPoint2D(line.end)],
         })),
     [sketchLines],
+  )
+  const sketchCircleEntries = useMemo(
+    () =>
+      sketchCircles
+        .filter((circle) => circle.visible !== false && circle.radius > 1e-6)
+        .map((circle) => ({
+          circle,
+          centerline: sampleSketchCircleCenterline(circle),
+        })),
+    [sketchCircles],
   )
   const sketchEndpointSnapPoints = useMemo<WallSketchSnapPoint[]>(
     () =>
@@ -6531,6 +6605,10 @@ export function FloorplanPanel() {
     (tool === 'sketch-line' || tool === 'sketch-construction-line')
   const isSketchRectangleBuildActive =
     phase === 'structure' && mode === 'build' && tool === 'sketch-rectangle'
+  const isSketchCircleBuildActive =
+    phase === 'structure' && mode === 'build' && tool === 'sketch-circle'
+  const isSketchArcBuildActive =
+    phase === 'structure' && mode === 'build' && tool === 'sketch-arc'
   const isSketchDimensionActive =
     phase === 'structure' && mode === 'build' && tool === 'smart-dimension'
   const isSlabBuildActive = phase === 'structure' && mode === 'build' && tool === 'slab'
@@ -6635,6 +6713,7 @@ export function FloorplanPanel() {
   const canInteractElementFloorplanGeometry = isDeleteMode || canSelectElementFloorplanGeometry
   const canInteractFloorplanSketchLines =
     isDeleteMode || canSelectElementFloorplanGeometry || isSketchDimensionActive
+  const canInteractFloorplanSketchCircles = isDeleteMode || canSelectElementFloorplanGeometry
   const canInteractFloorplanSlabs = isDeleteMode || canSelectElementFloorplanGeometry
   const canInteractFloorplanCeilings = isDeleteMode || canSelectElementFloorplanGeometry
   const canInteractFloorplanFences = isDeleteMode || canSelectElementFloorplanGeometry
@@ -7156,6 +7235,72 @@ export function FloorplanPanel() {
       y2: toSvgY(firstPoint[1]),
     }
   }, [activePolygonDraftPoints, cursorPoint, isPolygonBuildActive])
+  const sketchCircleDraftCenterline = useMemo(() => {
+    if (!sketchCircleDraft) {
+      return [] as Point2D[]
+    }
+
+    const radius = Math.hypot(
+      sketchCircleDraft.edge[0] - sketchCircleDraft.center[0],
+      sketchCircleDraft.edge[1] - sketchCircleDraft.center[1],
+    )
+    if (radius <= 1e-6) {
+      return [] as Point2D[]
+    }
+
+    return sampleSketchCircleCenterline({
+      center: sketchCircleDraft.center,
+      endAngle: Math.PI * 2,
+      kind: 'circle',
+      radius,
+      startAngle: 0,
+    })
+  }, [sketchCircleDraft])
+  const sketchCircleDraftPath = useMemo(
+    () =>
+      sketchCircleDraftCenterline.length > 0
+        ? formatPolylinePath(sketchCircleDraftCenterline)
+        : null,
+    [sketchCircleDraftCenterline],
+  )
+  const sketchArcDraftCenterline = useMemo(() => {
+    if (!sketchArcDraft) {
+      return [] as Point2D[]
+    }
+
+    if (!sketchArcDraft.start) {
+      return [toPoint2D(sketchArcDraft.center), toPoint2D(sketchArcDraft.end)]
+    }
+
+    const radius = Math.hypot(
+      sketchArcDraft.start[0] - sketchArcDraft.center[0],
+      sketchArcDraft.start[1] - sketchArcDraft.center[1],
+    )
+    if (radius <= 1e-6) {
+      return [] as Point2D[]
+    }
+
+    return sampleSketchCircleCenterline({
+      center: sketchArcDraft.center,
+      endAngle: Math.atan2(
+        sketchArcDraft.end[1] - sketchArcDraft.center[1],
+        sketchArcDraft.end[0] - sketchArcDraft.center[0],
+      ),
+      kind: 'arc',
+      radius,
+      startAngle: Math.atan2(
+        sketchArcDraft.start[1] - sketchArcDraft.center[1],
+        sketchArcDraft.start[0] - sketchArcDraft.center[0],
+      ),
+    })
+  }, [sketchArcDraft])
+  const sketchArcDraftPath = useMemo(
+    () =>
+      sketchArcDraft?.start && sketchArcDraftCenterline.length > 0
+        ? formatPolylinePath(sketchArcDraftCenterline)
+        : null,
+    [sketchArcDraft?.start, sketchArcDraftCenterline],
+  )
 
   const svgAspectRatio = surfaceSize.width / surfaceSize.height || 1
 
@@ -7170,6 +7315,7 @@ export function FloorplanPanel() {
         entry.segments.flatMap((segmentEntry) => segmentEntry.polygon),
       ),
       ...sketchLineEntries.flatMap((entry) => entry.polygon),
+      ...sketchCircleEntries.flatMap((entry) => entry.centerline),
       ...sketchProfiles.flatMap((profile) => profile.points.map(toPoint2D)),
       ...visibleZonePolygons.flatMap((entry) => entry.polygon),
       ...wallPolygons.flatMap((entry) => entry.polygon),
@@ -7179,6 +7325,8 @@ export function FloorplanPanel() {
       ...(sketchRectangleDraft
         ? [toPoint2D(sketchRectangleDraft.start), toPoint2D(sketchRectangleDraft.end)]
         : []),
+      ...sketchCircleDraftCenterline,
+      ...sketchArcDraftCenterline,
     ]
 
     if (allPoints.length === 0) {
@@ -7222,6 +7370,9 @@ export function FloorplanPanel() {
     floorplanItemEntries,
     floorplanStairEntries,
     svgAspectRatio,
+    sketchArcDraftCenterline,
+    sketchCircleDraftCenterline,
+    sketchCircleEntries,
     sketchLineDraft,
     sketchLineEntries,
     sketchProfiles,
@@ -7976,6 +8127,8 @@ export function FloorplanPanel() {
       isWallBuildActive ||
       isSketchLineBuildActive ||
       isSketchRectangleBuildActive ||
+      isSketchCircleBuildActive ||
+      isSketchArcBuildActive ||
       isSketchDimensionActive ||
       isPolygonBuildActive ||
       isFenceBuildActive
@@ -7988,6 +8141,8 @@ export function FloorplanPanel() {
     clearDraft,
     isFenceBuildActive,
     isPolygonBuildActive,
+    isSketchArcBuildActive,
+    isSketchCircleBuildActive,
     isSketchDimensionActive,
     isSketchLineBuildActive,
     isSketchRectangleBuildActive,
@@ -8000,6 +8155,8 @@ export function FloorplanPanel() {
         (isWallBuildActive && (draftStart || wallLengthInput)) ||
         (isSketchLineBuildActive && (sketchLineDraft || sketchDimensionInput)) ||
         (isSketchRectangleBuildActive && sketchRectangleDraft) ||
+        (isSketchCircleBuildActive && sketchCircleDraft) ||
+        (isSketchArcBuildActive && sketchArcDraft) ||
         (isSketchDimensionActive && sketchDimensionInput) ||
         (isPolygonBuildActive && activePolygonDraftPoints.length > 0) ||
         (isFenceBuildActive && fenceDraft) ||
@@ -8023,10 +8180,14 @@ export function FloorplanPanel() {
     fenceDraft,
     isFenceBuildActive,
     isPolygonBuildActive,
+    isSketchArcBuildActive,
+    isSketchCircleBuildActive,
     isSketchDimensionActive,
     isSketchLineBuildActive,
     isSketchRectangleBuildActive,
     isWallBuildActive,
+    sketchArcDraft,
+    sketchCircleDraft,
     sketchDimensionInput,
     sketchLineDraft,
     sketchRectangleDraft,
@@ -8221,6 +8382,10 @@ export function FloorplanPanel() {
         : line
     })
   }, [sketchLineEditDraft, sketchLines])
+  const displaySketchCircles = useMemo(
+    () => sketchCircleEntries.map((entry) => entry.circle),
+    [sketchCircleEntries],
+  )
 
   const displaySelectedSketchLineList = useMemo(() => {
     if (!sketchLineEditDraft) {
@@ -8240,6 +8405,8 @@ export function FloorplanPanel() {
   const {
     handleSketchLinePlacementPoint,
     handleSketchRectanglePlacementPoint,
+    handleSketchCirclePlacementPoint,
+    handleSketchArcPlacementPoint,
     handleSketchLineOperationClick,
     sketchLineEditOperation,
     openSketchDimensionInput,
@@ -8254,9 +8421,13 @@ export function FloorplanPanel() {
     unit,
     sketchLineDraft,
     sketchRectangleDraft,
+    sketchCircleDraft,
+    sketchArcDraft,
     sketchDimensionInput,
     setSketchLineDraft,
     setSketchRectangleDraft,
+    setSketchCircleDraft,
+    setSketchArcDraft,
     setSketchDimensionInput,
     sketchLineById,
     selectedSketchLineEntry,
@@ -10099,6 +10270,45 @@ export function FloorplanPanel() {
         return
       }
 
+      if (isSketchCircleBuildActive || isSketchArcBuildActive) {
+        const snapResult = resolveWallSketchSnap({
+          point: planPoint,
+          walls,
+          enableInference: false,
+          snapPoints: sketchEndpointSnapPoints,
+        })
+        const snappedPoint = snapResult.point
+        setCursorPoint(snappedPoint)
+        setWallSketchSnapResult(snapResult)
+
+        if (isSketchCircleBuildActive) {
+          setSketchCircleDraft((currentDraft) => {
+            if (!currentDraft) {
+              return currentDraft
+            }
+
+            if (!pointsEqual(currentDraft.edge, snappedPoint)) {
+              sfxEmitter.emit('sfx:grid-snap')
+            }
+
+            return { ...currentDraft, edge: snappedPoint }
+          })
+        } else {
+          setSketchArcDraft((currentDraft) => {
+            if (!currentDraft) {
+              return currentDraft
+            }
+
+            if (!pointsEqual(currentDraft.end, snappedPoint)) {
+              sfxEmitter.emit('sfx:grid-snap')
+            }
+
+            return { ...currentDraft, end: snappedPoint }
+          })
+        }
+        return
+      }
+
       if (isSketchDimensionActive) {
         setCursorPoint(getSnappedFloorplanPoint(planPoint))
         return
@@ -10157,6 +10367,8 @@ export function FloorplanPanel() {
       isMarqueeSelectionToolActive,
       isOpeningPlacementActive,
       isPolygonBuildActive,
+      isSketchArcBuildActive,
+      isSketchCircleBuildActive,
       isSketchDimensionActive,
       isSketchLineBuildActive,
       isSketchRectangleBuildActive,
@@ -10171,6 +10383,8 @@ export function FloorplanPanel() {
       sketchRectangleDraft,
       setSketchLineDraft,
       setSketchRectangleDraft,
+      setSketchArcDraft,
+      setSketchCircleDraft,
       surfaceSize.height,
       surfaceSize.width,
       updateViewport,
@@ -10473,6 +10687,22 @@ export function FloorplanPanel() {
         return
       }
 
+      if (isSketchCircleBuildActive || isSketchArcBuildActive) {
+        const snapResult = resolveWallSketchSnap({
+          point: planPoint,
+          walls,
+          enableInference: false,
+          snapPoints: sketchEndpointSnapPoints,
+        })
+        setWallSketchSnapResult(snapResult)
+        if (isSketchCircleBuildActive) {
+          handleSketchCirclePlacementPoint(snapResult.point)
+        } else {
+          handleSketchArcPlacementPoint(snapResult.point)
+        }
+        return
+      }
+
       if (isSketchDimensionActive) {
         setSelectedReferenceId(null)
         setSelection({ selectedIds: [] })
@@ -10531,6 +10761,8 @@ export function FloorplanPanel() {
       handleSlabPlacementPoint,
       handleSketchLinePlacementPoint,
       handleSketchRectanglePlacementPoint,
+      handleSketchArcPlacementPoint,
+      handleSketchCirclePlacementPoint,
       handleZonePlacementPoint,
       handleWallPlacementPoint,
       isCeilingBuildActive,
@@ -10538,6 +10770,8 @@ export function FloorplanPanel() {
       isFloorplanGridInteractionActive,
       isOpeningPlacementActive,
       isPolygonBuildActive,
+      isSketchArcBuildActive,
+      isSketchCircleBuildActive,
       isSketchDimensionActive,
       isSketchLineBuildActive,
       isSketchRectangleBuildActive,
@@ -10853,10 +11087,40 @@ export function FloorplanPanel() {
         sketchRectangleDraft.end,
         wallSketchSnapResult?.target ?? null,
       )
+      return
+    }
+
+    if (
+      sketchCircleDraft &&
+      Math.hypot(
+        sketchCircleDraft.edge[0] - sketchCircleDraft.center[0],
+        sketchCircleDraft.edge[1] - sketchCircleDraft.center[1],
+      ) > 1e-6
+    ) {
+      handleSketchCirclePlacementPoint(sketchCircleDraft.edge)
+      return
+    }
+
+    if (
+      sketchArcDraft?.start &&
+      Math.hypot(
+        sketchArcDraft.end[0] - sketchArcDraft.center[0],
+        sketchArcDraft.end[1] - sketchArcDraft.center[1],
+      ) > 1e-6 &&
+      Math.hypot(
+        sketchArcDraft.end[0] - sketchArcDraft.start[0],
+        sketchArcDraft.end[1] - sketchArcDraft.start[1],
+      ) > 1e-6
+    ) {
+      handleSketchArcPlacementPoint(sketchArcDraft.end)
     }
   }, [
+    handleSketchArcPlacementPoint,
+    handleSketchCirclePlacementPoint,
     handleSketchLinePlacementPoint,
     handleSketchRectanglePlacementPoint,
+    sketchArcDraft,
+    sketchCircleDraft,
     sketchLineDraft,
     sketchRectangleDraft,
     wallSketchSnapResult?.target,
@@ -10999,8 +11263,11 @@ export function FloorplanPanel() {
   }, [handleSelectedSketchLineDelete])
 
   const selectAllSketchLines = useCallback(() => {
-    commitFloorplanSelection(sketchLineEntries.map(({ line }) => line.id))
-  }, [commitFloorplanSelection, sketchLineEntries])
+    commitFloorplanSelection([
+      ...sketchLineEntries.map(({ line }) => line.id),
+      ...sketchCircleEntries.map(({ circle }) => circle.id),
+    ])
+  }, [commitFloorplanSelection, sketchCircleEntries, sketchLineEntries])
 
   const zoomFloorplanToFit = useCallback(() => {
     hasUserAdjustedViewportRef.current = false
@@ -11014,16 +11281,37 @@ export function FloorplanPanel() {
         return
       }
 
-      if (sketchLineDraft || sketchRectangleDraft) {
+      if (sketchLineDraft || sketchRectangleDraft || sketchCircleDraft || sketchArcDraft) {
         const canCommit = Boolean(
           (sketchLineDraft &&
             isSketchLineLongEnough(sketchLineDraft.start, sketchLineDraft.end)) ||
             (sketchRectangleDraft &&
-              isSketchLineLongEnough(sketchRectangleDraft.start, sketchRectangleDraft.end)),
+              isSketchLineLongEnough(sketchRectangleDraft.start, sketchRectangleDraft.end)) ||
+            (sketchCircleDraft &&
+              Math.hypot(
+                sketchCircleDraft.edge[0] - sketchCircleDraft.center[0],
+                sketchCircleDraft.edge[1] - sketchCircleDraft.center[1],
+              ) > 1e-6) ||
+            (sketchArcDraft?.start &&
+              Math.hypot(
+                sketchArcDraft.end[0] - sketchArcDraft.center[0],
+                sketchArcDraft.end[1] - sketchArcDraft.center[1],
+              ) > 1e-6 &&
+              Math.hypot(
+                sketchArcDraft.end[0] - sketchArcDraft.start[0],
+                sketchArcDraft.end[1] - sketchArcDraft.start[1],
+              ) > 1e-6),
         )
+        const draft = sketchRectangleDraft
+          ? 'rectangle'
+          : sketchCircleDraft
+            ? 'circle'
+            : sketchArcDraft
+              ? 'arc'
+              : 'line'
         setSketchContextMenuTarget({
           kind: 'sketch-drawing',
-          draft: sketchRectangleDraft ? 'rectangle' : 'line',
+          draft,
           canCommit,
         })
         return
@@ -11051,7 +11339,7 @@ export function FloorplanPanel() {
       if (phase === 'structure' && structureLayer !== 'zones') {
         setSketchContextMenuTarget({
           kind: 'sketch-canvas',
-          hasSketchLines: sketchLineEntries.length > 0,
+          hasSketchLines: sketchLineEntries.length + sketchCircleEntries.length > 0,
         })
         return
       }
@@ -11067,6 +11355,9 @@ export function FloorplanPanel() {
       phase,
       selectedIdSet,
       selectedSketchLineList.length,
+      sketchArcDraft,
+      sketchCircleDraft,
+      sketchCircleEntries.length,
       sketchLineDraft,
       sketchLineEntries.length,
       sketchRectangleDraft,
@@ -11104,6 +11395,9 @@ export function FloorplanPanel() {
       const sketchLineIds = sketchLineEntries
         .filter(({ polygon }) => doesPolygonIntersectSelectionBounds(polygon, bounds))
         .map(({ line }) => line.id)
+      const sketchCircleIds = sketchCircleEntries
+        .filter(({ centerline }) => doesPolygonIntersectSelectionBounds(centerline, bounds))
+        .map(({ circle }) => circle.id)
       const stairIds = floorplanStairEntries
         .filter(({ segments }) =>
           segments.some(({ polygon }) => doesPolygonIntersectSelectionBounds(polygon, bounds)),
@@ -11119,6 +11413,7 @@ export function FloorplanPanel() {
           ...ceilingIds,
           ...fenceIds,
           ...sketchLineIds,
+          ...sketchCircleIds,
           ...stairIds,
         ]),
       )
@@ -11133,6 +11428,7 @@ export function FloorplanPanel() {
       isFloorplanItemContextActive,
       openingsPolygons,
       phase,
+      sketchCircleEntries,
       sketchLineEntries,
     ],
   )
@@ -11172,6 +11468,14 @@ export function FloorplanPanel() {
     (lineId: SketchLineNode['id'] | null) => {
       setHoveredSketchLineId(lineId)
       syncDeleteHoveredId(lineId)
+    },
+    [syncDeleteHoveredId],
+  )
+
+  const handleSketchCircleHoverChange = useCallback(
+    (circleId: SketchCircleNode['id'] | null) => {
+      setHoveredSketchCircleId(circleId)
+      syncDeleteHoveredId(circleId)
     },
     [syncDeleteHoveredId],
   )
@@ -11335,6 +11639,22 @@ export function FloorplanPanel() {
       sketchLineEditOperation,
       toggleFloorplanSelection,
     ],
+  )
+
+  const handleSketchCircleClick = useCallback(
+    (circle: SketchCircleNode, event: ReactMouseEvent<SVGElement>) => {
+      if (isDeleteMode) {
+        event.preventDefault()
+        event.stopPropagation()
+        sfxEmitter.emit('sfx:item-delete')
+        deleteNode(circle.id as AnyNodeId)
+        setSelection({ selectedIds: [] })
+        return
+      }
+
+      toggleFloorplanSelection(circle.id, getSelectionModifierKeys(event))
+    },
+    [deleteNode, isDeleteMode, setSelection, toggleFloorplanSelection],
   )
 
   const handleSketchLineDimensionClick = useCallback(
@@ -13190,6 +13510,8 @@ export function FloorplanPanel() {
     draftStart ??
     sketchLineDraft?.start ??
     sketchRectangleDraft?.start ??
+    sketchCircleDraft?.center ??
+    sketchArcDraft?.center ??
     activePolygonDraftPoints[0] ??
     null
   const floorplanCursorColor =
@@ -13450,6 +13772,18 @@ export function FloorplanPanel() {
                 unit={unit}
               />
 
+              <FloorplanSketchCircleLayer
+                canSelectSketchCircles={canInteractFloorplanSketchCircles}
+                highlightedIdSet={highlightedFloorplanIdSet}
+                hoveredSketchCircleId={hoveredSketchCircleId}
+                isDeleteMode={isDeleteMode}
+                onSketchCircleClick={handleSketchCircleClick}
+                onSketchCircleHoverChange={handleSketchCircleHoverChange}
+                palette={palette}
+                selectedIdSet={selectedIdSet}
+                sketchCircles={displaySketchCircles}
+              />
+
               <FloorplanSketchEditLayer
                 canEditSketchLines={
                   canSelectElementFloorplanGeometry &&
@@ -13674,10 +14008,66 @@ export function FloorplanPanel() {
                 />
               ))}
 
+              {sketchCircleDraftPath && (
+                <path
+                  d={sketchCircleDraftPath}
+                  fill="none"
+                  pointerEvents="none"
+                  stroke={palette.draftStroke}
+                  strokeDasharray="0.18 0.1"
+                  strokeLinecap="round"
+                  strokeOpacity={0.82}
+                  strokeWidth={FLOORPLAN_SKETCH_LINE_SELECTED_STROKE_WIDTH}
+                  vectorEffect="non-scaling-stroke"
+                />
+              )}
+
+              {sketchArcDraft && !sketchArcDraft.start && (
+                <line
+                  pointerEvents="none"
+                  stroke={palette.measurementStroke}
+                  strokeDasharray="0.16 0.1"
+                  strokeLinecap="round"
+                  strokeOpacity={0.72}
+                  strokeWidth={FLOORPLAN_SKETCH_CONSTRUCTION_LINE_SELECTED_STROKE_WIDTH}
+                  vectorEffect="non-scaling-stroke"
+                  x1={toSvgX(sketchArcDraft.center[0])}
+                  x2={toSvgX(sketchArcDraft.end[0])}
+                  y1={toSvgY(sketchArcDraft.center[1])}
+                  y2={toSvgY(sketchArcDraft.end[1])}
+                />
+              )}
+
+              {sketchArcDraftPath && (
+                <path
+                  d={sketchArcDraftPath}
+                  fill="none"
+                  pointerEvents="none"
+                  stroke={palette.draftStroke}
+                  strokeDasharray="0.18 0.1"
+                  strokeLinecap="round"
+                  strokeOpacity={0.82}
+                  strokeWidth={FLOORPLAN_SKETCH_LINE_SELECTED_STROKE_WIDTH}
+                  vectorEffect="non-scaling-stroke"
+                />
+              )}
+
               <FloorplanWallSketchFeedbackLayer
-                draftEnd={draftEnd ?? sketchLineDraft?.end ?? sketchRectangleDraft?.end ?? null}
+                draftEnd={
+                  draftEnd ??
+                  sketchLineDraft?.end ??
+                  sketchRectangleDraft?.end ??
+                  sketchCircleDraft?.edge ??
+                  sketchArcDraft?.end ??
+                  null
+                }
                 draftStart={
-                  draftStart ?? sketchLineDraft?.start ?? sketchRectangleDraft?.start ?? null
+                  draftStart ??
+                  sketchLineDraft?.start ??
+                  sketchRectangleDraft?.start ??
+                  sketchCircleDraft?.center ??
+                  sketchArcDraft?.center ??
+                  null
                 }
                 palette={palette}
                 snapResult={wallSketchSnapResult}

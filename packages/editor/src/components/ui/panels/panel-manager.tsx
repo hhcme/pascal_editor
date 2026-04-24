@@ -10,6 +10,7 @@ import { ItemPanel } from './item-panel'
 import { ReferencePanel } from './reference-panel'
 import { RoofPanel } from './roof-panel'
 import { RoofSegmentPanel } from './roof-segment-panel'
+import { SketchCirclePanel } from './sketch-circle-panel'
 import { SketchLinePanel } from './sketch-line-panel'
 import { SlabPanel } from './slab-panel'
 import { StairPanel } from './stair-panel'
@@ -25,6 +26,7 @@ type InspectorPanelType =
   | 'stair'
   | 'stair-segment'
   | 'slab'
+  | 'sketch-circle'
   | 'sketch-line'
   | 'ceiling'
   | 'wall'
@@ -40,6 +42,7 @@ function isInspectorPanelType(nodeType: string | null): nodeType is InspectorPan
     case 'stair':
     case 'stair-segment':
     case 'slab':
+    case 'sketch-circle':
     case 'sketch-line':
     case 'ceiling':
     case 'wall':
@@ -88,6 +91,8 @@ export function PanelManager() {
         return <StairSegmentPanel />
       case 'slab':
         return <SlabPanel />
+      case 'sketch-circle':
+        return <SketchCirclePanel />
       case 'sketch-line':
         return <SketchLinePanel />
       case 'ceiling':

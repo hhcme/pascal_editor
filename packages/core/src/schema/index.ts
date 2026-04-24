@@ -50,6 +50,12 @@ export { ScanNode } from './nodes/scan'
 // Nodes
 export { SiteNode } from './nodes/site'
 export {
+  SketchCircleDimensions,
+  SketchCircleKind,
+  SketchCircleNode,
+  SketchCircleRelation,
+} from './nodes/sketch-circle'
+export {
   SketchLineCoincident,
   SketchLineDimensions,
   SketchLineEndpoint,

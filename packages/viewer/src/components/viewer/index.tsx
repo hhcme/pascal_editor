@@ -107,12 +107,14 @@ interface ViewerProps {
   children?: React.ReactNode
   selectionManager?: 'default' | 'custom'
   perf?: boolean
+  postProcessing?: boolean
 }
 
 const Viewer: React.FC<ViewerProps> = ({
   children,
   selectionManager = 'default',
   perf = false,
+  postProcessing = true,
 }) => {
   const theme = useViewer((state) => state.theme)
   return (
@@ -174,7 +176,7 @@ const Viewer: React.FC<ViewerProps> = ({
       <WallSystem />
       <WindowSystem />
       <ZoneSystem />
-      <PostProcessing />
+      {postProcessing && <PostProcessing />}
       {/* <DebugRenderer /> */}
       <GPUDeviceWatcher />
 

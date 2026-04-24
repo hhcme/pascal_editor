@@ -42,6 +42,7 @@ type SelectableNodeType =
   | 'ceiling'
   | 'roof'
   | 'roof-segment'
+  | 'sketch-circle'
   | 'sketch-line'
   | 'stair'
   | 'stair-segment'
@@ -320,6 +321,7 @@ const SELECTION_STRATEGIES: Record<string, SelectionStrategy> = {
       'ceiling',
       'roof',
       'roof-segment',
+      'sketch-circle',
       'sketch-line',
       'stair',
       'stair-segment',
@@ -372,6 +374,7 @@ const SELECTION_STRATEGIES: Record<string, SelectionStrategy> = {
         node.type === 'ceiling' ||
         node.type === 'roof' ||
         node.type === 'roof-segment' ||
+        node.type === 'sketch-circle' ||
         node.type === 'sketch-line' ||
         node.type === 'stair' ||
         node.type === 'stair-segment'
@@ -435,6 +438,7 @@ const getSelectionTarget = (node: AnyNode): SelectionTarget | null => {
     node.type === 'ceiling' ||
     node.type === 'roof' ||
     node.type === 'roof-segment' ||
+    node.type === 'sketch-circle' ||
     node.type === 'sketch-line' ||
     node.type === 'stair' ||
     node.type === 'stair-segment' ||
@@ -621,6 +625,7 @@ export const SelectionManager = () => {
       'ceiling',
       'roof',
       'roof-segment',
+      'sketch-circle',
       'sketch-line',
       'stair',
       'stair-segment',
@@ -715,6 +720,7 @@ export const SelectionManager = () => {
         node.type === 'ceiling' ||
         node.type === 'roof' ||
         node.type === 'roof-segment' ||
+        node.type === 'sketch-circle' ||
         node.type === 'sketch-line' ||
         node.type === 'stair' ||
         node.type === 'stair-segment' ||
@@ -768,6 +774,7 @@ export const SelectionManager = () => {
       'ceiling',
       'roof',
       'roof-segment',
+      'sketch-circle',
       'sketch-line',
       'stair',
       'stair-segment',
@@ -840,6 +847,7 @@ export const SelectionManager = () => {
       'ceiling',
       'roof',
       'roof-segment',
+      'sketch-circle',
       'sketch-line',
       'stair',
       'stair-segment',

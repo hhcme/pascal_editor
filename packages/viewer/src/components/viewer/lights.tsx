@@ -1,3 +1,4 @@
+import { type SiteNode, useScene } from '@pascal-app/core'
 import { useFrame } from '@react-three/fiber'
 import { useMemo, useRef } from 'react'
 import type { AmbientLight, DirectionalLight, OrthographicCamera } from 'three/webgpu'
@@ -9,9 +10,47 @@ import {
 } from '../../lib/sun-study'
 import useViewer from '../../store/use-viewer'
 
+const SITE_ORIENTATION_DEGREES_KEY = 'orientationDegrees'
+
+function normalizeDegrees(degrees: number): number {
+  const normalized = ((degrees % 360) + 360) % 360
+  return Object.is(normalized, -0) ? 0 : normalized
+}
+
+function degreesToRadians(degrees: number): number {
+  return (-normalizeDegrees(degrees) * Math.PI) / 180
+}
+
+function getSiteOrientationDegrees(site: Pick<SiteNode, 'metadata'> | null | undefined): number {
+  const metadata =
+    typeof site?.metadata === 'object' && site.metadata !== null && !Array.isArray(site.metadata)
+      ? (site.metadata as Record<string, unknown>)
+      : {}
+  const degrees = metadata[SITE_ORIENTATION_DEGREES_KEY]
+
+  return typeof degrees === 'number' && Number.isFinite(degrees) ? normalizeDegrees(degrees) : 0
+}
+
+function rotateSunPosition(
+  position: [number, number, number],
+  orientationDegrees: number,
+): [number, number, number] {
+  const rotation = degreesToRadians(orientationDegrees)
+  const cos = Math.cos(rotation)
+  const sin = Math.sin(rotation)
+  const [x, y, z] = position
+
+  return [x * cos + z * sin, y, -x * sin + z * cos]
+}
+
 export function Lights() {
   const theme = useViewer((state) => state.theme)
   const sunStudy = useViewer((state) => state.sunStudy)
+  const siteOrientationDegrees = useScene((state) => {
+    const rootId = state.rootNodeIds[0]
+    const node = rootId ? state.nodes[rootId] : null
+    return node?.type === 'site' ? getSiteOrientationDegrees(node as SiteNode) : 0
+  })
   const isDark = theme === 'dark'
   const sunEnabled = sunStudy.enabled
   const sunProgress = resolveSunProgress(sunStudy.timeOfDay, sunStudy.progress)
@@ -41,7 +80,10 @@ export function Lights() {
   useFrame((_, delta) => {
     // clamp delta to avoid huge jumps on tab switch
     const dt = Math.min(delta, 0.1) * 4
-    const sunPosition = getSunPositionForProgress(sunProgress, 36)
+    const sunPosition = rotateSunPosition(
+      getSunPositionForProgress(sunProgress, 36),
+      siteOrientationDegrees,
+    )
 
     const l1Intensity = sunEnabled ? sunPreset.intensity * (isDark ? 0.34 : 1) : isDark ? 0.8 : 4
     const l1Color = sunEnabled ? sunPreset.color : isDark ? '#e0e5ff' : '#ffffff'

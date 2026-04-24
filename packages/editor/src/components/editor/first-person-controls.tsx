@@ -2,7 +2,13 @@
 
 import {
   type AnyNodeId,
+  type BuildingNode,
+  type CeilingNode,
   type DoorNode,
+  type LevelNode,
+  type RoofNode,
+  type RoofSegmentNode,
+  type SlabNode,
   type StairNode,
   type StairSegmentNode,
   sceneRegistry,
@@ -27,6 +33,9 @@ import useEditor, {
   type FirstPersonEyeHeightPreset,
   type FirstPersonNavigationMode,
   type FirstPersonSpeedPreset,
+  MAX_FIRST_PERSON_FLY_CLEARANCE,
+  MIN_FIRST_PERSON_FLY_CLEARANCE,
+  normalizeFirstPersonFlyClearance,
 } from '../../store/use-editor'
 import { type PathPoint, planWalkPath } from './first-person-pathfinding'
 
@@ -57,17 +66,21 @@ const SPRINT_MULTIPLIER = 2
 const SLOW_MULTIPLIER = 0.35
 const VERTICAL_SPEED = 3
 const MOUSE_SENSITIVITY = 0.002
+const DEFAULT_LEVEL_HEIGHT = 2.5
 const MIN_FLY_HEIGHT = 0.25
+const FLY_ENTRY_PITCH = -0.18
+const FLY_CLEARANCE_STEP = 0.5
 const WALL_COLLISION_RADIUS = 0.32
 const DOOR_OPENING_PADDING = 0.16
 const MIN_WALL_LENGTH = 0.001
 const STAIR_SURFACE_PADDING = 0.18
 const TWO_PI = Math.PI * 2
-const MINIMAP_WIDTH = 208
-const MINIMAP_HEIGHT = 140
+const MINIMAP_WIDTH = 260
+const MINIMAP_HEIGHT = 170
 const MINIMAP_PADDING = 14
 const BOOKMARK_STORAGE_PREFIX = 'pascal:first-person-bookmarks'
 const BOOKMARK_LIMIT = 16
+const MANUAL_ROUTE_LIMIT = 16
 const TOUR_SPEED = 2.25
 const TOUR_WAYPOINT_DWELL = 1.25
 const TOUR_ARRIVAL_DISTANCE = 0.16
@@ -81,6 +94,35 @@ const TOUR_START_EVENT = 'editor:first-person-tour-start'
 const TOUR_STOP_EVENT = 'editor:first-person-tour-stop'
 const TOUR_STATUS_EVENT = 'editor:first-person-tour-status'
 const VIRTUAL_MOVE_EVENT = 'editor:first-person-virtual-move'
+const ROUTE_PLANNING_EVENT = 'editor:first-person-route-planning'
+const ROUTE_POINT_EVENT = 'editor:first-person-route-point'
+
+function toFiniteNumber(value: unknown, fallback: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function getTupleNumber(value: unknown, index: number, fallback: number) {
+  if (!Array.isArray(value)) return fallback
+  return toFiniteNumber(value[index], fallback)
+}
+
+function getPlanPolygon(value: unknown): [number, number][] {
+  if (!Array.isArray(value)) return []
+
+  const points: [number, number][] = []
+  for (const point of value) {
+    if (!Array.isArray(point)) continue
+    const x = toFiniteNumber(point[0], Number.NaN)
+    const z = toFiniteNumber(point[1], Number.NaN)
+    if (Number.isFinite(x) && Number.isFinite(z)) points.push([x, z])
+  }
+
+  return points
+}
+
+function getDisplayName(value: unknown, fallback: string) {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback
+}
 
 const MOVEMENT_KEY_CODES = new Set([
   'KeyW',
@@ -120,6 +162,7 @@ type FirstPersonSettingsSnapshot = {
   navigationMode: FirstPersonNavigationMode
   speedPreset: FirstPersonSpeedPreset
   eyeHeight: number
+  flyClearance: number
 }
 
 type DoorOpening = {
@@ -175,6 +218,10 @@ type StairWalkSurface = {
 
 type FirstPersonNavigationData = {
   activeLevelId: AnyNodeId | null
+  buildingRotation: number
+  buildingTopY: number | null
+  level: LevelNode | null
+  slabs: SlabNode[]
   stairs: StairWalkSurface[]
   walls: WallCollisionSegment[]
   zones: ZoneNode[]
@@ -189,6 +236,12 @@ type FirstPersonPose = {
   mode: FirstPersonNavigationMode
   eyeHeight: number
   tourDwell?: boolean
+}
+
+type ArrivalMode = 'walk' | 'instant'
+
+type JumpToPosePayload = FirstPersonPose & {
+  arrivalMode?: ArrivalMode
 }
 
 type FirstPersonBookmark = FirstPersonPose & {
@@ -221,11 +274,16 @@ type SegmentTransform = {
 
 type SceneNodeMap = ReturnType<typeof useScene.getState>['nodes']
 
-type PlanBounds = {
+type MiniMapBounds = {
   minX: number
   maxX: number
-  minZ: number
-  maxZ: number
+  minY: number
+  maxY: number
+}
+
+type MiniMapPoint = {
+  x: number
+  y: number
 }
 
 function isEditableTarget(target: EventTarget | null) {
@@ -244,6 +302,15 @@ function getNextSpeedPreset(current: FirstPersonSpeedPreset, delta: 1 | -1) {
   const index = SPEED_ORDER.indexOf(current)
   const nextIndex = Math.max(0, Math.min(SPEED_ORDER.length - 1, index + delta))
   return SPEED_ORDER[nextIndex] ?? current
+}
+
+function getLevelDisplayName(level: LevelNode | null) {
+  if (!level) return 'All levels'
+  return getDisplayName(level.name, `Level ${toFiniteNumber(level.level, 0)}`)
+}
+
+function getLevelShortLabel(level: LevelNode | null) {
+  return level ? `L${toFiniteNumber(level.level, 0)}` : 'All'
 }
 
 function exitPointerLockSafely(target?: Element) {
@@ -280,6 +347,21 @@ function rotateXZ(x: number, z: number, angle: number): [number, number] {
   const cos = Math.cos(angle)
   const sin = Math.sin(angle)
   return [x * cos + z * sin, -x * sin + z * cos]
+}
+
+function rotateMiniMapPoint(point: MiniMapPoint, angle: number): MiniMapPoint {
+  if (angle === 0) return point
+  const cos = Math.cos(angle)
+  const sin = Math.sin(angle)
+
+  return {
+    x: point.x * cos - point.y * sin,
+    y: point.x * sin + point.y * cos,
+  }
+}
+
+function toMiniMapPlanPoint(x: number, z: number, buildingRotation: number): MiniMapPoint {
+  return rotateMiniMapPoint({ x: -x, y: -z }, buildingRotation)
 }
 
 function normalizeAngle(angle: number) {
@@ -497,17 +579,108 @@ function buildStairWalkSurface(
   return null
 }
 
+function getRoofSegmentTopY(segment: RoofSegmentNode) {
+  const roofHeight = segment.roofType === 'flat' ? 0 : toFiniteNumber(segment.roofHeight, 0)
+  const positionY = getTupleNumber(segment.position, 1, 0)
+  const wallHeight = toFiniteNumber(segment.wallHeight, 0)
+  const shingleThickness = toFiniteNumber(segment.shingleThickness, 0)
+
+  return positionY + wallHeight + roofHeight + shingleThickness
+}
+
+function getRoofTopY(roof: RoofNode, nodes: SceneNodeMap) {
+  let segmentTopY = 0
+
+  for (const childId of roof.children ?? []) {
+    const child = nodes[childId as AnyNodeId]
+    if (child?.type !== 'roof-segment') continue
+    segmentTopY = Math.max(segmentTopY, getRoofSegmentTopY(child as RoofSegmentNode))
+  }
+
+  return getTupleNumber(roof.position, 1, 0) + segmentTopY
+}
+
+function getLevelContentHeight(level: LevelNode, nodes: SceneNodeMap) {
+  let maxTop = 0
+
+  for (const childId of level.children ?? []) {
+    const child = nodes[childId as AnyNodeId]
+    if (!child) continue
+
+    if (child.type === 'ceiling') {
+      maxTop = Math.max(maxTop, toFiniteNumber((child as CeilingNode).height, DEFAULT_LEVEL_HEIGHT))
+      continue
+    }
+
+    if (child.type === 'wall') {
+      let baseY = toFiniteNumber(sceneRegistry.nodes.get(childId as AnyNodeId)?.position.y, 0)
+      if (baseY < 0) baseY = 0
+      maxTop = Math.max(
+        maxTop,
+        baseY + toFiniteNumber((child as WallNode).height, DEFAULT_LEVEL_HEIGHT),
+      )
+      continue
+    }
+
+    if (child.type === 'roof') {
+      maxTop = Math.max(maxTop, getRoofTopY(child as RoofNode, nodes))
+      continue
+    }
+
+    if (child.type === 'roof-segment') {
+      maxTop = Math.max(maxTop, getRoofSegmentTopY(child as RoofSegmentNode))
+    }
+  }
+
+  return maxTop > 0 ? maxTop : DEFAULT_LEVEL_HEIGHT
+}
+
+function getBuildingTopY(building: BuildingNode | null, nodes: SceneNodeMap) {
+  if (!building) return null
+
+  const levels = (building.children ?? [])
+    .map((childId) => nodes[childId as AnyNodeId])
+    .filter((node): node is LevelNode => node?.type === 'level')
+    .sort((a, b) => toFiniteNumber(a.level, 0) - toFiniteNumber(b.level, 0))
+
+  if (levels.length === 0) return null
+
+  let cumulativeY = 0
+  let topY = 0
+
+  for (const level of levels) {
+    const height = getLevelContentHeight(level, nodes)
+    topY = Math.max(topY, cumulativeY + height)
+    cumulativeY += height
+  }
+
+  return topY
+}
+
 function buildFirstPersonNavigationData(
   nodes: SceneNodeMap,
   activeLevelId: AnyNodeId | null | undefined,
 ): FirstPersonNavigationData {
   const doorsByWallId = new Map<string, DoorNode[]>()
+  const slabs: SlabNode[] = []
   const stairs: StairWalkSurface[] = []
   const zones: ZoneNode[] = []
   const levelId = activeLevelId ?? null
+  const levelNode = levelId ? (nodes[levelId] as LevelNode | undefined) : undefined
+  const level = levelNode?.type === 'level' ? levelNode : null
+  const buildingId = level?.parentId as AnyNodeId | null | undefined
+  const parentNode = buildingId ? nodes[buildingId] : undefined
+  const buildingNode = parentNode?.type === 'building' ? (parentNode as BuildingNode) : null
+  const buildingRotation = getTupleNumber(buildingNode?.rotation, 1, 0)
+  const buildingTopY = getBuildingTopY(buildingNode, nodes)
 
   for (const node of Object.values(nodes)) {
     if (!node) continue
+
+    if (node.type === 'slab' && (!levelId || node.parentId === levelId)) {
+      slabs.push(node as SlabNode)
+      continue
+    }
 
     if (node.type === 'zone' && (!levelId || node.parentId === levelId)) {
       zones.push(node as ZoneNode)
@@ -556,9 +729,18 @@ function buildFirstPersonNavigationData(
     })
   }
 
-  zones.sort((a, b) => a.name.localeCompare(b.name))
+  zones.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
 
-  return { activeLevelId: levelId, stairs, walls, zones }
+  return {
+    activeLevelId: levelId,
+    buildingRotation,
+    buildingTopY,
+    level,
+    slabs,
+    stairs,
+    walls,
+    zones,
+  }
 }
 
 function useFirstPersonNavigationData() {
@@ -717,7 +899,12 @@ function pointInPolygon(x: number, z: number, polygon: [number, number][]) {
 
 function findContainingZone(zones: ZoneNode[], pose: FirstPersonPose | null) {
   if (!pose) return null
-  return zones.find((zone) => pointInPolygon(pose.x, pose.z, zone.polygon)) ?? null
+  return (
+    zones.find((zone) => {
+      const polygon = getPlanPolygon(zone.polygon)
+      return polygon.length >= 3 && pointInPolygon(pose.x, pose.z, polygon)
+    }) ?? null
+  )
 }
 
 function getStairSegmentSurfaceY(segment: StairWalkSegment, x: number, z: number) {
@@ -802,38 +989,68 @@ function getWalkCameraY(
   return getWalkSurfaceY(navigationData, x, z) + eyeHeight
 }
 
+function getFlyBaseY(navigationData: FirstPersonNavigationData, x: number, z: number) {
+  const surfaceY = getWalkSurfaceY(navigationData, x, z)
+  return Math.max(surfaceY, navigationData.buildingTopY ?? surfaceY)
+}
+
+function getFlyCameraY(
+  navigationData: FirstPersonNavigationData,
+  x: number,
+  z: number,
+  clearance: number,
+) {
+  return getFlyBaseY(navigationData, x, z) + normalizeFirstPersonFlyClearance(clearance)
+}
+
+function getFlyHeightAboveSurface(
+  navigationData: FirstPersonNavigationData,
+  x: number,
+  z: number,
+  clearance: number,
+) {
+  return getFlyCameraY(navigationData, x, z, clearance) - getWalkSurfaceY(navigationData, x, z)
+}
+
 function getFlyMinY(navigationData: FirstPersonNavigationData, x: number, z: number) {
   return getWalkSurfaceY(navigationData, x, z) + MIN_FLY_HEIGHT
 }
 
-function getNavigationBounds(
-  walls: WallCollisionSegment[],
-  zones: ZoneNode[],
-  pose: FirstPersonPose | null,
-): PlanBounds | null {
-  const points: [number, number][] = []
-
-  for (const wall of walls) {
-    points.push([wall.sx, wall.sz], [wall.ex, wall.ez])
+function getNavigationBounds(navigationData: FirstPersonNavigationData): MiniMapBounds | null {
+  const points: MiniMapPoint[] = []
+  const addPoint = (x: number, z: number) => {
+    points.push(toMiniMapPlanPoint(x, z, navigationData.buildingRotation))
   }
 
-  for (const zone of zones) {
-    points.push(...zone.polygon)
+  for (const slab of navigationData.slabs) {
+    for (const [x, z] of getPlanPolygon(slab.polygon)) {
+      addPoint(x, z)
+    }
   }
 
-  if (pose) points.push([pose.x, pose.z])
+  for (const wall of navigationData.walls) {
+    addPoint(wall.sx, wall.sz)
+    addPoint(wall.ex, wall.ez)
+  }
+
+  for (const zone of navigationData.zones) {
+    for (const [x, z] of getPlanPolygon(zone.polygon)) {
+      addPoint(x, z)
+    }
+  }
+
   if (points.length === 0) return null
 
   let minX = Number.POSITIVE_INFINITY
   let maxX = Number.NEGATIVE_INFINITY
-  let minZ = Number.POSITIVE_INFINITY
-  let maxZ = Number.NEGATIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
 
   for (const point of points) {
-    minX = Math.min(minX, point[0])
-    maxX = Math.max(maxX, point[0])
-    minZ = Math.min(minZ, point[1])
-    maxZ = Math.max(maxZ, point[1])
+    minX = Math.min(minX, point.x)
+    maxX = Math.max(maxX, point.x)
+    minY = Math.min(minY, point.y)
+    maxY = Math.max(maxY, point.y)
   }
 
   if (maxX - minX < 1) {
@@ -841,12 +1058,34 @@ function getNavigationBounds(
     maxX += 0.5
   }
 
-  if (maxZ - minZ < 1) {
-    minZ -= 0.5
-    maxZ += 0.5
+  if (maxY - minY < 1) {
+    minY -= 0.5
+    maxY += 0.5
   }
 
-  return { minX, maxX, minZ, maxZ }
+  return { minX, maxX, minY, maxY }
+}
+
+function getMiniMapPointBounds(points: MiniMapPoint[]) {
+  let minX = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+
+  for (const point of points) {
+    minX = Math.min(minX, point.x)
+    maxX = Math.max(maxX, point.x)
+    minY = Math.min(minY, point.y)
+    maxY = Math.max(maxY, point.y)
+  }
+
+  return { width: maxX - minX, height: maxY - minY }
+}
+
+function truncateMiniMapLabel(label: string, maxLength: number) {
+  if (label.length <= maxLength) return label
+  if (maxLength <= 3) return label.slice(0, maxLength)
+  return `${label.slice(0, maxLength - 3)}...`
 }
 
 function getNavigationBoundsPoints(navigationData: FirstPersonNavigationData) {
@@ -857,7 +1096,7 @@ function getNavigationBoundsPoints(navigationData: FirstPersonNavigationData) {
   }
 
   for (const zone of navigationData.zones) {
-    for (const [x, z] of zone.polygon) {
+    for (const [x, z] of getPlanPolygon(zone.polygon)) {
       points.push({ x, z })
     }
   }
@@ -912,13 +1151,46 @@ function buildPlannedTourRoute(
   return route
 }
 
-function dispatchJumpToPose(pose: FirstPersonPose) {
-  window.dispatchEvent(new CustomEvent<FirstPersonPose>(JUMP_TO_POSE_EVENT, { detail: pose }))
+function buildFlyTourRoute(
+  start: FirstPersonPose,
+  targets: FirstPersonPose[],
+  navigationData: FirstPersonNavigationData,
+  flyClearance: number,
+) {
+  return targets.map((target, index): FirstPersonPose => {
+    const previous = index === 0 ? start : targets[index - 1]!
+    const next = targets[index + 1] ?? null
+    const minY = getFlyMinY(navigationData, target.x, target.z)
+    const hasExplicitFlyY =
+      target.mode === 'fly' && Number.isFinite(target.y) && target.y > minY + 0.05
+    const y = hasExplicitFlyY
+      ? Math.max(target.y, minY)
+      : getFlyCameraY(navigationData, target.x, target.z, flyClearance)
+
+    return {
+      ...target,
+      y,
+      yaw: next
+        ? yawToPoint(target.x, target.z, next.x, next.z)
+        : Number.isFinite(target.yaw)
+          ? target.yaw
+          : yawToPoint(previous.x, previous.z, target.x, target.z),
+      pitch: Number.isFinite(target.pitch) ? target.pitch : FLY_ENTRY_PITCH,
+      mode: 'fly',
+      tourDwell: index === targets.length - 1,
+    }
+  })
 }
 
-function dispatchJumpToZone(zoneId: string) {
+function dispatchJumpToPose(pose: JumpToPosePayload) {
+  window.dispatchEvent(new CustomEvent<JumpToPosePayload>(JUMP_TO_POSE_EVENT, { detail: pose }))
+}
+
+function dispatchJumpToZone(zoneId: string, arrivalMode: ArrivalMode) {
   window.dispatchEvent(
-    new CustomEvent<{ zoneId: string }>(JUMP_TO_ZONE_EVENT, { detail: { zoneId } }),
+    new CustomEvent<{ zoneId: string; arrivalMode: ArrivalMode }>(JUMP_TO_ZONE_EVENT, {
+      detail: { zoneId, arrivalMode },
+    }),
   )
 }
 
@@ -940,6 +1212,14 @@ function dispatchStopTour() {
 
 function dispatchVirtualMove(move: VirtualMove) {
   window.dispatchEvent(new CustomEvent<VirtualMove>(VIRTUAL_MOVE_EVENT, { detail: move }))
+}
+
+function dispatchRoutePlanning(active: boolean) {
+  window.dispatchEvent(new CustomEvent(ROUTE_PLANNING_EVENT, { detail: { active } }))
+}
+
+function dispatchRoutePoint(pose: FirstPersonPose) {
+  window.dispatchEvent(new CustomEvent<FirstPersonPose>(ROUTE_POINT_EVENT, { detail: pose }))
 }
 
 function getBookmarkStorageKey(buildingId: string | null, levelId: string | null) {
@@ -1027,9 +1307,11 @@ export const FirstPersonControls = () => {
   const speedPreset = useEditor((s) => s.firstPersonSpeedPreset)
   const setSpeedPreset = useEditor((s) => s.setFirstPersonSpeedPreset)
   const eyeHeightPreset = useEditor((s) => s.firstPersonEyeHeightPreset)
+  const flyClearance = useEditor((s) => s.firstPersonFlyClearance)
 
   const keysRef = useRef<Set<string>>(new Set())
   const virtualMoveRef = useRef<VirtualMove>({ x: 0, z: 0 })
+  const routePlanningRef = useRef(false)
   const navigationDataRef = useRef(navigationData)
   const wallsRef = useRef(navigationData.walls)
   const zonesRef = useRef(navigationData.zones)
@@ -1040,17 +1322,19 @@ export const FirstPersonControls = () => {
   const lookPointerIdRef = useRef<number | null>(null)
   const initializedRef = useRef(false)
   const poseElapsedRef = useRef(0)
+  const previousNavigationModeRef = useRef(navigationMode)
   const settingsRef = useRef<FirstPersonSettingsSnapshot>({
     navigationMode,
     speedPreset,
     eyeHeight: EYE_HEIGHT_CONFIG[eyeHeightPreset].height,
+    flyClearance,
   })
 
   const eyeHeight = EYE_HEIGHT_CONFIG[eyeHeightPreset].height
 
   useEffect(() => {
-    settingsRef.current = { navigationMode, speedPreset, eyeHeight }
-  }, [navigationMode, speedPreset, eyeHeight])
+    settingsRef.current = { navigationMode, speedPreset, eyeHeight, flyClearance }
+  }, [navigationMode, speedPreset, eyeHeight, flyClearance])
 
   useEffect(() => {
     navigationDataRef.current = navigationData
@@ -1059,6 +1343,9 @@ export const FirstPersonControls = () => {
   }, [navigationData])
 
   useEffect(() => {
+    const previousMode = previousNavigationModeRef.current
+    previousNavigationModeRef.current = navigationMode
+
     if (navigationMode === 'walk') {
       camera.position.y = getWalkCameraY(
         navigationDataRef.current,
@@ -1066,8 +1353,30 @@ export const FirstPersonControls = () => {
         camera.position.z,
         eyeHeight,
       )
+      return
     }
-  }, [camera, eyeHeight, navigationMode])
+
+    if (previousMode === 'walk') {
+      const targetY = getFlyCameraY(
+        navigationDataRef.current,
+        camera.position.x,
+        camera.position.z,
+        flyClearance,
+      )
+      camera.position.y = Math.max(camera.position.y, targetY)
+      pitchRef.current = Math.min(pitchRef.current, FLY_ENTRY_PITCH)
+    }
+  }, [camera, eyeHeight, flyClearance, navigationMode])
+
+  useEffect(() => {
+    if (navigationMode !== 'fly') return
+    camera.position.y = getFlyCameraY(
+      navigationDataRef.current,
+      camera.position.x,
+      camera.position.z,
+      flyClearance,
+    )
+  }, [camera, flyClearance, navigationMode])
 
   // Initialize camera for first-person view from the current 3D view direction.
   useEffect(() => {
@@ -1081,13 +1390,16 @@ export const FirstPersonControls = () => {
       yawRef.current = Math.atan2(-_lookDirection.x, -_lookDirection.z)
     }
     pitchRef.current = 0
-    camera.position.y = getWalkCameraY(
-      navigationDataRef.current,
-      camera.position.x,
-      camera.position.z,
-      eyeHeight,
-    )
-  }, [camera, eyeHeight])
+    camera.position.y =
+      navigationMode === 'fly'
+        ? getFlyCameraY(
+            navigationDataRef.current,
+            camera.position.x,
+            camera.position.z,
+            flyClearance,
+          )
+        : getWalkCameraY(navigationDataRef.current, camera.position.x, camera.position.z, eyeHeight)
+  }, [camera, eyeHeight, flyClearance, navigationMode])
 
   const setMouseLookActive = useCallback((active: boolean) => {
     isLookingRef.current = active
@@ -1103,17 +1415,26 @@ export const FirstPersonControls = () => {
         .filter((pose): pose is FirstPersonPose => pose !== null)
       if (targets.length === 0) return false
 
-      const { eyeHeight: currentEyeHeight } = settingsRef.current
+      const {
+        navigationMode: currentNavigationMode,
+        eyeHeight: currentEyeHeight,
+        flyClearance: currentFlyClearance,
+      } = settingsRef.current
+      const navigation = navigationDataRef.current
+      const shouldFly =
+        currentNavigationMode === 'fly' || targets.some((target) => target.mode === 'fly')
       const startPose: FirstPersonPose = {
         x: camera.position.x,
         y: camera.position.y,
         z: camera.position.z,
         yaw: yawRef.current,
         pitch: pitchRef.current,
-        mode: settingsRef.current.navigationMode,
+        mode: currentNavigationMode,
         eyeHeight: currentEyeHeight,
       }
-      const plannedRoute = buildPlannedTourRoute(startPose, targets, navigationDataRef.current)
+      const plannedRoute = shouldFly
+        ? buildFlyTourRoute(startPose, targets, navigation, currentFlyClearance)
+        : buildPlannedTourRoute(startPose, targets, navigation)
 
       if (plannedRoute.length === 0) {
         tourRef.current = { active: false, route: [], index: 0, dwell: 0 }
@@ -1121,11 +1442,44 @@ export const FirstPersonControls = () => {
         return false
       }
 
-      settingsRef.current = { ...settingsRef.current, navigationMode: 'walk' }
-      setNavigationMode('walk')
+      const nextMode: FirstPersonNavigationMode = shouldFly ? 'fly' : 'walk'
+      settingsRef.current = { ...settingsRef.current, navigationMode: nextMode }
+      setNavigationMode(nextMode)
       tourRef.current = { active: true, route: plannedRoute, index: 0, dwell: 0 }
       dispatchTourStatus({ active: true, index: 0, total: plannedRoute.length })
       return true
+    },
+    [camera, setNavigationMode],
+  )
+
+  const jumpToPoseInstantly = useCallback(
+    (pose: FirstPersonPose) => {
+      const target = normalizeTourPose(pose)
+      if (!target) return
+
+      const nextMode = target.mode === 'fly' ? 'fly' : 'walk'
+      const targetEyeHeight = Number.isFinite(target.eyeHeight)
+        ? target.eyeHeight
+        : settingsRef.current.eyeHeight
+      const navigation = navigationDataRef.current
+
+      tourRef.current = { active: false, route: [], index: 0, dwell: 0 }
+      dispatchTourStatus({ active: false, index: 0, total: 0 })
+      settingsRef.current = {
+        ...settingsRef.current,
+        navigationMode: nextMode,
+        eyeHeight: targetEyeHeight,
+      }
+      setNavigationMode(nextMode)
+
+      camera.position.x = target.x
+      camera.position.z = target.z
+      camera.position.y =
+        nextMode === 'walk'
+          ? getWalkCameraY(navigation, target.x, target.z, targetEyeHeight)
+          : Math.max(target.y, getFlyMinY(navigation, target.x, target.z))
+      yawRef.current = target.yaw
+      pitchRef.current = target.pitch
     },
     [camera, setNavigationMode],
   )
@@ -1147,17 +1501,39 @@ export const FirstPersonControls = () => {
 
       if (!_raycaster.ray.intersectPlane(_groundPlane, _teleportTarget)) return
 
-      const { navigationMode: currentMode, eyeHeight: currentEyeHeight } = settingsRef.current
+      const {
+        navigationMode: currentMode,
+        eyeHeight: currentEyeHeight,
+        flyClearance: currentFlyClearance,
+      } = settingsRef.current
       const clickedTarget = { x: _teleportTarget.x, z: _teleportTarget.z }
+      const clickedTargetY =
+        currentMode === 'fly'
+          ? getFlyCameraY(navigation, clickedTarget.x, clickedTarget.z, currentFlyClearance)
+          : 0
+
+      if (routePlanningRef.current) {
+        dispatchRoutePoint({
+          x: clickedTarget.x,
+          y: clickedTargetY,
+          z: clickedTarget.z,
+          yaw: yawRef.current,
+          pitch: currentMode === 'fly' ? pitchRef.current : 0,
+          mode: currentMode,
+          eyeHeight: currentEyeHeight,
+        })
+        return
+      }
+
       if (
         startTourRoute([
           {
             x: clickedTarget.x,
-            y: 0,
+            y: clickedTargetY,
             z: clickedTarget.z,
             yaw: yawRef.current,
-            pitch: pitchRef.current,
-            mode: 'walk',
+            pitch: currentMode === 'fly' ? pitchRef.current : 0,
+            mode: currentMode,
             eyeHeight: currentEyeHeight,
           },
         ])
@@ -1189,49 +1565,65 @@ export const FirstPersonControls = () => {
   useEffect(() => {
     const handleJumpToPose = (event: Event) => {
       if (!(event instanceof CustomEvent) || !event.detail) return
-      const detail = event.detail as Partial<FirstPersonPose>
+      const detail = event.detail as Partial<JumpToPosePayload>
       if (!Number.isFinite(detail.x) || !Number.isFinite(detail.z)) return
 
       const nextX = Number(detail.x)
       const nextZ = Number(detail.z)
+      const targetPose: FirstPersonPose = {
+        x: nextX,
+        y: Number.isFinite(detail.y) ? Number(detail.y) : 0,
+        z: nextZ,
+        yaw: Number.isFinite(detail.yaw) ? Number(detail.yaw) : yawRef.current,
+        pitch: Number.isFinite(detail.pitch) ? Number(detail.pitch) : pitchRef.current,
+        mode: detail.mode === 'fly' ? 'fly' : 'walk',
+        eyeHeight: Number.isFinite(detail.eyeHeight)
+          ? Number(detail.eyeHeight)
+          : settingsRef.current.eyeHeight,
+      }
 
-      startTourRoute([
-        {
-          x: nextX,
-          y: Number.isFinite(detail.y) ? Number(detail.y) : 0,
-          z: nextZ,
-          yaw: Number.isFinite(detail.yaw) ? Number(detail.yaw) : yawRef.current,
-          pitch: Number.isFinite(detail.pitch) ? Number(detail.pitch) : pitchRef.current,
-          mode: detail.mode === 'fly' ? 'fly' : 'walk',
-          eyeHeight: Number.isFinite(detail.eyeHeight)
-            ? Number(detail.eyeHeight)
-            : settingsRef.current.eyeHeight,
-        },
-      ])
+      if (detail.arrivalMode === 'instant') {
+        jumpToPoseInstantly(targetPose)
+        return
+      }
+
+      startTourRoute([targetPose])
     }
 
     const handleJumpToZone = (event: Event) => {
       if (!(event instanceof CustomEvent) || !event.detail) return
-      const detail = event.detail as { zoneId?: unknown }
+      const detail = event.detail as { zoneId?: unknown; arrivalMode?: unknown }
       if (typeof detail.zoneId !== 'string') return
 
       const zone = zonesRef.current.find((candidate) => candidate.id === detail.zoneId)
       if (!zone) return
 
-      const centroid = polygonCentroid(zone.polygon)
+      const centroid = polygonCentroid(getPlanPolygon(zone.polygon))
       if (!centroid) return
+      const targetPose: FirstPersonPose = {
+        x: centroid.x,
+        y:
+          settingsRef.current.navigationMode === 'fly'
+            ? getFlyCameraY(
+                navigationDataRef.current,
+                centroid.x,
+                centroid.z,
+                settingsRef.current.flyClearance,
+              )
+            : 0,
+        z: centroid.z,
+        yaw: yawRef.current,
+        pitch: settingsRef.current.navigationMode === 'fly' ? pitchRef.current : 0,
+        mode: settingsRef.current.navigationMode,
+        eyeHeight: settingsRef.current.eyeHeight,
+      }
 
-      startTourRoute([
-        {
-          x: centroid.x,
-          y: 0,
-          z: centroid.z,
-          yaw: yawRef.current,
-          pitch: pitchRef.current,
-          mode: 'walk',
-          eyeHeight: settingsRef.current.eyeHeight,
-        },
-      ])
+      if (detail.arrivalMode === 'instant') {
+        jumpToPoseInstantly(targetPose)
+        return
+      }
+
+      startTourRoute([targetPose])
     }
 
     window.addEventListener(JUMP_TO_POSE_EVENT, handleJumpToPose)
@@ -1241,7 +1633,7 @@ export const FirstPersonControls = () => {
       window.removeEventListener(JUMP_TO_POSE_EVENT, handleJumpToPose)
       window.removeEventListener(JUMP_TO_ZONE_EVENT, handleJumpToZone)
     }
-  }, [startTourRoute])
+  }, [jumpToPoseInstantly, startTourRoute])
 
   useEffect(() => {
     const stopTour = () => {
@@ -1271,16 +1663,27 @@ export const FirstPersonControls = () => {
       }
     }
 
+    const handleRoutePlanning = (event: Event) => {
+      const detail =
+        event instanceof CustomEvent && event.detail && typeof event.detail === 'object'
+          ? (event.detail as { active?: unknown })
+          : {}
+      routePlanningRef.current = detail.active === true
+    }
+
     window.addEventListener(TOUR_START_EVENT, handleTourStart)
     window.addEventListener(TOUR_STOP_EVENT, stopTour)
     window.addEventListener(VIRTUAL_MOVE_EVENT, handleVirtualMove)
+    window.addEventListener(ROUTE_PLANNING_EVENT, handleRoutePlanning)
 
     return () => {
       window.removeEventListener(TOUR_START_EVENT, handleTourStart)
       window.removeEventListener(TOUR_STOP_EVENT, stopTour)
       window.removeEventListener(VIRTUAL_MOVE_EVENT, handleVirtualMove)
+      window.removeEventListener(ROUTE_PLANNING_EVENT, handleRoutePlanning)
       stopTour()
       virtualMoveRef.current = { x: 0, z: 0 }
+      routePlanningRef.current = false
     }
   }, [startTourRoute])
 
@@ -1491,14 +1894,21 @@ export const FirstPersonControls = () => {
         tourRef.current = { active: false, route: [], index: 0, dwell: 0 }
         dispatchTourStatus({ active: false, index: 0, total: 0 })
       } else {
-        const distance = Math.hypot(target.x - camera.position.x, target.z - camera.position.z)
+        const deltaX = target.x - camera.position.x
+        const deltaY = currentMode === 'fly' ? target.y - camera.position.y : 0
+        const deltaZ = target.z - camera.position.z
+        const distance =
+          currentMode === 'fly' ? Math.hypot(deltaX, deltaY, deltaZ) : Math.hypot(deltaX, deltaZ)
         const arrivalDistance =
           target.tourDwell === false ? Math.max(TOUR_ARRIVAL_DISTANCE, 0.28) : TOUR_ARRIVAL_DISTANCE
 
         if (distance > arrivalDistance) {
           const step = Math.min(distance, TOUR_SPEED * dt)
-          camera.position.x += ((target.x - camera.position.x) / distance) * step
-          camera.position.z += ((target.z - camera.position.z) / distance) * step
+          camera.position.x += (deltaX / distance) * step
+          if (currentMode === 'fly') {
+            camera.position.y += (deltaY / distance) * step
+          }
+          camera.position.z += (deltaZ / distance) * step
 
           const desiredYaw =
             distance > 0.6
@@ -1650,7 +2060,7 @@ function buildZoneTourRoute(
   eyeHeight: number,
 ) {
   const centers = zones
-    .map((zone) => polygonCentroid(zone.polygon))
+    .map((zone) => polygonCentroid(getPlanPolygon(zone.polygon)))
     .filter((center): center is { x: number; z: number } => center !== null)
 
   return centers.map((center, index): FirstPersonPose => {
@@ -1702,12 +2112,15 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
   const navigationData = useFirstPersonNavigationData()
   const buildingId = useViewer((s) => s.selection.buildingId)
   const activeLevelId = useViewer((s) => s.selection.levelId)
+  const setViewerSelection = useViewer((s) => s.setSelection)
   const navigationMode = useEditor((s) => s.firstPersonNavigationMode)
   const setNavigationMode = useEditor((s) => s.setFirstPersonNavigationMode)
   const speedPreset = useEditor((s) => s.firstPersonSpeedPreset)
   const setSpeedPreset = useEditor((s) => s.setFirstPersonSpeedPreset)
   const eyeHeightPreset = useEditor((s) => s.firstPersonEyeHeightPreset)
   const setEyeHeightPreset = useEditor((s) => s.setFirstPersonEyeHeightPreset)
+  const flyClearance = useEditor((s) => s.firstPersonFlyClearance)
+  const setFlyClearance = useEditor((s) => s.setFirstPersonFlyClearance)
   const lookStatus = useMouseLookStatus()
   const pose = useFirstPersonPose()
   const tourStatus = useFirstPersonTourStatus()
@@ -1720,10 +2133,45 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
     storageKey: bookmarkStorageKey,
   }))
   const [presentationMode, setPresentationMode] = useState(false)
+  const [arrivalMode, setArrivalMode] = useState<ArrivalMode>('walk')
+  const [routePlanning, setRoutePlanning] = useState(false)
+  const [manualRoute, setManualRoute] = useState<FirstPersonPose[]>([])
+  const sceneNodes = useScene((state) => state.nodes)
+  const floorplanLevels = useMemo(() => {
+    const activeLevel = activeLevelId ? sceneNodes[activeLevelId] : null
+    const currentBuildingId = (buildingId ??
+      (activeLevel?.type === 'level' ? activeLevel.parentId : null)) as BuildingNode['id'] | null
+    const buildingNode = currentBuildingId
+      ? (sceneNodes[currentBuildingId] as BuildingNode | undefined)
+      : null
+
+    if (!buildingNode || buildingNode.type !== 'building') return [] as LevelNode[]
+
+    return (buildingNode.children ?? [])
+      .map((childId: LevelNode['id']) => sceneNodes[childId])
+      .filter((node): node is LevelNode => node?.type === 'level')
+      .sort((a, b) => toFiniteNumber(a.level, 0) - toFiniteNumber(b.level, 0))
+  }, [activeLevelId, buildingId, sceneNodes])
 
   const eyeHeight = EYE_HEIGHT_CONFIG[eyeHeightPreset]
   const speedLabel = SPEED_CONFIG[speedPreset].label
   const modeLabel = navigationMode === 'walk' ? 'Walk mode' : 'Fly mode'
+  const flyHeightAnchor = pose ?? { x: 0, z: 0 }
+  const flyHeight = pose
+    ? Math.max(0, pose.y - getWalkSurfaceY(navigationData, pose.x, pose.z))
+    : getFlyHeightAboveSurface(navigationData, flyHeightAnchor.x, flyHeightAnchor.z, flyClearance)
+  const minFlyHeight = getFlyHeightAboveSurface(
+    navigationData,
+    flyHeightAnchor.x,
+    flyHeightAnchor.z,
+    MIN_FIRST_PERSON_FLY_CLEARANCE,
+  )
+  const maxFlyHeight = getFlyHeightAboveSurface(
+    navigationData,
+    flyHeightAnchor.x,
+    flyHeightAnchor.z,
+    MAX_FIRST_PERSON_FLY_CLEARANCE,
+  )
   const bookmarks = bookmarkState.storageKey === bookmarkStorageKey ? bookmarkState.bookmarks : []
   const zoneTourRoute = useMemo(
     () => buildZoneTourRoute(navigationData.zones, pose, navigationMode, eyeHeight.height),
@@ -1747,6 +2195,13 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
     saveStoredBookmarks(bookmarkStorageKey, bookmarkState.bookmarks)
   }, [bookmarkState, bookmarkStorageKey])
 
+  useEffect(() => {
+    dispatchRoutePlanning(routePlanning)
+    return () => {
+      dispatchRoutePlanning(false)
+    }
+  }, [routePlanning])
+
   const handleExit = useCallback(() => {
     exitPointerLockSafely()
     onExit()
@@ -1759,6 +2214,19 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
   const toggleEyeHeight = useCallback(() => {
     setEyeHeightPreset(eyeHeightPreset === 'adult' ? 'child' : 'adult')
   }, [eyeHeightPreset, setEyeHeightPreset])
+
+  const updateFlyHeight = useCallback(
+    (height: number) => {
+      if (!Number.isFinite(height)) return
+
+      const anchor = pose ?? { x: 0, z: 0 }
+      const surfaceY = getWalkSurfaceY(navigationData, anchor.x, anchor.z)
+      const baseY = getFlyBaseY(navigationData, anchor.x, anchor.z)
+      const buildingOffset = Math.max(0, baseY - surfaceY)
+      setFlyClearance(normalizeFirstPersonFlyClearance(height - buildingOffset))
+    },
+    [navigationData, pose, setFlyClearance],
+  )
 
   const updateBookmarks = useCallback(
     (updater: (current: FirstPersonBookmark[]) => FirstPersonBookmark[]) => {
@@ -1795,10 +2263,123 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
     [updateBookmarks],
   )
 
+  const addManualRoutePoint = useCallback(
+    (point: Partial<FirstPersonPose> & Pick<FirstPersonPose, 'x' | 'z'>) => {
+      if (!Number.isFinite(point.x) || !Number.isFinite(point.z)) return
+
+      setManualRoute((current) => {
+        const routeMode: FirstPersonNavigationMode =
+          point.mode === 'fly' || (!point.mode && navigationMode === 'fly') ? 'fly' : 'walk'
+        const trimmed = current.slice(-MANUAL_ROUTE_LIMIT + 1)
+        const previous = trimmed.at(-1) ?? pose
+        const targetYaw = previous
+          ? yawToPoint(previous.x, previous.z, point.x, point.z)
+          : (point.yaw ?? 0)
+        const route = trimmed.map((routePoint, index) =>
+          index === trimmed.length - 1
+            ? { ...routePoint, yaw: yawToPoint(routePoint.x, routePoint.z, point.x, point.z) }
+            : routePoint,
+        )
+        const targetY =
+          routeMode === 'fly'
+            ? Number.isFinite(point.y)
+              ? Number(point.y)
+              : getFlyCameraY(navigationData, point.x, point.z, flyClearance)
+            : 0
+
+        return [
+          ...route,
+          {
+            x: point.x,
+            y: targetY,
+            z: point.z,
+            yaw: targetYaw,
+            pitch: Number.isFinite(point.pitch)
+              ? Number(point.pitch)
+              : routeMode === 'fly'
+                ? FLY_ENTRY_PITCH
+                : 0,
+            mode: routeMode,
+            eyeHeight: Number.isFinite(point.eyeHeight)
+              ? Number(point.eyeHeight)
+              : eyeHeight.height,
+          },
+        ]
+      })
+    },
+    [eyeHeight.height, flyClearance, navigationData, navigationMode, pose],
+  )
+
+  useEffect(() => {
+    const handleRoutePoint = (event: Event) => {
+      if (!(event instanceof CustomEvent) || !event.detail) return
+      const detail = event.detail as Partial<FirstPersonPose>
+      if (!Number.isFinite(detail.x) || !Number.isFinite(detail.z)) return
+      addManualRoutePoint({
+        x: Number(detail.x),
+        y: Number.isFinite(detail.y) ? Number(detail.y) : undefined,
+        z: Number(detail.z),
+        yaw: Number.isFinite(detail.yaw) ? Number(detail.yaw) : undefined,
+        pitch: Number.isFinite(detail.pitch) ? Number(detail.pitch) : undefined,
+        mode: detail.mode === 'fly' ? 'fly' : detail.mode === 'walk' ? 'walk' : undefined,
+        eyeHeight: Number.isFinite(detail.eyeHeight) ? Number(detail.eyeHeight) : undefined,
+      })
+    }
+
+    window.addEventListener(ROUTE_POINT_EVENT, handleRoutePoint)
+    return () => {
+      window.removeEventListener(ROUTE_POINT_EVENT, handleRoutePoint)
+    }
+  }, [addManualRoutePoint])
+
+  const selectZone = useCallback(
+    (zoneId: string) => {
+      if (!routePlanning) {
+        dispatchJumpToZone(zoneId, arrivalMode)
+        return
+      }
+
+      const zone = navigationData.zones.find((candidate) => candidate.id === zoneId)
+      const centroid = zone ? polygonCentroid(getPlanPolygon(zone.polygon)) : null
+      if (centroid) addManualRoutePoint({ ...centroid, mode: navigationMode })
+    },
+    [addManualRoutePoint, arrivalMode, navigationData.zones, navigationMode, routePlanning],
+  )
+
+  const selectBookmark = useCallback(
+    (bookmark: FirstPersonPose) => {
+      if (routePlanning) {
+        addManualRoutePoint({ ...bookmark, mode: navigationMode })
+        return
+      }
+
+      dispatchJumpToPose({ ...bookmark, arrivalMode })
+    },
+    [addManualRoutePoint, arrivalMode, navigationMode, routePlanning],
+  )
+
+  const selectLevel = useCallback(
+    (level: LevelNode) => {
+      setViewerSelection({
+        buildingId: (level.parentId ?? buildingId) as BuildingNode['id'] | null,
+        levelId: level.id as LevelNode['id'],
+        zoneId: null,
+        selectedIds: [],
+      })
+    },
+    [buildingId, setViewerSelection],
+  )
+
   const startTour = useCallback(() => {
     if (tourRoute.length === 0) return
     dispatchStartTour(tourRoute)
   }, [tourRoute])
+
+  const startManualRoute = useCallback(() => {
+    if (manualRoute.length === 0) return
+    setRoutePlanning(false)
+    dispatchStartTour(manualRoute)
+  }, [manualRoute])
 
   const stopTour = useCallback(() => {
     dispatchStopTour()
@@ -1832,8 +2413,16 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
         ) : (
           <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center px-4">
             <div className="max-w-[360px] rounded-lg border border-white/15 bg-slate-950/75 px-4 py-3 text-center text-white shadow-xl backdrop-blur-md">
-              <div className="font-semibold text-sm">Drag canvas to look around</div>
-              <div className="mt-1 text-white/70 text-xs">Double-click floor to move there</div>
+              <div className="font-semibold text-sm">
+                {routePlanning ? 'Add route point' : 'Drag canvas to look around'}
+              </div>
+              <div className="mt-1 text-white/70 text-xs">
+                {routePlanning
+                  ? navigationMode === 'fly'
+                    ? 'Double-click scene to add flight point'
+                    : 'Double-click floor to add point'
+                  : 'Double-click floor to move there'}
+              </div>
             </div>
           </div>
         )
@@ -1848,7 +2437,7 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
       {!presentationMode ? (
         <div className="fixed top-4 left-4 z-50 pointer-events-none">
           <div className="rounded-lg border border-white/15 bg-slate-950/70 px-3 py-2 text-white shadow-lg backdrop-blur-md">
-            <div className="font-semibold text-xs">Street View</div>
+            <div className="font-semibold text-xs">Walkthrough</div>
             <div className="mt-0.5 text-[11px] text-white/70">{modeLabel}</div>
           </div>
         </div>
@@ -1863,7 +2452,7 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
           <kbd className="rounded border border-white/20 bg-white/10 px-1.5 py-0.5 font-mono text-[10px] text-white/75">
             ESC
           </kbd>
-          Exit Street View
+          Exit Walkthrough
         </button>
       </div>
 
@@ -1871,14 +2460,25 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
         <FirstPersonNavigationPanel
           bookmarks={bookmarks}
           currentZone={currentZone}
+          arrivalMode={arrivalMode}
+          floorplanLevels={floorplanLevels}
+          manualRoute={manualRoute}
           navigationData={navigationData}
+          navigationMode={navigationMode}
+          routePlanning={routePlanning}
+          activeLevelId={activeLevelId}
+          onClearManualRoute={() => setManualRoute([])}
           onDeleteBookmark={deleteBookmark}
+          onLevelSelect={selectLevel}
+          onArrivalModeChange={setArrivalMode}
+          onSelectBookmark={selectBookmark}
+          onSelectZone={selectZone}
           onSaveBookmark={saveBookmark}
-          onSelectBookmark={dispatchJumpToPose}
-          onSelectZone={dispatchJumpToZone}
+          onStartManualRoute={startManualRoute}
           onStartTour={startTour}
           onStopTour={stopTour}
           onTogglePresentation={() => setPresentationMode(true)}
+          onToggleRoutePlanning={() => setRoutePlanning((current) => !current)}
           pose={pose}
           tourRouteLength={tourRoute.length}
           tourStatus={tourStatus}
@@ -1888,7 +2488,7 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
       {!presentationMode ? <TouchMovePad /> : null}
 
       {!presentationMode ? (
-        <div className="pointer-events-none fixed bottom-5 left-1/2 z-40 w-[min(92vw,820px)] -translate-x-1/2">
+        <div className="pointer-events-none fixed bottom-5 left-1/2 z-40 w-[min(94vw,1040px)] -translate-x-1/2">
           <div className="mx-auto flex w-fit max-w-full flex-wrap items-center justify-center gap-2 rounded-lg border border-white/15 bg-slate-950/70 px-3 py-2 text-white shadow-xl backdrop-blur-md">
             <HudHint label="Move" keys={['W', 'A', 'S', 'D']} />
             <HudHint label="Look" keys={['Drag']} />
@@ -1933,14 +2533,23 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
               {navigationMode === 'walk' ? 'Walk' : 'Fly'}
             </button>
 
-            <button
-              aria-label={`Eye height: ${eyeHeight.label}`}
-              className="pointer-events-auto h-8 rounded-md border border-white/[0.12] bg-white/[0.08] px-3 font-medium text-[11px] text-white transition-colors hover:bg-white/[0.14]"
-              onClick={toggleEyeHeight}
-              type="button"
-            >
-              {eyeHeight.label} {eyeHeight.height.toFixed(2)}m
-            </button>
+            {navigationMode === 'walk' ? (
+              <button
+                aria-label={`Eye height: ${eyeHeight.label}`}
+                className="pointer-events-auto h-8 rounded-md border border-white/[0.12] bg-white/[0.08] px-3 font-medium text-[11px] text-white transition-colors hover:bg-white/[0.14]"
+                onClick={toggleEyeHeight}
+                type="button"
+              >
+                {eyeHeight.label} {eyeHeight.height.toFixed(2)}m
+              </button>
+            ) : (
+              <FlyHeightControl
+                height={flyHeight}
+                maxHeight={maxFlyHeight}
+                minHeight={minFlyHeight}
+                onHeightChange={updateFlyHeight}
+              />
+            )}
 
             <span className="sr-only" aria-live="polite">
               {activeSpeedDescription}
@@ -1978,6 +2587,97 @@ function PresentationControls({
         type="button"
       >
         Exit presentation
+      </button>
+    </div>
+  )
+}
+
+function FlyHeightControl({
+  height,
+  minHeight,
+  maxHeight,
+  onHeightChange,
+}: {
+  height: number
+  minHeight: number
+  maxHeight: number
+  onHeightChange: (height: number) => void
+}) {
+  const [draft, setDraft] = useState(() => height.toFixed(1))
+  const [editing, setEditing] = useState(false)
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft(height.toFixed(1))
+    }
+  }, [editing, height])
+
+  const commitHeight = useCallback(
+    (rawValue = draft) => {
+      const parsed = Number(rawValue)
+
+      if (Number.isFinite(parsed)) {
+        onHeightChange(Math.max(minHeight, Math.min(maxHeight, parsed)))
+      } else {
+        setDraft(height.toFixed(1))
+      }
+
+      setEditing(false)
+    },
+    [draft, height, maxHeight, minHeight, onHeightChange],
+  )
+
+  const nudgeHeight = useCallback(
+    (delta: number) => {
+      const nextHeight = Math.max(minHeight, Math.min(maxHeight, height + delta))
+      onHeightChange(nextHeight)
+      setDraft(nextHeight.toFixed(1))
+    },
+    [height, maxHeight, minHeight, onHeightChange],
+  )
+
+  return (
+    <div className="pointer-events-auto flex h-8 items-center gap-1 rounded-md border border-white/[0.12] bg-white/[0.08] px-1.5 font-medium text-[11px] text-white">
+      <span>Height</span>
+      <button
+        aria-label="Decrease fly height"
+        className="flex h-6 w-6 items-center justify-center rounded border border-white/[0.12] bg-white/[0.07] text-white/80 transition-colors hover:bg-white/[0.14] hover:text-white"
+        onClick={() => nudgeHeight(-FLY_CLEARANCE_STEP)}
+        type="button"
+      >
+        -
+      </button>
+      <input
+        aria-label="Fly height"
+        className="h-6 w-14 rounded border border-white/[0.12] bg-slate-950/40 px-1 text-center font-mono text-[11px] text-white outline-none transition-colors focus:border-white/45"
+        inputMode="decimal"
+        max={maxHeight}
+        min={minHeight}
+        onBlur={() => commitHeight()}
+        onChange={(event) => setDraft(event.target.value)}
+        onFocus={() => setEditing(true)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.currentTarget.blur()
+            commitHeight(event.currentTarget.value)
+          } else if (event.key === 'Escape') {
+            setDraft(height.toFixed(1))
+            setEditing(false)
+            event.currentTarget.blur()
+          }
+        }}
+        step={FLY_CLEARANCE_STEP}
+        type="number"
+        value={draft}
+      />
+      <span className="font-mono text-white/70">m</span>
+      <button
+        aria-label="Increase fly height"
+        className="flex h-6 w-6 items-center justify-center rounded border border-white/[0.12] bg-white/[0.07] text-white/80 transition-colors hover:bg-white/[0.14] hover:text-white"
+        onClick={() => nudgeHeight(FLY_CLEARANCE_STEP)}
+        type="button"
+      >
+        +
       </button>
     </div>
   )
@@ -2043,41 +2743,69 @@ function TouchMovePad() {
 function FirstPersonNavigationPanel({
   bookmarks,
   currentZone,
+  arrivalMode,
+  floorplanLevels,
+  manualRoute,
   navigationData,
+  navigationMode,
+  routePlanning,
+  activeLevelId,
+  onClearManualRoute,
+  onArrivalModeChange,
   onDeleteBookmark,
+  onLevelSelect,
   onSaveBookmark,
   onSelectBookmark,
   onSelectZone,
+  onStartManualRoute,
   onStartTour,
   onStopTour,
   onTogglePresentation,
+  onToggleRoutePlanning,
   pose,
   tourRouteLength,
   tourStatus,
 }: {
   bookmarks: FirstPersonBookmark[]
   currentZone: ZoneNode | null
+  arrivalMode: ArrivalMode
+  floorplanLevels: LevelNode[]
+  manualRoute: FirstPersonPose[]
   navigationData: FirstPersonNavigationData
+  navigationMode: FirstPersonNavigationMode
+  routePlanning: boolean
+  activeLevelId: LevelNode['id'] | null
+  onClearManualRoute: () => void
+  onArrivalModeChange: (mode: ArrivalMode) => void
   onDeleteBookmark: (bookmarkId: string) => void
+  onLevelSelect: (level: LevelNode) => void
   onSaveBookmark: () => void
   onSelectBookmark: (pose: FirstPersonPose) => void
   onSelectZone: (zoneId: string) => void
+  onStartManualRoute: () => void
   onStartTour: () => void
   onStopTour: () => void
   onTogglePresentation: () => void
+  onToggleRoutePlanning: () => void
   pose: FirstPersonPose | null
   tourRouteLength: number
   tourStatus: FirstPersonTourStatus
 }) {
-  const visibleZones = navigationData.zones.slice(0, 7)
+  const manualRouteLength = manualRoute.length
+  const modeLabel = navigationMode === 'walk' ? '行走' : '飞行'
+  const routeLabel = navigationMode === 'fly' ? '航线' : '路线'
+  const levelDisplayName = getLevelDisplayName(navigationData.level)
+  const visibleZones = navigationData.zones.slice(0, 5)
 
   return (
-    <div className="pointer-events-none fixed top-16 right-4 z-40 hidden w-64 text-white lg:block">
+    <div className="pointer-events-none fixed top-16 right-4 z-40 hidden w-80 text-white lg:block">
       <div className="pointer-events-auto overflow-hidden rounded-lg border border-white/15 bg-slate-950/75 shadow-xl backdrop-blur-md">
         <div className="flex items-center justify-between px-3 pt-3 pb-2">
-          <div>
-            <div className="font-semibold text-xs">Map</div>
-            <div className="mt-0.5 text-[10px] text-white/50">Floor follow on</div>
+          <div className="min-w-0">
+            <div className="font-semibold text-xs">取景控制</div>
+            <div className="mt-1 truncate text-[10px] text-white/50">
+              {currentZone?.name ?? '当前位置'} / {modeLabel}
+            </div>
           </div>
           <button
             className="h-7 rounded-md border border-white/[0.12] bg-white/[0.08] px-2 font-medium text-[11px] text-white transition-colors hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-45"
@@ -2085,78 +2813,170 @@ function FirstPersonNavigationPanel({
             onClick={onSaveBookmark}
             type="button"
           >
-            Save view
+            保存视角
           </button>
         </div>
 
-        <div className="flex items-center gap-1 px-3 pb-3">
+        <div className="grid grid-cols-2 gap-1 px-3 pb-3">
           <button
-            className="h-7 flex-1 rounded-md border border-white/[0.12] bg-white/[0.08] px-2 font-medium text-[11px] text-white transition-colors hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-45"
+            className="h-7 rounded-md border border-white/[0.12] bg-white/[0.08] px-2 font-medium text-[11px] text-white transition-colors hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-45"
             disabled={tourRouteLength === 0}
             onClick={tourStatus.active ? onStopTour : onStartTour}
             type="button"
           >
-            {tourStatus.active ? 'Stop tour' : 'Start tour'}
+            {tourStatus.active ? '停止导览' : '开始导览'}
           </button>
           <button
             className="h-7 rounded-md border border-white/[0.12] bg-white/[0.08] px-2 font-medium text-[11px] text-white transition-colors hover:bg-white/[0.14]"
             onClick={onTogglePresentation}
             type="button"
           >
-            Present
+            演示
           </button>
         </div>
 
-        <FirstPersonMiniMap
-          currentZone={currentZone}
-          navigationData={navigationData}
-          onSelectZone={onSelectZone}
-          pose={pose}
-        />
-
         <div className="border-white/10 border-t px-3 py-2">
           <div className="flex items-center justify-between gap-2">
-            <div className="font-semibold text-[11px] text-white/80">Rooms</div>
-            <div className="truncate text-[10px] text-white/45">
-              {currentZone?.name ?? 'Current view'}
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="rounded border border-white/15 bg-white/10 px-1.5 py-0.5 font-semibold text-[10px] text-white/75 leading-none">
+                2D
+              </span>
+              <div className="font-semibold text-[11px] text-white/80">平面切换</div>
+            </div>
+            <div className="max-w-32 truncate text-right text-[10px] text-white/45">
+              {levelDisplayName}
             </div>
           </div>
 
-          <div className="mt-2 flex max-h-28 flex-col gap-1 overflow-auto pr-1">
-            {visibleZones.length > 0 ? (
-              visibleZones.map((zone) => {
-                const active = zone.id === currentZone?.id
+          {floorplanLevels.length > 1 ? (
+            <div className="mt-2 flex gap-1 overflow-x-auto">
+              {floorplanLevels.map((level) => {
+                const active = level.id === activeLevelId
+                const label = level.name?.trim() || `L${level.level}`
+
                 return (
                   <button
                     className={cn(
-                      'flex h-7 items-center gap-2 rounded-md px-2 text-left text-[11px] transition-colors',
+                      'h-7 shrink-0 rounded-md px-2 font-medium text-[11px] transition-colors',
                       active
                         ? 'bg-white text-slate-950'
-                        : 'bg-white/[0.07] text-white/75 hover:bg-white/[0.13] hover:text-white',
+                        : 'bg-white/[0.08] text-white/70 hover:bg-white/[0.14] hover:text-white',
+                    )}
+                    key={level.id}
+                    onClick={() => onLevelSelect(level)}
+                    title={label}
+                    type="button"
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+          ) : null}
+
+          <div className="mt-2 grid grid-cols-2 gap-1 rounded-md border border-white/[0.08] bg-white/[0.04] p-0.5">
+            <button
+              className={cn(
+                'h-7 rounded px-2 font-medium text-[11px] transition-colors',
+                arrivalMode === 'walk'
+                  ? 'bg-white text-slate-950'
+                  : 'text-white/70 hover:bg-white/[0.1] hover:text-white',
+              )}
+              onClick={() => onArrivalModeChange('walk')}
+              type="button"
+            >
+              行走到达
+            </button>
+            <button
+              className={cn(
+                'h-7 rounded px-2 font-medium text-[11px] transition-colors',
+                arrivalMode === 'instant'
+                  ? 'bg-white text-slate-950'
+                  : 'text-white/70 hover:bg-white/[0.1] hover:text-white',
+              )}
+              onClick={() => onArrivalModeChange('instant')}
+              type="button"
+            >
+              瞬间到达
+            </button>
+          </div>
+
+          <div className="mt-2">
+            <FirstPersonMiniMap
+              currentZone={currentZone}
+              manualRoute={manualRoute}
+              navigationData={navigationData}
+              onSelectZone={onSelectZone}
+              pose={pose}
+            />
+          </div>
+
+          {visibleZones.length > 0 ? (
+            <div className="mt-2 flex gap-1 overflow-x-auto">
+              {visibleZones.map((zone) => {
+                const active = zone.id === currentZone?.id
+                const zoneName = getDisplayName(zone.name, 'Room')
+
+                return (
+                  <button
+                    className={cn(
+                      'h-7 max-w-32 shrink-0 rounded-md px-2 text-left font-medium text-[11px] transition-colors',
+                      active
+                        ? 'bg-white text-slate-950'
+                        : 'bg-white/[0.08] text-white/70 hover:bg-white/[0.14] hover:text-white',
                     )}
                     key={zone.id}
                     onClick={() => onSelectZone(zone.id)}
-                    title={`Go to ${zone.name}`}
+                    title={zoneName}
                     type="button"
                   >
-                    <span
-                      className="h-2 w-2 shrink-0 rounded-full"
-                      style={{ backgroundColor: zone.color }}
-                    />
-                    <span className="truncate">{zone.name}</span>
+                    <span className="block truncate">{zoneName}</span>
                   </button>
                 )
-              })
-            ) : (
-              <div className="rounded-md bg-white/[0.06] px-2 py-2 text-[11px] text-white/45">
-                No rooms
-              </div>
-            )}
+              })}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="border-white/10 border-t px-3 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="font-semibold text-[11px] text-white/80">{routeLabel}</div>
+            <div className="font-mono text-[10px] text-white/45">{manualRouteLength}</div>
+          </div>
+          <div className="mt-2 grid grid-cols-3 gap-1">
+            <button
+              className={cn(
+                'h-7 rounded-md border border-white/[0.12] px-2 font-medium text-[11px] transition-colors',
+                routePlanning
+                  ? 'bg-white text-slate-950'
+                  : 'bg-white/[0.08] text-white hover:bg-white/[0.14]',
+              )}
+              onClick={onToggleRoutePlanning}
+              type="button"
+            >
+              {routePlanning ? '完成' : '规划'}
+            </button>
+            <button
+              className="h-7 rounded-md border border-white/[0.12] bg-white/[0.08] px-2 font-medium text-[11px] text-white transition-colors hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-45"
+              disabled={manualRouteLength === 0}
+              onClick={onStartManualRoute}
+              type="button"
+            >
+              运行
+            </button>
+            <button
+              className="h-7 rounded-md border border-white/[0.12] bg-white/[0.08] px-2 font-medium text-[11px] text-white transition-colors hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-45"
+              disabled={manualRouteLength === 0}
+              onClick={onClearManualRoute}
+              type="button"
+            >
+              清空
+            </button>
           </div>
         </div>
 
         <div className="border-white/10 border-t px-3 py-2">
-          <div className="font-semibold text-[11px] text-white/80">Saved views</div>
+          <div className="font-semibold text-[11px] text-white/80">视角收藏</div>
           <div className="mt-2 flex max-h-24 flex-col gap-1 overflow-auto pr-1">
             {bookmarks.length > 0 ? (
               bookmarks.map((bookmark, index) => (
@@ -2173,10 +2993,10 @@ function FirstPersonNavigationPanel({
                     <span className="ml-2 font-mono text-[10px] text-white/40">{index + 1}</span>
                   </button>
                   <button
-                    aria-label="Remove"
+                    aria-label="删除视角"
                     className="h-7 w-7 shrink-0 text-white/35 transition-colors hover:text-white/80"
                     onClick={() => onDeleteBookmark(bookmark.id)}
-                    title="Remove"
+                    title="删除视角"
                     type="button"
                   >
                     x
@@ -2185,7 +3005,7 @@ function FirstPersonNavigationPanel({
               ))
             ) : (
               <div className="rounded-md bg-white/[0.06] px-2 py-2 text-[11px] text-white/45">
-                No saved views
+                暂无收藏视角
               </div>
             )}
           </div>
@@ -2197,72 +3017,136 @@ function FirstPersonNavigationPanel({
 
 function FirstPersonMiniMap({
   currentZone,
+  manualRoute,
   navigationData,
   onSelectZone,
   pose,
 }: {
   currentZone: ZoneNode | null
+  manualRoute: FirstPersonPose[]
   navigationData: FirstPersonNavigationData
   onSelectZone: (zoneId: string) => void
   pose: FirstPersonPose | null
 }) {
-  const bounds = useMemo(
-    () => getNavigationBounds(navigationData.walls, navigationData.zones, pose),
-    [navigationData.walls, navigationData.zones, pose],
-  )
+  const bounds = useMemo(() => getNavigationBounds(navigationData), [navigationData])
+  const levelDisplayName = getLevelDisplayName(navigationData.level)
 
   if (!bounds) {
     return (
-      <div className="mx-3 mb-3 flex h-[140px] items-center justify-center rounded-md bg-white/[0.06] text-[11px] text-white/45">
+      <div className="flex h-[170px] items-center justify-center rounded-md bg-white/[0.06] text-[11px] text-white/45">
         No map data
       </div>
     )
   }
 
   const worldWidth = bounds.maxX - bounds.minX
-  const worldDepth = bounds.maxZ - bounds.minZ
+  const worldHeight = bounds.maxY - bounds.minY
   const scale = Math.min(
     (MINIMAP_WIDTH - MINIMAP_PADDING * 2) / worldWidth,
-    (MINIMAP_HEIGHT - MINIMAP_PADDING * 2) / worldDepth,
+    (MINIMAP_HEIGHT - MINIMAP_PADDING * 2) / worldHeight,
   )
   const offsetX = (MINIMAP_WIDTH - worldWidth * scale) / 2
-  const offsetY = (MINIMAP_HEIGHT - worldDepth * scale) / 2
-  const project = (x: number, z: number) => ({
-    x: offsetX + (x - bounds.minX) * scale,
-    y: MINIMAP_HEIGHT - offsetY - (z - bounds.minZ) * scale,
+  const offsetY = (MINIMAP_HEIGHT - worldHeight * scale) / 2
+  const project = (x: number, z: number) => {
+    const point = toMiniMapPlanPoint(x, z, navigationData.buildingRotation)
+
+    return {
+      x: offsetX + (point.x - bounds.minX) * scale,
+      y: offsetY + (point.y - bounds.minY) * scale,
+    }
+  }
+  const clampProjectedPoint = (point: { x: number; y: number }) => ({
+    x: Math.max(6, Math.min(MINIMAP_WIDTH - 6, point.x)),
+    y: Math.max(6, Math.min(MINIMAP_HEIGHT - 6, point.y)),
   })
-  const cameraPoint = pose ? project(pose.x, pose.z) : null
+  const cameraPoint = pose ? clampProjectedPoint(project(pose.x, pose.z)) : null
   const cameraForward = pose
-    ? project(pose.x - Math.sin(pose.yaw) * 0.85, pose.z - Math.cos(pose.yaw) * 0.85)
+    ? clampProjectedPoint(
+        project(pose.x - Math.sin(pose.yaw) * 0.85, pose.z - Math.cos(pose.yaw) * 0.85),
+      )
     : null
+  const manualRoutePoints = manualRoute.map((point) => project(point.x, point.z))
 
   return (
     <svg
-      aria-label="Map"
-      className="mx-3 mb-3 block rounded-md border border-white/10 bg-white/[0.06]"
+      aria-label={`Map ${levelDisplayName}`}
+      className="block rounded-md border border-white/10 bg-white/[0.06]"
       height={MINIMAP_HEIGHT}
       role="img"
       viewBox={`0 0 ${MINIMAP_WIDTH} ${MINIMAP_HEIGHT}`}
       width={MINIMAP_WIDTH}
     >
-      {navigationData.zones.map((zone) => {
-        const active = zone.id === currentZone?.id
-        const points = zone.polygon.map(([x, z]) => {
+      {navigationData.slabs.map((slab) => {
+        const polygon = getPlanPolygon(slab.polygon)
+        if (polygon.length < 3) return null
+
+        const points = polygon.map(([x, z]) => {
           const point = project(x, z)
           return `${point.x},${point.y}`
         })
 
         return (
           <polygon
-            fill={zone.color}
-            fillOpacity={active ? 0.38 : 0.18}
-            key={zone.id}
-            onClick={() => onSelectZone(zone.id)}
+            fill="rgba(226,232,240,0.16)"
+            key={slab.id}
             points={points.join(' ')}
-            stroke={active ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.28)'}
-            strokeWidth={active ? 1.8 : 1}
-            style={{ cursor: 'pointer' }}
+            stroke="rgba(255,255,255,0.22)"
+            strokeWidth={1}
           />
+        )
+      })}
+
+      {navigationData.zones.map((zone) => {
+        const polygon = getPlanPolygon(zone.polygon)
+        if (polygon.length < 3) return null
+
+        const active = zone.id === currentZone?.id
+        const zoneName = getDisplayName(zone.name, 'Room')
+        const zoneColor = getDisplayName(zone.color, '#64748b')
+        const projectedPoints = polygon.map(([x, z]) => {
+          const point = project(x, z)
+          return point
+        })
+        const pointString = projectedPoints.map((point) => `${point.x},${point.y}`).join(' ')
+        const centroid = polygonCentroid(polygon)
+        const labelPoint = centroid ? project(centroid.x, centroid.z) : null
+        const labelBounds = getMiniMapPointBounds(projectedPoints)
+        const shouldShowLabel =
+          labelPoint !== null && labelBounds.width >= 28 && labelBounds.height >= 11
+        const label = shouldShowLabel
+          ? truncateMiniMapLabel(zoneName, Math.max(5, Math.floor(labelBounds.width / 4.3)))
+          : null
+
+        return (
+          <g key={zone.id}>
+            <title>{`${levelDisplayName}: ${zoneName}`}</title>
+            <polygon
+              fill={zoneColor}
+              fillOpacity={active ? 0.42 : 0.2}
+              onClick={() => onSelectZone(zone.id)}
+              points={pointString}
+              stroke={active ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.34)'}
+              strokeWidth={active ? 1.8 : 1}
+              style={{ cursor: 'pointer' }}
+            />
+            {label && labelPoint ? (
+              <text
+                fill="rgba(255,255,255,0.9)"
+                fontSize={6.4}
+                fontWeight={700}
+                paintOrder="stroke"
+                pointerEvents="none"
+                stroke="rgba(15,23,42,0.72)"
+                strokeLinejoin="round"
+                strokeWidth={2.2}
+                textAnchor="middle"
+                x={labelPoint.x}
+                y={labelPoint.y + 2.2}
+              >
+                {label}
+              </text>
+            ) : null}
+          </g>
         )
       })}
 
@@ -2282,6 +3166,42 @@ function FirstPersonMiniMap({
           />
         )
       })}
+
+      {manualRoutePoints.length > 0 ? (
+        <>
+          <polyline
+            fill="none"
+            points={manualRoutePoints.map((point) => `${point.x},${point.y}`).join(' ')}
+            stroke="rgba(255,255,255,0.92)"
+            strokeDasharray="4 3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+          />
+          {manualRoutePoints.map((point, index) => (
+            <g key={`${point.x}-${point.y}-${index}`}>
+              <circle
+                cx={point.x}
+                cy={point.y}
+                fill="#111827"
+                r={4.5}
+                stroke="white"
+                strokeWidth={1.6}
+              />
+              <text
+                fill="white"
+                fontSize={6}
+                fontWeight={700}
+                textAnchor="middle"
+                x={point.x}
+                y={point.y + 2}
+              >
+                {index + 1}
+              </text>
+            </g>
+          ))}
+        </>
+      ) : null}
 
       {cameraPoint && cameraForward ? (
         <>

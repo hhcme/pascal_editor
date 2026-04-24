@@ -127,7 +127,9 @@ function getProviderClassName(provider: MaterialProvider): string {
 }
 
 function formatMaterialNumber(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')
+  return Number.isInteger(value)
+    ? String(value)
+    : value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')
 }
 
 function getMaterialSearchText(item: MaterialCatalogItem): string {
@@ -690,7 +692,7 @@ export function MaterialPicker({
             </>
           ) : null}
 
-          {filteredCatalogItems.length > 0 || onChange ? (
+          {filteredCatalogItems.length > 0 ? (
             <div
               className="overflow-y-auto pr-1"
               onScroll={(event) => setGridScrollTop(event.currentTarget.scrollTop)}
@@ -709,122 +711,133 @@ export function MaterialPicker({
                   }}
                 >
                   {visibleCatalogItems.map((item) => {
-                const isSelected = selectedCatalogId === toLibraryMaterialRef(item.id)
-                const itemProvider = getMaterialProvider(item)
-                const itemProviderOption = getProviderOption(itemProvider)
-                const itemKind = getMaterialKind(item)
-                const isFavorite = favoriteIds.includes(item.id)
+                    const isSelected = selectedCatalogId === toLibraryMaterialRef(item.id)
+                    const itemProvider = getMaterialProvider(item)
+                    const itemProviderOption = getProviderOption(itemProvider)
+                    const itemKind = getMaterialKind(item)
+                    const isFavorite = favoriteIds.includes(item.id)
 
-                return (
+                    return (
                       <div className="relative min-w-0" key={item.id}>
-                    <button
-                      aria-label={isFavorite ? 'Remove favorite' : 'Add favorite'}
-                      aria-pressed={isFavorite}
-                      className={cn(
-                        'absolute top-1 right-1 z-10 flex h-6 w-6 items-center justify-center rounded-full border text-[10px] shadow-sm backdrop-blur',
-                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
-                        isFavorite
-                          ? 'border-amber-300 bg-amber-100 text-amber-700'
-                          : 'border-white/70 bg-background/70 text-muted-foreground hover:text-foreground',
-                      )}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        handleFavoriteToggle(item.id)
-                      }}
-                      title={isFavorite ? 'Remove favorite' : 'Add favorite'}
-                      type="button"
-                    >
-                      <Star
-                        className={cn('h-3.5 w-3.5', isFavorite && 'fill-current')}
-                        strokeWidth={2}
-                      />
-                    </button>
-
-                    <button
-                      aria-pressed={isSelected}
-                      className={cn(
-                        'h-[122px] w-full min-w-0 overflow-hidden rounded-md border bg-card text-left transition-all',
-                        'hover:border-primary/50 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
-                        isSelected ? 'border-primary ring-2 ring-primary/20' : 'border-border/70',
-                      )}
-                      onClick={() => handleCatalogSelect(item.id)}
-                      title={item.description ? `${item.label}: ${item.description}` : item.label}
-                      type="button"
-                    >
-                      <span className="relative block h-16 w-full overflow-hidden bg-muted">
-                        {item.previewThumbnailUrl ? (
-                          <img
-                            alt={item.label}
-                            className="h-full w-full object-cover"
-                            loading="lazy"
-                            src={item.previewThumbnailUrl}
-                          />
-                        ) : item.previewColor ? (
-                          <span
-                            className="block h-full w-full"
-                            style={{ backgroundColor: item.previewColor }}
-                          />
-                        ) : (
-                          <span className="block h-full w-full bg-muted" />
-                        )}
-                        <span
+                        <button
+                          aria-label={isFavorite ? 'Remove favorite' : 'Add favorite'}
+                          aria-pressed={isFavorite}
                           className={cn(
-                            'absolute top-1 left-1 rounded px-1.5 py-0.5 text-[9px] font-bold leading-none',
-                            getProviderClassName(itemProvider),
+                            'absolute top-1 right-1 z-10 flex h-6 w-6 items-center justify-center rounded-full border text-[10px] shadow-sm backdrop-blur',
+                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+                            isFavorite
+                              ? 'border-amber-300 bg-amber-100 text-amber-700'
+                              : 'border-white/70 bg-background/70 text-muted-foreground hover:text-foreground',
                           )}
-                        >
-                          {itemProviderOption.shortLabel}
-                        </span>
-                      </span>
-                      <span className="flex h-[58px] min-w-0 flex-col gap-1 px-1.5 py-1.5">
-                        <span
-                          className="overflow-hidden font-medium text-[11px] text-foreground leading-tight"
-                          style={{
-                            display: '-webkit-box',
-                            WebkitBoxOrient: 'vertical',
-                            WebkitLineClamp: 2,
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            handleFavoriteToggle(item.id)
                           }}
+                          title={isFavorite ? 'Remove favorite' : 'Add favorite'}
+                          type="button"
                         >
-                          {item.label}
-                        </span>
-                        <span className="mt-auto flex min-w-0 items-center gap-1">
-                          <span className="truncate text-[10px] text-muted-foreground">
-                            {CATEGORY_LABELS.get(item.category) ?? item.category}
+                          <Star
+                            className={cn('h-3.5 w-3.5', isFavorite && 'fill-current')}
+                            strokeWidth={2}
+                          />
+                        </button>
+
+                        <button
+                          aria-pressed={isSelected}
+                          className={cn(
+                            'h-[122px] w-full min-w-0 overflow-hidden rounded-md border bg-card text-left transition-all',
+                            'hover:border-primary/50 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+                            isSelected
+                              ? 'border-primary ring-2 ring-primary/20'
+                              : 'border-border/70',
+                          )}
+                          onClick={() => handleCatalogSelect(item.id)}
+                          title={
+                            item.description ? `${item.label}: ${item.description}` : item.label
+                          }
+                          type="button"
+                        >
+                          <span className="relative block h-16 w-full overflow-hidden bg-muted">
+                            {item.previewThumbnailUrl ? (
+                              <img
+                                alt={item.label}
+                                className="h-full w-full object-cover"
+                                loading="lazy"
+                                src={item.previewThumbnailUrl}
+                              />
+                            ) : item.previewColor ? (
+                              <span
+                                className="block h-full w-full"
+                                style={{ backgroundColor: item.previewColor }}
+                              />
+                            ) : (
+                              <span className="block h-full w-full bg-muted" />
+                            )}
+                            <span
+                              className={cn(
+                                'absolute top-1 left-1 rounded px-1.5 py-0.5 text-[9px] font-bold leading-none',
+                                getProviderClassName(itemProvider),
+                              )}
+                            >
+                              {itemProviderOption.shortLabel}
+                            </span>
                           </span>
-                          <span className="ml-auto rounded bg-muted px-1 py-0.5 font-semibold text-[9px] text-muted-foreground leading-none">
-                            {itemKind === 'texture' ? 'PBR' : 'Param'}
+                          <span className="flex h-[58px] min-w-0 flex-col gap-1 px-1.5 py-1.5">
+                            <span
+                              className="overflow-hidden font-medium text-[11px] text-foreground leading-tight"
+                              style={{
+                                display: '-webkit-box',
+                                WebkitBoxOrient: 'vertical',
+                                WebkitLineClamp: 2,
+                              }}
+                            >
+                              {item.label}
+                            </span>
+                            <span className="mt-auto flex min-w-0 items-center gap-1">
+                              <span className="truncate text-[10px] text-muted-foreground">
+                                {CATEGORY_LABELS.get(item.category) ?? item.category}
+                              </span>
+                              <span className="ml-auto rounded bg-muted px-1 py-0.5 font-semibold text-[9px] text-muted-foreground leading-none">
+                                {itemKind === 'texture' ? 'PBR' : 'Param'}
+                              </span>
+                            </span>
                           </span>
-                        </span>
-                      </span>
-                    </button>
+                        </button>
                       </div>
                     )
                   })}
-                  {onChange && visibleEndIndex >= filteredCatalogItems.length ? (
-                    <button
-                      aria-pressed={showCustom}
-                      className={cn(
-                        'flex h-[122px] min-w-0 flex-col items-center justify-center rounded-md border px-1 text-center transition-all',
-                        'hover:border-primary/50 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
-                        showCustom
-                          ? 'border-primary bg-primary/10 text-primary ring-2 ring-primary/20'
-                          : 'border-border/70 bg-card text-muted-foreground',
-                      )}
-                      onClick={handleCustomOpen}
-                      title="Custom"
-                      type="button"
-                    >
-                      <span className="text-[11px] font-semibold">Custom</span>
-                      <span className="mt-1 text-[10px]">Color</span>
-                    </button>
-                  ) : null}
                 </div>
               </div>
             </div>
-          ) : (
+          ) : catalogItems.length > 0 ? (
             <div className="rounded-md border border-dashed border-border/70 px-3 py-4 text-center text-[11px] text-muted-foreground">
               No materials match
             </div>
+          ) : (
+            null
+          )}
+
+          {onChange ? (
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(88px,1fr))] gap-2">
+              <button
+                aria-pressed={showCustom}
+                className={cn(
+                  'flex h-[122px] min-w-0 flex-col items-center justify-center rounded-md border px-1 text-center transition-all',
+                  'hover:border-primary/50 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+                  showCustom
+                    ? 'border-primary bg-primary/10 text-primary ring-2 ring-primary/20'
+                    : 'border-border/70 bg-card text-muted-foreground',
+                )}
+                onClick={handleCustomOpen}
+                title="Custom"
+                type="button"
+              >
+                <span className="text-[11px] font-semibold">Custom</span>
+                <span className="mt-1 text-[10px]">Color</span>
+              </button>
+            </div>
+          ) : (
+            null
           )}
         </div>
       )}
@@ -841,7 +854,9 @@ export function MaterialPicker({
               </div>
             </div>
             <span className="rounded bg-background px-1.5 py-0.5 font-semibold text-[10px] text-muted-foreground">
-              {getMaterialKind(selectedCatalogItem) === 'texture' ? 'PBR defaults' : 'Param defaults'}
+              {getMaterialKind(selectedCatalogItem) === 'texture'
+                ? 'PBR defaults'
+                : 'Param defaults'}
             </span>
           </div>
           <div className="grid grid-cols-2 gap-1.5 text-[10px]">
@@ -867,7 +882,9 @@ export function MaterialPicker({
             <div className="rounded bg-background px-2 py-1">
               <span className="text-muted-foreground">Displace</span>
               <span className="ml-1 font-mono text-foreground">
-                {formatMaterialNumber(selectedCatalogItem.preset.mapProperties.displacementScale)}
+                {formatMaterialNumber(
+                  selectedCatalogItem.preset.mapProperties.displacementScale,
+                )}
               </span>
             </div>
             <div className="rounded bg-background px-2 py-1">
@@ -910,7 +927,9 @@ export function MaterialPicker({
               className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-border accent-primary"
               max={1}
               min={0}
-              onChange={(e) => handlePropertyChange('roughness', Number.parseFloat(e.target.value))}
+              onChange={(e) =>
+                handlePropertyChange('roughness', Number.parseFloat(e.target.value))
+              }
               step={0.01}
               type="range"
               value={currentProps.roughness}

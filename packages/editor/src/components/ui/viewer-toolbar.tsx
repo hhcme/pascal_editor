@@ -9,6 +9,7 @@ import {
   useViewer,
 } from '@pascal-app/viewer'
 import {
+  Camera,
   Check,
   ChevronsLeft,
   ChevronsRight,
@@ -80,11 +81,17 @@ const VIEW_MODES: { id: ViewMode; label: string; icon: React.ReactNode }[] = [
     label: 'Split',
     icon: <ToolbarIcon className="h-3.5 w-3.5" src="/icons/split-view.svg" />,
   },
+  {
+    id: 'tri-view',
+    label: '三视图',
+    icon: <ToolbarIcon className="h-3.5 w-3.5" src="/icons/camera-orthographic.svg" />,
+  },
 ]
 
 function ViewModeControl() {
   const viewMode = useEditor((s) => s.viewMode)
   const setViewMode = useEditor((s) => s.setViewMode)
+  const setCameraMode = useViewer((s) => s.setCameraMode)
 
   return (
     <div className={TOOLBAR_CONTAINER}>
@@ -99,7 +106,12 @@ function ViewModeControl() {
                 : 'text-muted-foreground hover:bg-accent hover:text-foreground',
             )}
             key={mode.id}
-            onClick={() => setViewMode(mode.id)}
+            onClick={() => {
+              setViewMode(mode.id)
+              if (mode.id === 'tri-view') {
+                setCameraMode('perspective')
+              }
+            }}
             type="button"
           >
             {mode.icon}
@@ -160,6 +172,29 @@ function WalkthroughButton() {
         </button>
       </TooltipTrigger>
       <TooltipContent side="bottom">Walkthrough</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function ViewpointCameraButton() {
+  const isPlacementMode = useEditor((s) => s.isViewpointPlacementMode)
+  const setViewpointPlacementMode = useEditor((s) => s.setViewpointPlacementMode)
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          className={cn(
+            TOOLBAR_BTN,
+            isPlacementMode && 'bg-primary/10 text-primary hover:bg-primary/15',
+          )}
+          onClick={() => setViewpointPlacementMode(!isPlacementMode)}
+          type="button"
+        >
+          <Camera className="h-4 w-4" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">取景相机</TooltipContent>
     </Tooltip>
   )
 }
@@ -670,6 +705,7 @@ export function ViewerToolbarRight() {
       <OrientationSunControl />
       <WeatherControl />
       <CameraModeToggle />
+      <ViewpointCameraButton />
       <ViewDirectionButtons />
       <div className="my-2 w-px bg-border/70" />
       <WalkthroughButton />

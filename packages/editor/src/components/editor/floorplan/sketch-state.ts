@@ -23,6 +23,17 @@ export type SketchRectangleDraft = {
   endConnection?: SketchLineEndpointReference
 }
 
+export type SketchCircleDraft = {
+  center: WallPlanPoint
+  edge: WallPlanPoint
+}
+
+export type SketchArcDraft = {
+  center: WallPlanPoint
+  start?: WallPlanPoint
+  end: WallPlanPoint
+}
+
 export type SketchDimensionInputState = {
   lineId: SketchLineNode['id']
   value: string
@@ -34,12 +45,16 @@ export function useFloorplanSketchState() {
   const [sketchRectangleDraft, setSketchRectangleDraft] = useState<SketchRectangleDraft | null>(
     null,
   )
+  const [sketchCircleDraft, setSketchCircleDraft] = useState<SketchCircleDraft | null>(null)
+  const [sketchArcDraft, setSketchArcDraft] = useState<SketchArcDraft | null>(null)
   const [sketchDimensionInput, setSketchDimensionInput] =
     useState<SketchDimensionInputState | null>(null)
 
   const clearSketchLinePlacementDraft = useCallback(() => {
     setSketchLineDraft(null)
     setSketchRectangleDraft(null)
+    setSketchCircleDraft(null)
+    setSketchArcDraft(null)
     setSketchDimensionInput(null)
   }, [])
 
@@ -56,6 +71,10 @@ export function useFloorplanSketchState() {
     setSketchLineDraft,
     sketchRectangleDraft,
     setSketchRectangleDraft,
+    sketchCircleDraft,
+    setSketchCircleDraft,
+    sketchArcDraft,
+    setSketchArcDraft,
     sketchDimensionInput,
     setSketchDimensionInput,
     clearSketchLinePlacementDraft,
