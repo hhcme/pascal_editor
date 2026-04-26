@@ -16,7 +16,7 @@ import {
 } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
 import { Move, Spline } from 'lucide-react'
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { sfxEmitter } from '../../../lib/sfx-bus'
 import useEditor from '../../../store/use-editor'
 import { ActionButton, ActionGroup } from '../controls/action-button'
@@ -24,7 +24,10 @@ import { InspectorStat, InspectorSummary } from '../controls/inspector-summary'
 import { MaterialPicker } from '../controls/material-picker'
 import { PanelSection } from '../controls/panel-section'
 import { SliderControl } from '../controls/slider-control'
+import { InspectorTabs } from './inspector-tabs'
 import { PanelWrapper } from './panel-wrapper'
+
+type WallInspectorTab = 'properties' | 'material'
 
 function buildWallSurfaceMaterialPatch(
   node: WallNode,
@@ -59,6 +62,7 @@ export function WallPanel() {
   const setMovingNode = useEditor((s) => s.setMovingNode)
   const setCurvingWall = useEditor((s) => s.setCurvingWall)
   const selectedMaterialTarget = useEditor((s) => s.selectedMaterialTarget)
+  const [activeTab, setActiveTab] = useState<WallInspectorTab>('properties')
 
   const node = useScene((s) =>
     selectedId ? (s.nodes[selectedId as AnyNode['id']] as WallNode | undefined) : undefined,
@@ -200,80 +204,97 @@ export function WallPanel() {
         <InspectorStat label="Curve" value={`${curveOffset.toFixed(2)} m`} />
       </InspectorSummary>
 
-      <PanelSection title="Dimensions">
-        <SliderControl
-          label="Length"
-          max={20}
-          min={0.1}
-          onChange={handleUpdateLength}
-          precision={2}
-          step={0.01}
-          unit="m"
-          value={length}
-        />
-        <SliderControl
-          label="Height"
-          max={6}
-          min={0.1}
-          onChange={(v) => handleUpdate({ height: Math.max(0.1, v) })}
-          precision={2}
-          step={0.1}
-          unit="m"
-          value={Math.round(height * 100) / 100}
-        />
-        <SliderControl
-          label="Thickness"
-          max={1}
-          min={0.05}
-          onChange={(v) => handleUpdate({ thickness: Math.max(0.05, v) })}
-          precision={3}
-          step={0.01}
-          unit="m"
-          value={Math.round(thickness * 1000) / 1000}
-        />
-        {!hasWallChildrenBlockingCurve && (
-          <SliderControl
-            label="Curve"
-            max={Math.max(0.01, maxCurveOffset)}
-            min={-Math.max(0.01, maxCurveOffset)}
-            onChange={(v) => handleUpdate({ curveOffset: normalizeWallCurveOffset(node, v) })}
-            precision={2}
-            step={0.1}
-            unit="m"
-            value={Math.round(curveOffset * 100) / 100}
-          />
-        )}
-      </PanelSection>
+      <InspectorTabs
+        onChange={setActiveTab}
+        options={[
+          { label: 'Properties', value: 'properties' },
+          { label: 'Material', value: 'material' },
+        ]}
+        value={activeTab}
+      />
 
-      <PanelSection title="Material">
-        {!materialTargetSide ? (
-          <div className="mb-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
-            Click the wall face you want to edit. Materials now apply to one side at a time.
-          </div>
-        ) : null}
-        <MaterialPicker
-          disabled={!materialTargetSide}
-          hideSideControl
-          nodeType="wall"
-          onChange={handleCustomMaterialChange}
-          onSelectMaterialPreset={handleMaterialPresetChange}
-          selectedMaterialPreset={materialPickerValue.materialPreset}
-          value={materialPickerValue.material}
-        />
-      </PanelSection>
-
-      <PanelSection title="Actions">
-        <ActionGroup>
-          <ActionButton icon={<Move className="h-3.5 w-3.5" />} label="Move" onClick={handleMove} />
-          {!hasWallChildrenBlockingCurve && (
-            <ActionButton
-              icon={<Spline className="h-3.5 w-3.5" />}
-              label="Curve"
-              onClick={handleCurve}
+      {activeTab === 'properties' ? (
+        <>
+          <PanelSection title="Dimensions">
+            <SliderControl
+              label="Length"
+              max={20}
+              min={0.1}
+              onChange={handleUpdateLength}
+              precision={2}
+              step={0.01}
+              unit="m"
+              value={length}
             />
-          )}
-        </ActionGroup>
-      </PanelSection>
+            <SliderControl
+              label="Height"
+              max={6}
+              min={0.1}
+              onChange={(v) => handleUpdate({ height: Math.max(0.1, v) })}
+              precision={2}
+              step={0.1}
+              unit="m"
+              value={Math.round(height * 100) / 100}
+            />
+            <SliderControl
+              label="Thickness"
+              max={1}
+              min={0.05}
+              onChange={(v) => handleUpdate({ thickness: Math.max(0.05, v) })}
+              precision={3}
+              step={0.01}
+              unit="m"
+              value={Math.round(thickness * 1000) / 1000}
+            />
+            {!hasWallChildrenBlockingCurve && (
+              <SliderControl
+                label="Curve"
+                max={Math.max(0.01, maxCurveOffset)}
+                min={-Math.max(0.01, maxCurveOffset)}
+                onChange={(v) => handleUpdate({ curveOffset: normalizeWallCurveOffset(node, v) })}
+                precision={2}
+                step={0.1}
+                unit="m"
+                value={Math.round(curveOffset * 100) / 100}
+              />
+            )}
+          </PanelSection>
+
+          <PanelSection title="Actions">
+            <ActionGroup>
+              <ActionButton
+                icon={<Move className="h-3.5 w-3.5" />}
+                label="Move"
+                onClick={handleMove}
+              />
+              {!hasWallChildrenBlockingCurve && (
+                <ActionButton
+                  icon={<Spline className="h-3.5 w-3.5" />}
+                  label="Curve"
+                  onClick={handleCurve}
+                />
+              )}
+            </ActionGroup>
+          </PanelSection>
+        </>
+      ) : (
+        <PanelSection title="Material">
+          {!materialTargetSide ? (
+            <div className="mb-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
+              Click the wall face you want to edit. Materials now apply to one side at a time.
+            </div>
+          ) : null}
+          <MaterialPicker
+            disabled={!materialTargetSide}
+            hideSideControl
+            nodeType="wall"
+            onChange={handleCustomMaterialChange}
+            onSelectMaterialPreset={handleMaterialPresetChange}
+            selectedMaterialPreset={materialPickerValue.materialPreset}
+            value={materialPickerValue.material}
+          />
+        </PanelSection>
+      )}
     </PanelWrapper>
   )
 }

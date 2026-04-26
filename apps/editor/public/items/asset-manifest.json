@@ -3,7 +3,7 @@
   "generatedBy": "editor/tooling/assets/generate-asset-manifest.cjs",
   "sourceCatalog": "packages/editor/src/components/ui/item-catalog/catalog-items.tsx",
   "sourceLedger": "assets/asset-source-ledger.json",
-  "sourceFingerprint": "677d12c40c47bc9932e1005d76b013efc209c038db5992a8a5cc2b163dcf0c73",
+  "sourceFingerprint": "1e8d2a6f9ade57063a21ae29eedd99c90ec4e48286b55c4688f4695d7ac5999a",
   "summary": {
     "totalItems": 183,
     "totalModelBytes": 43348196,
@@ -6989,6 +6989,7 @@
         0.55,
         0.32
       ],
+      "grounding": "none",
       "offset": [
         0,
         0,

@@ -11,7 +11,7 @@ import {
 } from './../../../components/ui/primitives/tooltip'
 import { cn } from './../../../lib/utils'
 import useEditor, { type CatalogCategory } from './../../../store/use-editor'
-import { CATALOG_ITEMS } from './catalog-items'
+import { getCatalogHiddenTags, getCatalogItemsForCategory } from './catalog-items'
 
 const PLACEMENT_TAGS = new Set(['floor', 'wall', 'ceiling', 'countertop'])
 
@@ -21,12 +21,13 @@ export function ItemCatalog({ category }: { category: CatalogCategory }) {
   const [activePlacementTag, setActivePlacementTag] = useState<string | null>(null)
   const [activeFunctionalTag, setActiveFunctionalTag] = useState<string | null>(null)
 
-  const categoryItems = CATALOG_ITEMS.filter((item) => item.category === category)
+  const categoryItems = getCatalogItemsForCategory(category)
+  const hiddenTags = getCatalogHiddenTags(category)
 
   // Collect tags available in this category
   const allTags = Array.from(new Set(categoryItems.flatMap((item) => item.tags ?? [])))
   const placementTags = allTags.filter((t) => PLACEMENT_TAGS.has(t))
-  const functionalTags = allTags.filter((t) => !PLACEMENT_TAGS.has(t))
+  const functionalTags = allTags.filter((t) => !PLACEMENT_TAGS.has(t) && !hiddenTags.has(t))
   const hasFilters = allTags.length > 1
 
   // Count items for a placement tag given the current functional filter

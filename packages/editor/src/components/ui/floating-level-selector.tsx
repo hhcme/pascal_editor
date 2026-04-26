@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { deleteLevelWithFallbackSelection } from '../../lib/level-selection'
 import { cn } from '../../lib/utils'
+import useEditor, { isSketchStructureTool } from '../../store/use-editor'
 import {
   Dialog,
   DialogContent,
@@ -239,11 +240,16 @@ export function FloatingLevelSelector() {
   const selectedBuildingId = useViewer((s) => s.selection.buildingId)
   const levelId = useViewer((s) => s.selection.levelId)
   const setSelection = useViewer((s) => s.setSelection)
+  const phase = useEditor((state) => state.phase)
+  const mode = useEditor((state) => state.mode)
+  const tool = useEditor((state) => state.tool)
   const createNode = useScene((s) => s.createNode)
   const updateNode = useScene((s) => s.updateNode)
   const updateNodes = useScene((s) => s.updateNodes)
 
   const [deletingLevel, setDeletingLevel] = useState<LevelNode | null>(null)
+  const isSketchWorkbenchActive =
+    phase === 'structure' && mode === 'build' && isSketchStructureTool(tool)
 
   const resolvedBuildingId = useScene((state) => {
     if (selectedBuildingId) return selectedBuildingId
@@ -368,7 +374,12 @@ export function FloatingLevelSelector() {
 
   return (
     <>
-      <div className="pointer-events-auto absolute top-14 left-3 z-20">
+      <div
+        className={cn(
+          'pointer-events-auto absolute left-3 z-20 transition-[top] duration-200 ease-out',
+          isSketchWorkbenchActive ? 'top-20' : 'top-14',
+        )}
+      >
         <div className="relative">
           {/* Floating + at top edge */}
           <button

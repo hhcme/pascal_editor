@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { TooltipProvider } from './../../../components/ui/primitives/tooltip'
 import { useReducedMotion } from './../../../hooks/use-reduced-motion'
 import { cn } from './../../../lib/utils'
-import useEditor from './../../../store/use-editor'
+import useEditor, { isSketchStructureTool } from './../../../store/use-editor'
 import { ItemCatalog } from '../item-catalog/item-catalog'
 import { CameraActions } from './camera-actions'
 import { ControlModes } from './control-modes'
@@ -17,7 +17,10 @@ export function ActionMenu({ className }: { className?: string }) {
   const mode = useEditor((state) => state.mode)
   const tool = useEditor((state) => state.tool)
   const catalogCategory = useEditor((state) => state.catalogCategory)
+  const activeSidebarPanel = useEditor((state) => state.activeSidebarPanel)
   const reducedMotion = useReducedMotion()
+  const isFurnishSidebarActive = activeSidebarPanel === 'furnish'
+  const isSketchWorkbenchActive = phase === 'structure' && mode === 'build' && isSketchStructureTool(tool)
   const transition = reducedMotion
     ? { duration: 0 }
     : { type: 'spring' as const, bounce: 0.2, duration: 0.4 }
@@ -26,8 +29,9 @@ export function ActionMenu({ className }: { className?: string }) {
     <TooltipProvider>
       <motion.div
         className={cn(
-          'editor-command-bar fixed bottom-5 left-1/2 z-50 -translate-x-1/2 overflow-hidden rounded-lg',
+          'editor-command-bar fixed bottom-5 left-1/2 z-50 -translate-x-1/2 overflow-hidden rounded-lg border border-border/60 bg-sidebar/82 shadow-[0_18px_36px_-28px_rgba(15,23,42,0.45)] backdrop-blur-md',
           'max-[700px]:right-3 max-[700px]:bottom-20 max-[700px]:left-3 max-[700px]:w-[calc(100dvw-24px)] max-[700px]:max-w-[calc(100dvw-24px)] max-[700px]:translate-x-0 max-[700px]:overflow-x-auto',
+          isSketchWorkbenchActive && 'bottom-4 scale-[0.98] shadow-[0_14px_28px_-24px_rgba(15,23,42,0.38)]',
           'transition-colors duration-200 ease-out',
           className,
         )}
@@ -36,7 +40,7 @@ export function ActionMenu({ className }: { className?: string }) {
       >
         {/* Item Catalog Row - Only show when in build mode with item tool */}
         <AnimatePresence>
-          {mode === 'build' && tool === 'item' && catalogCategory && (
+          {mode === 'build' && tool === 'item' && catalogCategory && !isFurnishSidebarActive && (
             <motion.div
               animate={{
                 opacity: 1,
@@ -68,7 +72,7 @@ export function ActionMenu({ className }: { className?: string }) {
         </AnimatePresence>
 
         <AnimatePresence>
-          {phase === 'furnish' && mode === 'build' && (
+          {phase === 'furnish' && mode === 'build' && !isFurnishSidebarActive && (
             <motion.div
               animate={{
                 opacity: 1,
@@ -105,7 +109,7 @@ export function ActionMenu({ className }: { className?: string }) {
 
         {/* Structure Tools Row - Animated */}
         <AnimatePresence>
-          {phase === 'structure' && mode === 'build' && (
+          {phase === 'structure' && mode === 'build' && !isSketchWorkbenchActive && (
             <motion.div
               animate={{
                 opacity: 1,
@@ -140,7 +144,12 @@ export function ActionMenu({ className }: { className?: string }) {
           )}
         </AnimatePresence>
         {/* Control Mode Row - Always visible, centered */}
-        <div className="flex items-center justify-center gap-1 px-2 py-2">
+        <div
+          className={cn(
+            'flex items-center justify-center gap-1 px-2 py-2',
+            isSketchWorkbenchActive && 'gap-0.5 px-1.5 py-1.5',
+          )}
+        >
           <ControlModes />
           <div className="mx-1 h-6 w-px bg-border" />
           <ViewToggles />

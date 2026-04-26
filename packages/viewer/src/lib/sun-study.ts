@@ -1,9 +1,13 @@
 export type SunTimeOfDay = 'morning' | 'noon' | 'afternoon' | 'evening'
+export type SunStudyMode = 'preset' | 'real'
 
 export type SunStudyState = {
   enabled: boolean
+  mode: SunStudyMode
   timeOfDay: SunTimeOfDay
   progress: number
+  date: string | null
+  minutesOfDay: number
 }
 
 export type SunPreset = {
@@ -29,11 +33,16 @@ const SUN_PATH_AZIMUTH_SPAN_DEG = 218
 const SUN_PATH_BASE_ELEVATION_DEG = 12
 const SUN_PATH_ELEVATION_SPAN_DEG = 58
 const DEFAULT_SUN_TIME_OF_DAY: SunTimeOfDay = 'afternoon'
+const DEFAULT_SUN_MODE: SunStudyMode = 'preset'
+const DEFAULT_SUN_MINUTES_OF_DAY = 14 * 60
 
 export const DEFAULT_SUN_STUDY_STATE: SunStudyState = {
   enabled: false,
+  mode: DEFAULT_SUN_MODE,
   timeOfDay: DEFAULT_SUN_TIME_OF_DAY,
   progress: 0.78,
+  date: null,
+  minutesOfDay: DEFAULT_SUN_MINUTES_OF_DAY,
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -42,6 +51,26 @@ function clamp(value: number, min: number, max: number) {
 
 function lerp(start: number, end: number, amount: number) {
   return start + (end - start) * amount
+}
+
+function isValidSunStudyDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return false
+
+  const year = Number.parseInt(match[1] ?? '', 10)
+  const month = Number.parseInt(match[2] ?? '', 10)
+  const day = Number.parseInt(match[3] ?? '', 10)
+  const candidate = new Date(Date.UTC(year, month - 1, day))
+
+  return (
+    candidate.getUTCFullYear() === year &&
+    candidate.getUTCMonth() === month - 1 &&
+    candidate.getUTCDate() === day
+  )
+}
+
+function formatDatePart(value: number) {
+  return value.toString().padStart(2, '0')
 }
 
 function degToRad(value: number) {
@@ -73,6 +102,35 @@ export function clampSunProgress(progress: number) {
   return Number.isFinite(progress) ? clamp(progress, 0, 1) : DEFAULT_SUN_STUDY_STATE.progress
 }
 
+export function clampSunMinutesOfDay(minutesOfDay: number) {
+  return Number.isFinite(minutesOfDay)
+    ? clamp(Math.round(minutesOfDay), 0, 23 * 60 + 59)
+    : DEFAULT_SUN_STUDY_STATE.minutesOfDay
+}
+
+export function getDefaultSunStudyDate() {
+  const now = new Date()
+  return `${now.getFullYear()}-${formatDatePart(now.getMonth() + 1)}-${formatDatePart(now.getDate())}`
+}
+
+export function resolveSunStudyDate(date: string | null | undefined) {
+  return typeof date === 'string' && isValidSunStudyDate(date) ? date : null
+}
+
+export function resolveSunMinutesOfDay(minutesOfDay: number | null | undefined) {
+  return typeof minutesOfDay === 'number' && Number.isFinite(minutesOfDay)
+    ? clampSunMinutesOfDay(minutesOfDay)
+    : DEFAULT_SUN_STUDY_STATE.minutesOfDay
+}
+
+export function formatSunMinutesOfDay(minutesOfDay: number) {
+  const totalMinutes = clampSunMinutesOfDay(minutesOfDay)
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+
+  return `${formatDatePart(hours)}:${formatDatePart(minutes)}`
+}
+
 export function getSunAnglesForProgress(progress: number): {
   azimuthDeg: number
   elevationDeg: number
@@ -95,7 +153,7 @@ function sunPreset(preset: Omit<SunPreset, 'azimuthDeg' | 'elevationDeg'>): SunP
 export const SUN_TIME_OPTIONS: SunPreset[] = [
   sunPreset({
     id: 'morning',
-    label: 'Morning',
+    label: '上午',
     progress: 0.08,
     intensity: 3.4,
     ambientIntensity: 0.42,
@@ -105,7 +163,7 @@ export const SUN_TIME_OPTIONS: SunPreset[] = [
   }),
   sunPreset({
     id: 'noon',
-    label: 'Noon',
+    label: '正午',
     progress: 0.5,
     intensity: 4.2,
     ambientIntensity: 0.54,
@@ -115,7 +173,7 @@ export const SUN_TIME_OPTIONS: SunPreset[] = [
   }),
   sunPreset({
     id: 'afternoon',
-    label: 'Afternoon',
+    label: '下午',
     progress: 0.78,
     intensity: 3.8,
     ambientIntensity: 0.45,
@@ -125,7 +183,7 @@ export const SUN_TIME_OPTIONS: SunPreset[] = [
   }),
   sunPreset({
     id: 'evening',
-    label: 'Evening',
+    label: '傍晚',
     progress: 0.96,
     intensity: 2.8,
     ambientIntensity: 0.36,
@@ -180,6 +238,23 @@ export function getNearestSunTimeOfDay(progress: number): SunTimeOfDay {
   return nearest.id
 }
 
+export function resolveSunStudyState(
+  state: Partial<SunStudyState> | SunStudyState | null | undefined,
+): SunStudyState {
+  const timeOfDay = state?.timeOfDay && state.timeOfDay in SUN_PRESETS_BY_ID
+    ? (state.timeOfDay as SunTimeOfDay)
+    : DEFAULT_SUN_STUDY_STATE.timeOfDay
+
+  return {
+    enabled: state?.enabled === true,
+    mode: state?.mode === 'real' ? 'real' : DEFAULT_SUN_MODE,
+    timeOfDay,
+    progress: resolveSunProgress(timeOfDay, state?.progress),
+    date: resolveSunStudyDate(state?.date),
+    minutesOfDay: resolveSunMinutesOfDay(state?.minutesOfDay),
+  }
+}
+
 export function resolveSunLighting(progress: number): SunResolvedPreset {
   const sunProgress = clampSunProgress(progress)
   const first = SUN_TIME_OPTIONS[0]!
@@ -205,7 +280,7 @@ export function resolveSunLighting(progress: number): SunResolvedPreset {
 
     return {
       id: sunProgress === start.progress ? start.id : 'custom',
-      label: 'Custom',
+      label: '自定义',
       progress: sunProgress,
       azimuthDeg,
       elevationDeg,
@@ -218,6 +293,28 @@ export function resolveSunLighting(progress: number): SunResolvedPreset {
   }
 
   return { ...resolveSunPreset(DEFAULT_SUN_TIME_OF_DAY), azimuthDeg, elevationDeg }
+}
+
+export function resolveRealSunLighting(
+  azimuthDeg: number,
+  elevationDeg: number,
+): SunResolvedPreset {
+  const daylight = clamp((elevationDeg + 2) / 12, 0, 1)
+  const altitudeFactor = clamp(elevationDeg / 65, 0, 1)
+  const warmth = 1 - clamp((elevationDeg - 6) / 36, 0, 1)
+
+  return {
+    id: 'custom',
+    label: '真实太阳',
+    progress: altitudeFactor,
+    azimuthDeg,
+    elevationDeg,
+    intensity: daylight > 0 ? lerp(0.9, 4.3, altitudeFactor) * daylight : 0.02,
+    ambientIntensity: daylight > 0 ? lerp(0.18, 0.58, altitudeFactor) : 0.12,
+    fillIntensity: daylight > 0 ? lerp(0.14, 0.38, altitudeFactor) : 0.05,
+    shadowIntensity: daylight > 0 ? lerp(0.88, 0.38, altitudeFactor) : 0,
+    color: daylight > 0 ? lerpHexColor('#fff6dc', '#ffb46b', warmth) : '#94a3b8',
+  }
 }
 
 export function getSunDirection(

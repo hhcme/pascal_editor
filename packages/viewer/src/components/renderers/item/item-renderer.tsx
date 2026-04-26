@@ -16,11 +16,12 @@ import { useGLTF } from '@react-three/drei/core/Gltf'
 import { useFrame } from '@react-three/fiber'
 import { Suspense, useEffect, useMemo, useRef } from 'react'
 import type { AnimationAction, Group, Material, Mesh } from 'three'
-import { MathUtils } from 'three'
+import { Box3, MathUtils } from 'three'
 import { positionLocal, smoothstep, time } from 'three/tsl'
 import { MeshStandardNodeMaterial } from 'three/webgpu'
 import { useNodeEvents } from '../../../hooks/use-node-events'
 import { resolveCdnUrl } from '../../../lib/asset-url'
+import { getGroundAlignmentOffsetY } from '../../../lib/item-grounding'
 import { useItemLightPool } from '../../../store/use-item-light-pool'
 import { ErrorBoundary } from '../../error-boundary'
 import { NodeRenderer } from '../node-renderer'
@@ -95,6 +96,10 @@ const ModelRenderer = ({ node }: { node: ItemNode }) => {
   const { actions } = useAnimations(animations, ref)
   // Freeze the interactive definition at mount — asset schemas don't change at runtime
   const interactiveRef = useRef(node.asset.interactive)
+  const effectiveScale = useMemo(
+    () => multiplyScales(node.asset.scale || [1, 1, 1], node.scale || [1, 1, 1]),
+    [node.asset.scale, node.scale],
+  )
 
   if (nodes.cutout) {
     nodes.cutout.visible = false
@@ -151,6 +156,36 @@ const ModelRenderer = ({ node }: { node: ItemNode }) => {
     })
   }, [scene])
 
+  const rawBounds = useMemo(() => {
+    const bounds = new Box3().setFromObject(scene)
+    if (bounds.isEmpty()) return null
+    return {
+      min: bounds.min.toArray() as [number, number, number],
+      max: bounds.max.toArray() as [number, number, number],
+    }
+  }, [scene])
+
+  const groundOffsetY = useMemo(() => {
+    if (node.asset.attachTo || node.asset.grounding === 'none' || !rawBounds) return 0
+    return getGroundAlignmentOffsetY(rawBounds, {
+      offset: node.asset.offset,
+      rotation: node.asset.rotation,
+      scale: effectiveScale,
+    })
+  }, [
+    effectiveScale,
+    node.asset.attachTo,
+    node.asset.grounding,
+    node.asset.offset,
+    node.asset.rotation,
+    rawBounds,
+  ])
+
+  const modelPosition = useMemo<[number, number, number]>(
+    () => [node.asset.offset[0], node.asset.offset[1] + groundOffsetY, node.asset.offset[2]],
+    [groundOffsetY, node.asset.offset],
+  )
+
   const interactive = interactiveRef.current
   const animEffect =
     interactive?.effects.find((e): e is AnimationEffect => e.kind === 'animation') ?? null
@@ -161,10 +196,10 @@ const ModelRenderer = ({ node }: { node: ItemNode }) => {
     <>
       <Clone
         object={scene}
-        position={node.asset.offset}
+        position={modelPosition}
         ref={ref}
         rotation={node.asset.rotation}
-        scale={multiplyScales(node.asset.scale || [1, 1, 1], node.scale || [1, 1, 1])}
+        scale={effectiveScale}
         {...handlers}
       />
       {animations.length > 0 && (
@@ -178,7 +213,14 @@ const ModelRenderer = ({ node }: { node: ItemNode }) => {
       )}
       {lightEffects.map((effect, i) => (
         <ItemLightRegistrar
-          effect={effect}
+          effect={
+            groundOffsetY === 0
+              ? effect
+              : {
+                  ...effect,
+                  offset: [effect.offset[0], effect.offset[1] + groundOffsetY, effect.offset[2]],
+                }
+          }
           index={i}
           interactive={interactive!}
           key={i}

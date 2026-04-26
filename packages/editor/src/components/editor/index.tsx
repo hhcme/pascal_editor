@@ -54,6 +54,11 @@ import { FloatingActionMenu } from './floating-action-menu'
 import { FloatingBuildingActionMenu } from './floating-building-action-menu'
 import { FloorplanPanel } from './floorplan-panel'
 import { Grid } from './grid'
+import {
+  MeasurementModeController,
+  MeasurementModeDockedPanel,
+  MeasurementModeOverlay,
+} from './measurement-mode'
 import { OrientationGuide } from './orientation-guide'
 import { PresetThumbnailGenerator } from './preset-thumbnail-generator'
 import { SelectionManager } from './selection-manager'
@@ -549,6 +554,7 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
       {!isVersionPreviewMode && !isFirstPersonMode && <FloatingActionMenu />}
       {!isVersionPreviewMode && !isFirstPersonMode && <FloatingBuildingActionMenu />}
       {!isFirstPersonMode && <WallMeasurementLabel />}
+      {!isFirstPersonMode && <MeasurementModeController />}
       <ExportManager />
       {isFirstPersonMode ? <ViewerZoneSystem /> : <ZoneSystem />}
       <CeilingSystem />
@@ -622,14 +628,14 @@ function CadMultiViewOverlay() {
       <div className="pointer-events-auto absolute top-0 left-0 h-1/2 w-1/2 cursor-default">
         <div className={labelClass}>俯视图</div>
       </div>
-      <div className="pointer-events-auto absolute top-0 right-0 h-1/2 w-1/2 cursor-default">
-        <div className={labelClass}>正视图</div>
+      <div className="absolute top-0 right-0 h-1/2 w-1/2">
+        <div className={labelClass}>3D</div>
       </div>
       <div className="pointer-events-auto absolute bottom-0 left-0 h-1/2 w-1/2 cursor-default">
-        <div className={labelClass}>右视图</div>
+        <div className={labelClass}>正视图</div>
       </div>
-      <div className="absolute right-0 bottom-0 h-1/2 w-1/2">
-        <div className={labelClass}>3D</div>
+      <div className="pointer-events-auto absolute right-0 bottom-0 h-1/2 w-1/2 cursor-default">
+        <div className={labelClass}>右视图</div>
       </div>
     </div>
   )
@@ -644,6 +650,7 @@ const ViewerCanvas = memo(function ViewerCanvas({
   hasLoadedInitialScene,
   showLoader,
   isFirstPersonMode,
+  showFloatingMeasurementOverlay,
   onThumbnailCapture,
 }: {
   isVersionPreviewMode: boolean
@@ -651,6 +658,7 @@ const ViewerCanvas = memo(function ViewerCanvas({
   hasLoadedInitialScene: boolean
   showLoader: boolean
   isFirstPersonMode: boolean
+  showFloatingMeasurementOverlay: boolean
   onThumbnailCapture?: (blob: Blob) => void
 }) {
   const viewMode = useEditor((s) => s.viewMode)
@@ -760,6 +768,12 @@ const ViewerCanvas = memo(function ViewerCanvas({
           {!isLoading && !isVersionPreviewMode && !isFirstPersonMode ? (
             <ViewpointPlacementOverlay />
           ) : null}
+          {!isLoading &&
+          !isVersionPreviewMode &&
+          !isFirstPersonMode &&
+          showFloatingMeasurementOverlay ? (
+            <MeasurementModeOverlay />
+          ) : null}
           {isCadMultiView ? <CadMultiViewOverlay /> : null}
         </div>
       </div>
@@ -808,6 +822,7 @@ export default function Editor({
   const [hasLoadedInitialScene, setHasLoadedInitialScene] = useState(false)
   const isPreviewMode = useEditor((s) => s.isPreviewMode)
   const isFirstPersonMode = useEditor((s) => s.isFirstPersonMode)
+  const measurementMode = useEditor((s) => s.measurementMode)
   const inspectorPanelType = useInspectorPanelType()
   const isInspectorPinned = useEditor((s) => s.isInspectorPinned)
   const setInspectorPinned = useEditor((s) => s.setInspectorPinned)
@@ -918,6 +933,7 @@ export default function Editor({
       isLoading={isLoading}
       isVersionPreviewMode={isVersionPreviewMode}
       onThumbnailCapture={onThumbnailCapture}
+      showFloatingMeasurementOverlay={layoutVersion !== 'v2'}
       showLoader={showLoader}
     />
   )
@@ -942,8 +958,11 @@ export default function Editor({
     }
 
     const tabBarTabs = sidebarTabs?.map(({ id, label }) => ({ id, label })) ?? []
+    const shouldDockMeasurementPanel = Boolean(measurementMode)
     const shouldShowInspector =
-      !isFirstPersonMode && !isVersionPreviewMode && (inspectorPanelType || isInspectorPinned)
+      !isFirstPersonMode &&
+      !isVersionPreviewMode &&
+      (shouldDockMeasurementPanel || inspectorPanelType || isInspectorPinned)
 
     return (
       <PresetsProvider adapter={presetsAdapter}>
@@ -968,9 +987,18 @@ export default function Editor({
                     mode="docked"
                     onPinnedChange={setInspectorPinned}
                   >
-                    {inspectorPanelType ? <PanelManager /> : <InspectorEmptyPanel />}
+                    {shouldDockMeasurementPanel ? (
+                      <MeasurementModeDockedPanel />
+                    ) : inspectorPanelType ? (
+                      <PanelManager />
+                    ) : (
+                      <InspectorEmptyPanel />
+                    )}
                   </PanelSurfaceProvider>
                 ) : null
+              }
+              inspectorWidth={
+                shouldDockMeasurementPanel ? 'clamp(340px, 24vw, 420px)' : undefined
               }
               navbarSlot={navbarSlot}
               overlays={

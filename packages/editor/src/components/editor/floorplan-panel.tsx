@@ -28,6 +28,7 @@ import {
   type SiteNode,
   sampleSketchCircleCenterline,
   type SketchCircleNode,
+  type SketchDimensionNode,
   type SketchLineNode,
   SlabNode,
   type StairNode,
@@ -55,21 +56,28 @@ import {
 } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import { useShallow } from 'zustand/react/shallow'
+import { type EditorLanguage, useEditorLanguage } from '../../hooks/use-editor-language'
 import { markToolCancelConsumed } from '../../hooks/use-keyboard'
+import { type PerimeterGuide, getPerimeterGuidesForNode } from '../../lib/measurement'
 import { sfxEmitter } from '../../lib/sfx-bus'
 import { cn } from '../../lib/utils'
 import { isZoneLabelHidden } from '../../lib/zone-label-visibility'
-import useEditor, { type FloorplanSelectionTool } from '../../store/use-editor'
+import { type GuideDetectionCandidates, useDeliveryStore } from '../../store/use-delivery'
+import useEditor, {
+  isSketchStructureTool,
+  type FloorplanSelectionTool,
+} from '../../store/use-editor'
 import {
   createFenceOnCurrentLevel,
   snapFenceDraftPoint,
   type FencePlanPoint,
 } from '../tools/fence/fence-drafting'
 import { snapToHalf } from '../tools/item/placement-math'
-import {
-  detectClosedSketchProfiles,
-  isSketchLineLongEnough,
-} from '../tools/sketch/sketch-geometry'
+import { buildRemoveSketchCircleConstraintReferencesPlan } from '../tools/sketch/sketch-circle-constraints'
+import { collectSketchDistanceDimensionIdsReferencingEntities } from '../tools/sketch/sketch-distance-dimensions'
+import { buildRemoveSketchLineConstraintReferencesPlan } from '../tools/sketch/sketch-line-constraints'
+import { buildRemoveSketchLineTangentReferencesPlan } from '../tools/sketch/sketch-line-tangent'
+import { detectClosedSketchProfiles, isSketchLineLongEnough } from '../tools/sketch/sketch-geometry'
 import {
   DEFAULT_STAIR_ATTACHMENT_SIDE,
   DEFAULT_STAIR_FILL_TO_FLOOR,
@@ -129,28 +137,49 @@ import { furnishTools } from '../ui/action-menu/furnish-tools'
 import { tools as structureTools } from '../ui/action-menu/structure-tools'
 
 import { PALETTE_COLORS } from '../ui/primitives/color-dot'
+import { Button } from '../ui/primitives/button'
+import { ContextMenu, ContextMenuTrigger } from '../ui/primitives/context-menu'
 import {
-  ContextMenu,
-  ContextMenuCheckboxItem,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuLabel,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from '../ui/primitives/context-menu'
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../ui/primitives/dialog'
+import { Input } from '../ui/primitives/input'
 import {
   type FloorplanSketchLineEntry,
   useFloorplanSketchActions,
 } from './floorplan/sketch-actions'
 import { useFloorplanSketchEdit } from './floorplan/sketch-edit'
 import {
+  type FloorplanSketchCircleEntry,
+  getSketchContextHitAtPoint as resolveSketchContextHitAtPoint,
+} from './floorplan/floorplan-sketch-context'
+import { useFloorplanSketchContextActions } from './floorplan/floorplan-sketch-context-actions'
+import {
+  getDistanceToSketchPolyline,
+  getDistanceToWallSegment,
+  toPoint2D,
+  toWallPlanPoint,
+} from './floorplan/floorplan-geometry'
+import {
+  FloorplanActionMenuLayer,
+  FloorplanSketchContextMenuContent,
+  type FloorplanSketchContextTarget,
+  type SketchContextTool,
+} from './floorplan/floorplan-sketch-menus'
+import {
   FloorplanSketchCircleLayer,
+  FloorplanSketchDistanceDimensionLayer,
   FloorplanSketchEditLayer,
   FloorplanSketchLayer,
   FloorplanSketchProfileLayer,
 } from './floorplan/sketch-layer'
+import { FloorplanSketchCommandBar } from './floorplan/sketch-command-bar'
 import { useFloorplanSketchState } from './floorplan/sketch-state'
-import { NodeActionMenu, type NodeActionMenuExtraAction } from './node-action-menu'
+import type { NodeActionMenuExtraAction } from './node-action-menu'
 
 const FALLBACK_VIEW_SIZE = 12
 const FLOORPLAN_PADDING = 2
@@ -339,6 +368,20 @@ type GuideTransformDraft = {
   position: WallPlanPoint
   scale: number
   rotation: number
+}
+
+type GuideDetectionRegionDraft = {
+  guideId: GuideNode['id']
+  start: WallPlanPoint
+  end: WallPlanPoint
+}
+
+type GuideDetectionRegionInteractionState = {
+  pointerId: number
+  guideId: GuideNode['id']
+  dimensions: GuideImageDimensions
+  start: WallPlanPoint
+  current: WallPlanPoint
 }
 
 type GuideHandleHintAnchor = {
@@ -646,14 +689,6 @@ function getSelectionModifierKeys(event?: { metaKey?: boolean; ctrlKey?: boolean
   }
 }
 
-function toPoint2D(point: WallPlanPoint): Point2D {
-  return { x: point[0], y: point[1] }
-}
-
-function toWallPlanPoint(point: Point2D): WallPlanPoint {
-  return [point.x, point.y]
-}
-
 function toSvgX(value: number): number {
   return -value
 }
@@ -720,6 +755,101 @@ function getGuideCenterSvgPoint(guide: GuideNode): SvgPoint {
   return {
     x: toSvgX(guide.position[0]),
     y: toSvgY(guide.position[2]),
+  }
+}
+
+function getGuideLocalPointFromSvgPoint(
+  guide: GuideNode,
+  dimensions: GuideImageDimensions,
+  svgPoint: SvgPoint,
+): WallPlanPoint | null {
+  const aspectRatio = dimensions.width / dimensions.height
+  if (!(aspectRatio > 0)) return null
+
+  const width = getGuideWidth(guide.scale)
+  const height = getGuideHeight(width, aspectRatio)
+  const centerSvg = getGuideCenterSvgPoint(guide)
+  const localPoint = rotateVector(subtractSvgPoints(svgPoint, centerSvg), guide.rotation[1])
+
+  if (Math.abs(localPoint[0]) > width / 2 || Math.abs(localPoint[1]) > height / 2) {
+    return null
+  }
+
+  return localPoint
+}
+
+function getGuideClampedLocalPointFromSvgPoint(
+  guide: GuideNode,
+  dimensions: GuideImageDimensions,
+  svgPoint: SvgPoint,
+): WallPlanPoint | null {
+  const aspectRatio = dimensions.width / dimensions.height
+  if (!(aspectRatio > 0)) return null
+
+  const width = getGuideWidth(guide.scale)
+  const height = getGuideHeight(width, aspectRatio)
+  const centerSvg = getGuideCenterSvgPoint(guide)
+  const localPoint = rotateVector(subtractSvgPoints(svgPoint, centerSvg), guide.rotation[1])
+
+  return [clamp(localPoint[0], -width / 2, width / 2), clamp(localPoint[1], -height / 2, height / 2)]
+}
+
+function getGuideDetectionRegionFromLocalBounds(
+  guide: GuideNode,
+  dimensions: GuideImageDimensions,
+  start: WallPlanPoint,
+  end: WallPlanPoint,
+): GuideNode['detectionRegion'] | null {
+  const aspectRatio = dimensions.width / dimensions.height
+  if (!(aspectRatio > 0)) {
+    return null
+  }
+
+  const width = getGuideWidth(guide.scale)
+  const height = getGuideHeight(width, aspectRatio)
+  const minX = clamp(Math.min(start[0], end[0]), -width / 2, width / 2)
+  const maxX = clamp(Math.max(start[0], end[0]), -width / 2, width / 2)
+  const minY = clamp(Math.min(start[1], end[1]), -height / 2, height / 2)
+  const maxY = clamp(Math.max(start[1], end[1]), -height / 2, height / 2)
+  const normalizedRegion = {
+    x: (minX + width / 2) / width,
+    y: (minY + height / 2) / height,
+    width: (maxX - minX) / width,
+    height: (maxY - minY) / height,
+  } satisfies NonNullable<GuideNode['detectionRegion']>
+
+  if (
+    normalizedRegion.width < MIN_GUIDE_DETECTION_REGION_RATIO ||
+    normalizedRegion.height < MIN_GUIDE_DETECTION_REGION_RATIO
+  ) {
+    return null
+  }
+
+  return normalizedRegion
+}
+
+function getGuideDetectionRegionLocalBounds(
+  guide: GuideNode,
+  dimensions: GuideImageDimensions,
+  region: GuideNode['detectionRegion'],
+) {
+  if (!region) {
+    return null
+  }
+
+  const aspectRatio = dimensions.width / dimensions.height
+  if (!(aspectRatio > 0)) {
+    return null
+  }
+
+  const width = getGuideWidth(guide.scale)
+  const height = getGuideHeight(width, aspectRatio)
+
+  return {
+    x: -width / 2 + region.x * width,
+    y: -height / 2 + region.y * height,
+    width: region.width * width,
+    height: region.height * height,
   }
 }
 
@@ -1067,26 +1197,6 @@ function doesPolygonIntersectSelectionBounds(polygon: Point2D[], bounds: Floorpl
   }
 
   return false
-}
-
-function getDistanceToWallSegment(point: Point2D, start: WallPlanPoint, end: WallPlanPoint) {
-  const dx = end[0] - start[0]
-  const dy = end[1] - start[1]
-  const lengthSquared = dx * dx + dy * dy
-
-  if (lengthSquared <= Number.EPSILON) {
-    return Math.hypot(point.x - start[0], point.y - start[1])
-  }
-
-  const projection = clamp(
-    ((point.x - start[0]) * dx + (point.y - start[1]) * dy) / lengthSquared,
-    0,
-    1,
-  )
-  const projectedX = start[0] + dx * projection
-  const projectedY = start[1] + dy * projection
-
-  return Math.hypot(point.x - projectedX, point.y - projectedY)
 }
 
 function getViewportBounds(): ViewportBounds {
@@ -2536,6 +2646,85 @@ function FloorplanMeasurementLine({
   )
 }
 
+const FloorplanPerimeterGuideLayer = memo(function FloorplanPerimeterGuideLayer({
+  guides,
+  palette,
+}: {
+  guides: PerimeterGuide[]
+  palette: FloorplanPalette
+}) {
+  if (!guides.length) return null
+
+  return (
+    <>
+      {guides.map((guide) => {
+        const startX = toSvgX(guide.start[0])
+        const startY = toSvgY(guide.start[2])
+        const endX = toSvgX(guide.end[0])
+        const endY = toSvgY(guide.end[2])
+        const labelX = (startX + endX) / 2
+        const labelY = (startY + endY) / 2 - 0.08
+        const angle = (Math.atan2(endY - startY, endX - startX) * 180) / Math.PI
+        const labelAngleDeg = angle > 90 ? angle - 180 : angle <= -90 ? angle + 180 : angle
+        const referenceStartX = guide.referenceStart ? toSvgX(guide.referenceStart[0]) : null
+        const referenceStartY = guide.referenceStart ? toSvgY(guide.referenceStart[2]) : null
+        const referenceEndX = guide.referenceEnd ? toSvgX(guide.referenceEnd[0]) : null
+        const referenceEndY = guide.referenceEnd ? toSvgY(guide.referenceEnd[2]) : null
+
+        return (
+          <g data-delivery-role="perimeter-guides" key={guide.id} pointerEvents="none">
+            {referenceStartX !== null &&
+            referenceStartY !== null &&
+            referenceEndX !== null &&
+            referenceEndY !== null ? (
+              <line
+                stroke={palette.measurementStroke}
+                strokeDasharray="0.12 0.1"
+                strokeOpacity={0.28}
+                strokeWidth="0.03"
+                vectorEffect="non-scaling-stroke"
+                x1={referenceStartX}
+                x2={referenceEndX}
+                y1={referenceStartY}
+                y2={referenceEndY}
+              />
+            ) : null}
+            <line
+              stroke={palette.measurementStroke}
+              strokeDasharray={guide.kind === 'setback' ? '0.14 0.08' : undefined}
+              strokeOpacity={guide.kind === 'setback' ? 0.72 : 0.9}
+              strokeWidth="0.04"
+              vectorEffect="non-scaling-stroke"
+              x1={startX}
+              x2={endX}
+              y1={startY}
+              y2={endY}
+            />
+            <text
+              dominantBaseline="central"
+              fill={palette.measurementStroke}
+              fontFamily="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+              fontSize={FLOORPLAN_MEASUREMENT_LABEL_FONT_SIZE * 0.92}
+              fontWeight="600"
+              paintOrder="stroke"
+              stroke={palette.surface}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={FLOORPLAN_MEASUREMENT_LABEL_STROKE_WIDTH}
+              textAnchor="middle"
+              transform={`rotate(${labelAngleDeg} ${labelX} ${labelY})`}
+              x={labelX}
+              y={labelY}
+            >
+              {guide.label} {guide.formattedValue}
+            </text>
+          </g>
+        )
+      })}
+    </>
+  )
+})
+
 function getWallMeasurementOverlay(
   wall: WallNode,
   centerX: number,
@@ -2921,15 +3110,31 @@ function useGuideImageDimensions(url: string | null) {
 function FloorplanGuideImage({
   guide,
   isInteractive,
+  isCalibrationActive,
+  isDetectionRegionActive,
   isSelected,
   activeInteractionMode,
+  onGuideCalibrationPoint,
+  onGuideDetectionRegionStart,
   onGuideSelect,
   onGuideTranslateStart,
 }: {
   guide: GuideNode
   isInteractive: boolean
+  isCalibrationActive: boolean
+  isDetectionRegionActive: boolean
   isSelected: boolean
   activeInteractionMode: GuideInteractionMode | null
+  onGuideCalibrationPoint: (
+    guide: GuideNode,
+    dimensions: GuideImageDimensions,
+    event: ReactPointerEvent<SVGRectElement>,
+  ) => void
+  onGuideDetectionRegionStart: (
+    guide: GuideNode,
+    dimensions: GuideImageDimensions,
+    event: ReactPointerEvent<SVGRectElement>,
+  ) => void
   onGuideSelect: (guideId: GuideNode['id']) => void
   onGuideTranslateStart: (guide: GuideNode, event: ReactPointerEvent<SVGRectElement>) => void
 }) {
@@ -2963,6 +3168,14 @@ function FloorplanGuideImage({
           onPointerDown={(event) => {
             if (event.button === 0) {
               event.stopPropagation()
+              if (isCalibrationActive) {
+                onGuideCalibrationPoint(guide, dimensions, event)
+                return
+              }
+              if (isDetectionRegionActive) {
+                onGuideDetectionRegionStart(guide, dimensions, event)
+                return
+              }
               if (isSelected) {
                 onGuideTranslateStart(guide, event)
               }
@@ -2970,10 +3183,13 @@ function FloorplanGuideImage({
           }}
           pointerEvents="all"
           style={{
-            cursor:
-              isSelected && activeInteractionMode === 'translate'
+            cursor: isCalibrationActive
+              ? 'crosshair'
+              : isDetectionRegionActive
+                ? 'crosshair'
+              : isSelected && activeInteractionMode === 'translate'
                 ? 'grabbing'
-                : isSelected
+                : isSelected && !guide.locked
                   ? 'grab'
                   : 'pointer',
           }}
@@ -3038,17 +3254,33 @@ const FloorplanGridLayer = memo(function FloorplanGridLayer({
 const FloorplanGuideLayer = memo(function FloorplanGuideLayer({
   guides,
   isInteractive,
+  calibrationGuideId,
+  detectionRegionGuideId,
   selectedGuideId,
   activeGuideInteractionGuideId,
   activeGuideInteractionMode,
+  onGuideCalibrationPoint,
+  onGuideDetectionRegionStart,
   onGuideSelect,
   onGuideTranslateStart,
 }: {
   guides: GuideNode[]
   isInteractive: boolean
+  calibrationGuideId: GuideNode['id'] | null
+  detectionRegionGuideId: GuideNode['id'] | null
   selectedGuideId: GuideNode['id'] | null
   activeGuideInteractionGuideId: GuideNode['id'] | null
   activeGuideInteractionMode: GuideInteractionMode | null
+  onGuideCalibrationPoint: (
+    guide: GuideNode,
+    dimensions: GuideImageDimensions,
+    event: ReactPointerEvent<SVGRectElement>,
+  ) => void
+  onGuideDetectionRegionStart: (
+    guide: GuideNode,
+    dimensions: GuideImageDimensions,
+    event: ReactPointerEvent<SVGRectElement>,
+  ) => void
   onGuideSelect: (guideId: GuideNode['id']) => void
   onGuideTranslateStart: (guide: GuideNode, event: ReactPointerEvent<SVGRectElement>) => void
 }) {
@@ -3072,9 +3304,13 @@ const FloorplanGuideLayer = memo(function FloorplanGuideLayer({
             activeGuideInteractionGuideId === guide.id ? activeGuideInteractionMode : null
           }
           guide={guide}
+          isCalibrationActive={calibrationGuideId === guide.id}
+          isDetectionRegionActive={detectionRegionGuideId === guide.id}
           isInteractive={isInteractive}
           isSelected={selectedGuideId === guide.id}
           key={guide.id}
+          onGuideCalibrationPoint={onGuideCalibrationPoint}
+          onGuideDetectionRegionStart={onGuideDetectionRegionStart}
           onGuideSelect={onGuideSelect}
           onGuideTranslateStart={onGuideTranslateStart}
         />
@@ -3254,6 +3490,303 @@ function FloorplanGuideHandleHint({
   )
 }
 
+function FloorplanGuideCalibrationOverlay({
+  guide,
+  points,
+}: {
+  guide: GuideNode | null
+  points: Array<[number, number]>
+}) {
+  const resolvedUrl = useResolvedAssetUrl(guide?.url ?? '')
+  const dimensions = useGuideImageDimensions(resolvedUrl)
+
+  if (!(guide && dimensions && points.length > 0)) {
+    return null
+  }
+
+  const aspectRatio = dimensions.width / dimensions.height
+  const planWidth = getGuideWidth(guide.scale)
+  const planHeight = getGuideHeight(planWidth, aspectRatio)
+  const centerX = toSvgX(guide.position[0])
+  const centerY = toSvgY(guide.position[2])
+  const rotationDeg = (-guide.rotation[1] * 180) / Math.PI
+  const labelPoint = points[points.length - 1]!
+  const label =
+    guide.calibration && points.length >= 2
+      ? `${guide.calibration.distance.toFixed(2)} m`
+      : '校准点'
+
+  return (
+    <g
+      data-delivery-role="guide-calibration"
+      transform={`translate(${centerX} ${centerY}) rotate(${rotationDeg})`}
+    >
+      <rect
+        fill="none"
+        height={planHeight}
+        pointerEvents="none"
+        stroke="rgba(37, 99, 235, 0.2)"
+        strokeWidth="0.02"
+        width={planWidth}
+        x={-planWidth / 2}
+        y={-planHeight / 2}
+      />
+      {points.length >= 2 ? (
+        <line
+          pointerEvents="none"
+          stroke="#2563eb"
+          strokeDasharray="0.12 0.08"
+          strokeWidth="0.04"
+          vectorEffect="non-scaling-stroke"
+          x1={points[0]?.[0]}
+          x2={points[1]?.[0]}
+          y1={points[0]?.[1]}
+          y2={points[1]?.[1]}
+        />
+      ) : null}
+      {points.map((point, index) => (
+        <circle
+          cx={point[0]}
+          cy={point[1]}
+          fill={index === points.length - 1 ? '#2563eb' : '#93c5fd'}
+          key={`${point[0]}:${point[1]}:${index}`}
+          pointerEvents="none"
+          r={FLOORPLAN_GUIDE_HANDLE_SIZE * 0.34}
+          stroke="#eff6ff"
+          strokeWidth="0.03"
+          vectorEffect="non-scaling-stroke"
+        />
+      ))}
+      <text
+        dominantBaseline="central"
+        fill="#1d4ed8"
+        fontFamily="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+        fontSize={FLOORPLAN_MEASUREMENT_LABEL_FONT_SIZE * 0.8}
+        fontWeight="700"
+        paintOrder="stroke"
+        pointerEvents="none"
+        stroke="#ffffff"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={FLOORPLAN_MEASUREMENT_LABEL_STROKE_WIDTH}
+        textAnchor="middle"
+        x={labelPoint[0]}
+        y={labelPoint[1] - FLOORPLAN_GUIDE_HANDLE_SIZE * 0.9}
+      >
+        {label}
+      </text>
+    </g>
+  )
+}
+
+function FloorplanGuideDetectionRegionOverlay({
+  activeLabel,
+  guide,
+  draft,
+  label,
+}: {
+  activeLabel: string
+  guide: GuideNode | null
+  draft: GuideDetectionRegionDraft | null
+  label: string
+}) {
+  const resolvedUrl = useResolvedAssetUrl(guide?.url ?? '')
+  const dimensions = useGuideImageDimensions(resolvedUrl)
+
+  if (!(guide && dimensions)) {
+    return null
+  }
+
+  const localBounds =
+    draft?.guideId === guide.id
+      ? getGuideDetectionRegionLocalBounds(
+          guide,
+          dimensions,
+          getGuideDetectionRegionFromLocalBounds(
+            guide,
+            dimensions,
+            draft.start,
+            draft.end,
+          ) ?? undefined,
+        )
+      : getGuideDetectionRegionLocalBounds(guide, dimensions, guide.detectionRegion)
+
+  if (!localBounds) {
+    return null
+  }
+
+  const centerX = toSvgX(guide.position[0])
+  const centerY = toSvgY(guide.position[2])
+  const rotationDeg = (-guide.rotation[1] * 180) / Math.PI
+  const isDraft = draft?.guideId === guide.id
+
+  return (
+    <g data-delivery-role="guide-detection-region" transform={`translate(${centerX} ${centerY}) rotate(${rotationDeg})`}>
+      <rect
+        fill={isDraft ? 'rgba(37, 99, 235, 0.08)' : 'rgba(14, 165, 233, 0.06)'}
+        height={localBounds.height}
+        pointerEvents="none"
+        stroke={isDraft ? '#2563eb' : '#0284c7'}
+        strokeDasharray={isDraft ? '0.14 0.08' : '0.1 0.06'}
+        strokeWidth="0.04"
+        vectorEffect="non-scaling-stroke"
+        width={localBounds.width}
+        x={localBounds.x}
+        y={localBounds.y}
+      />
+      <text
+        dominantBaseline="hanging"
+        fill={isDraft ? '#1d4ed8' : '#0369a1'}
+        fontFamily="ui-sans-serif, system-ui, sans-serif"
+        fontSize={FLOORPLAN_MEASUREMENT_LABEL_FONT_SIZE * 0.72}
+        fontWeight="700"
+        paintOrder="stroke"
+        pointerEvents="none"
+        stroke="#ffffff"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={FLOORPLAN_MEASUREMENT_LABEL_STROKE_WIDTH}
+        textAnchor="start"
+        x={localBounds.x}
+        y={localBounds.y - FLOORPLAN_GUIDE_HANDLE_SIZE * 0.8}
+      >
+        {isDraft ? activeLabel : label}
+      </text>
+    </g>
+  )
+}
+
+const FloorplanGuideDetectionOverlay = memo(function FloorplanGuideDetectionOverlay({
+  candidates,
+}: {
+  candidates: GuideDetectionCandidates
+}) {
+  const setDetectionWallSelected = useDeliveryStore((state) => state.setDetectionWallSelected)
+  const setDetectionOpeningSelected = useDeliveryStore((state) => state.setDetectionOpeningSelected)
+  const wallById = new Map(candidates.walls.map((wall) => [wall.id, wall] as const))
+  const selectedWallIds = new Set(
+    candidates.selectedWallIds ?? candidates.walls.map((wall) => wall.id),
+  )
+  const selectedOpeningIds = new Set(
+    candidates.selectedOpeningIds ?? candidates.openings.map((opening) => opening.id),
+  )
+
+  return (
+    <g data-delivery-role="guide-detection">
+      {candidates.walls.map((wall) => {
+        const isApplied = Boolean(candidates.appliedWallIds?.[wall.id])
+        const isSelected = selectedWallIds.has(wall.id)
+
+        return (
+          <g key={wall.id}>
+            <line
+              opacity={isSelected ? 0.2 : 0.08}
+              pointerEvents="none"
+              stroke={isApplied ? '#16a34a' : '#f97316'}
+              strokeWidth="0.24"
+              vectorEffect="non-scaling-stroke"
+              x1={toSvgX(wall.start[0])}
+              x2={toSvgX(wall.end[0])}
+              y1={toSvgY(wall.start[1])}
+              y2={toSvgY(wall.end[1])}
+            />
+            <line
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                setDetectionWallSelected(wall.id, !isSelected)
+              }}
+              opacity={isSelected ? 1 : 0.32}
+              pointerEvents="stroke"
+              stroke={isApplied ? '#16a34a' : '#f97316'}
+              strokeDasharray={isApplied || isSelected ? undefined : '0.12 0.08'}
+              strokeLinecap="round"
+              strokeWidth="0.08"
+              style={{ cursor: 'pointer' }}
+              vectorEffect="non-scaling-stroke"
+              x1={toSvgX(wall.start[0])}
+              x2={toSvgX(wall.end[0])}
+              y1={toSvgY(wall.start[1])}
+              y2={toSvgY(wall.end[1])}
+            />
+          </g>
+        )
+      })}
+
+      {candidates.openings.map((opening) => {
+        const wall = wallById.get(opening.wallCandidateId)
+        if (!wall) return null
+
+        const isWallSelected = selectedWallIds.has(opening.wallCandidateId)
+        const isSelected = isWallSelected && selectedOpeningIds.has(opening.id)
+        const angle = Math.atan2(wall.end[1] - wall.start[1], wall.end[0] - wall.start[0])
+        const polygon = getRotatedRectanglePolygon(
+          { x: opening.center[0], y: opening.center[1] },
+          opening.width,
+          0.2,
+          angle,
+        )
+        const center = {
+          x: toSvgX(opening.center[0]),
+          y: toSvgY(opening.center[1]),
+        }
+        const label = opening.kind === 'door' ? 'D' : 'W'
+        const fillColor =
+          opening.kind === 'door' ? 'rgba(34, 197, 94, 0.22)' : 'rgba(59, 130, 246, 0.22)'
+        const strokeColor = opening.kind === 'door' ? '#16a34a' : '#2563eb'
+
+        return (
+          <g
+            key={opening.id}
+            opacity={isSelected ? 1 : 0.28}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              if (isWallSelected) {
+                setDetectionOpeningSelected(opening.id, !isSelected)
+              }
+            }}
+            pointerEvents={isWallSelected ? 'all' : 'none'}
+            style={{ cursor: isWallSelected ? 'pointer' : 'default' }}
+          >
+            <polygon
+              fill={fillColor}
+              points={formatPolygonPoints(polygon)}
+              stroke={strokeColor}
+              strokeDasharray={isSelected ? undefined : '0.08 0.06'}
+              strokeWidth="0.05"
+              vectorEffect="non-scaling-stroke"
+            />
+            <circle
+              cx={center.x}
+              cy={center.y}
+              fill={strokeColor}
+              opacity={isSelected ? 0.92 : 0.45}
+              r="0.11"
+              stroke="#ffffff"
+              strokeWidth="0.025"
+              vectorEffect="non-scaling-stroke"
+            />
+            <text
+              dominantBaseline="central"
+              fill="#ffffff"
+              fontFamily="ui-sans-serif, system-ui, sans-serif"
+              fontSize="0.12"
+              fontWeight="800"
+              pointerEvents="none"
+              textAnchor="middle"
+              x={center.x}
+              y={center.y}
+            >
+              {label}
+            </text>
+          </g>
+        )
+      })}
+    </g>
+  )
+})
+
 const FloorplanGeometryLayer = memo(function FloorplanGeometryLayer({
   canFocusGeometry,
   canSelectGeometry,
@@ -3276,6 +3809,7 @@ const FloorplanGeometryLayer = memo(function FloorplanGeometryLayer({
   openingsPolygons,
   palette,
   selectedIdSet,
+  showWallLengths,
   slabPolygons,
   wallPolygons,
   unit,
@@ -3301,6 +3835,7 @@ const FloorplanGeometryLayer = memo(function FloorplanGeometryLayer({
   openingsPolygons: OpeningPolygonEntry[]
   palette: FloorplanPalette
   selectedIdSet: ReadonlySet<string>
+  showWallLengths: boolean
   slabPolygons: SlabPolygonEntry[]
   wallPolygons: WallPolygonEntry[]
   unit: 'metric' | 'imperial'
@@ -3829,59 +4364,62 @@ const FloorplanGeometryLayer = memo(function FloorplanGeometryLayer({
         return null
       })}
 
-      {wallMeasurements.map((measurement) => (
-        <g
-          className="wall-dimension"
-          key={`measurement-${measurement.wallId}`}
-          pointerEvents="none"
-          style={{ userSelect: 'none' }}
-        >
-          <FloorplanMeasurementLine
-            isSelected={measurement.isSelected}
-            palette={palette}
-            segment={measurement.extensionStart}
-          />
-          <FloorplanMeasurementLine
-            isSelected={measurement.isSelected}
-            palette={palette}
-            segment={measurement.dimensionLineStart}
-          />
-          <FloorplanMeasurementLine
-            isSelected={measurement.isSelected}
-            palette={palette}
-            segment={measurement.dimensionLineEnd}
-          />
-          <FloorplanMeasurementLine
-            isSelected={measurement.isSelected}
-            palette={palette}
-            segment={measurement.extensionEnd}
-          />
-          <text
-            dominantBaseline="central"
-            fill={palette.measurementStroke}
-            fillOpacity={
-              measurement.isSelected
-                ? FLOORPLAN_MEASUREMENT_LABEL_OPACITY
-                : FLOORPLAN_MEASUREMENT_LABEL_OPACITY * 0.4
-            }
-            fontFamily="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-            fontSize={FLOORPLAN_MEASUREMENT_LABEL_FONT_SIZE}
-            fontWeight="600"
-            paintOrder="stroke"
-            stroke={palette.surface}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeOpacity={measurement.isSelected ? 1 : 0.4}
-            strokeWidth={FLOORPLAN_MEASUREMENT_LABEL_STROKE_WIDTH}
-            textAnchor="middle"
-            transform={`rotate(${measurement.labelAngleDeg} ${measurement.labelX} ${measurement.labelY}) translate(0, -0.04)`}
-            x={measurement.labelX}
-            y={measurement.labelY}
-          >
-            {measurement.label}
-          </text>
-        </g>
-      ))}
+      {showWallLengths
+        ? wallMeasurements.map((measurement) => (
+            <g
+              className="wall-dimension"
+              data-delivery-role="wall-length"
+              key={`measurement-${measurement.wallId}`}
+              pointerEvents="none"
+              style={{ userSelect: 'none' }}
+            >
+              <FloorplanMeasurementLine
+                isSelected={measurement.isSelected}
+                palette={palette}
+                segment={measurement.extensionStart}
+              />
+              <FloorplanMeasurementLine
+                isSelected={measurement.isSelected}
+                palette={palette}
+                segment={measurement.dimensionLineStart}
+              />
+              <FloorplanMeasurementLine
+                isSelected={measurement.isSelected}
+                palette={palette}
+                segment={measurement.dimensionLineEnd}
+              />
+              <FloorplanMeasurementLine
+                isSelected={measurement.isSelected}
+                palette={palette}
+                segment={measurement.extensionEnd}
+              />
+              <text
+                dominantBaseline="central"
+                fill={palette.measurementStroke}
+                fillOpacity={
+                  measurement.isSelected
+                    ? FLOORPLAN_MEASUREMENT_LABEL_OPACITY
+                    : FLOORPLAN_MEASUREMENT_LABEL_OPACITY * 0.4
+                }
+                fontFamily="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+                fontSize={FLOORPLAN_MEASUREMENT_LABEL_FONT_SIZE}
+                fontWeight="600"
+                paintOrder="stroke"
+                stroke={palette.surface}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeOpacity={measurement.isSelected ? 1 : 0.4}
+                strokeWidth={FLOORPLAN_MEASUREMENT_LABEL_STROKE_WIDTH}
+                textAnchor="middle"
+                transform={`rotate(${measurement.labelAngleDeg} ${measurement.labelX} ${measurement.labelY}) translate(0, -0.04)`}
+                x={measurement.labelX}
+                y={measurement.labelY}
+              >
+                {measurement.label}
+              </text>
+            </g>
+          ))
+        : null}
     </>
   )
 })
@@ -4499,8 +5037,13 @@ function FloorplanZoneLabel({
       style={{ userSelect: 'none' }}
     >
       <text
+        data-delivery-role="room-name"
         dominantBaseline="central"
-        fill={isDeleteMode && hovered ? 'var(--destructive)' : 'var(--editor-floorplan-label-foreground)'}
+        fill={
+          isDeleteMode && hovered
+            ? 'var(--destructive)'
+            : 'var(--editor-floorplan-label-foreground)'
+        }
         fontFamily="system-ui, -apple-system, sans-serif"
         fontSize={FLOORPLAN_ZONE_LABEL_FONT_SIZE}
         fontWeight="500"
@@ -4611,6 +5154,49 @@ const FloorplanZoneLabelLayer = memo(function FloorplanZoneLabelLayer({
             onLabelClick={onZoneLabelClick}
             zone={zone}
           />
+        )
+      })}
+    </>
+  )
+})
+
+const FloorplanZoneAreaLabelLayer = memo(function FloorplanZoneAreaLabelLayer({
+  unit,
+  zonePolygons,
+}: {
+  unit: 'metric' | 'imperial'
+  zonePolygons: ZonePolygonEntry[]
+}) {
+  return (
+    <>
+      {zonePolygons.map(({ zone, polygon }) => {
+        if (polygon.length < 3 || isZoneLabelHidden(zone)) return null
+
+        const { area, centroid } = getPolygonAreaAndCentroid(polygon)
+        if (area <= 0) return null
+
+        return (
+          <text
+            data-delivery-role="room-area"
+            dominantBaseline="central"
+            fill="var(--editor-floorplan-label-foreground)"
+            fontFamily="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+            fontSize={FLOORPLAN_ZONE_LABEL_FONT_SIZE * 0.74}
+            fontWeight="600"
+            key={`${zone.id}:area`}
+            paintOrder="stroke"
+            pointerEvents="none"
+            stroke={zone.color}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={FLOORPLAN_ZONE_LABEL_FONT_SIZE * 0.22}
+            style={{ userSelect: 'none' }}
+            textAnchor="middle"
+            x={toSvgX(centroid.x)}
+            y={toSvgY(centroid.y) + FLOORPLAN_ZONE_LABEL_FONT_SIZE * 1.2}
+          >
+            {formatArea(area, unit)}
+          </text>
         )
       })}
     </>
@@ -5096,349 +5682,6 @@ const FloorplanDuplicateHotkey = memo(function FloorplanDuplicateHotkey({
   return null
 })
 
-type FloorplanActionMenuHandler = (event: ReactMouseEvent<HTMLButtonElement>) => void
-
-type FloorplanActionMenuEntry = {
-  position: SvgPoint | null
-  onDelete: FloorplanActionMenuHandler
-  onMove?: FloorplanActionMenuHandler
-  onDuplicate?: FloorplanActionMenuHandler
-  extraActions?: NodeActionMenuExtraAction[]
-}
-
-type FloorplanActionMenuLayerProps = {
-  item: FloorplanActionMenuEntry
-  wall: FloorplanActionMenuEntry
-  slab: FloorplanActionMenuEntry
-  ceiling: FloorplanActionMenuEntry
-  opening: FloorplanActionMenuEntry
-  stair: FloorplanActionMenuEntry
-  sketchLine: FloorplanActionMenuEntry
-}
-
-const FloorplanActionMenuLayer = memo(function FloorplanActionMenuLayer({
-  item,
-  wall,
-  slab,
-  ceiling,
-  opening,
-  stair,
-  sketchLine,
-}: FloorplanActionMenuLayerProps) {
-  const isFloorplanHovered = useEditor((state) => state.isFloorplanHovered)
-  const movingNode = useEditor((state) => state.movingNode)
-  const curvingWall = useEditor((state) => state.curvingWall)
-
-  if (!isFloorplanHovered || movingNode || curvingWall) {
-    return null
-  }
-
-  const entries: FloorplanActionMenuEntry[] = [item, wall, slab, ceiling, opening, stair, sketchLine]
-
-  return (
-    <>
-      {entries.map((entry, index) =>
-        entry.position ? (
-          <div
-            className="absolute z-30"
-            key={index}
-            style={{
-              left: entry.position.x,
-              top: entry.position.y,
-              transform: `translate(-50%, calc(-100% - ${FLOORPLAN_ACTION_MENU_OFFSET_Y}px))`,
-            }}
-          >
-            <NodeActionMenu
-              onDelete={entry.onDelete}
-              onDuplicate={entry.onDuplicate}
-              extraActions={entry.extraActions}
-              onMove={entry.onMove}
-              onPointerDown={(event) => event.stopPropagation()}
-              onPointerUp={(event) => event.stopPropagation()}
-            />
-          </div>
-        ) : null,
-      )}
-    </>
-  )
-})
-
-type FloorplanSketchContextTarget =
-  | { kind: 'sketch-line'; lineId: SketchLineNode['id'] }
-  | {
-      kind: 'sketch-endpoint'
-      lineId: SketchLineNode['id']
-      endpoint: 'start' | 'end'
-      hasCoincident: boolean
-    }
-  | { kind: 'sketch-drawing'; draft: 'line' | 'rectangle' | 'circle' | 'arc'; canCommit: boolean }
-  | { kind: 'sketch-canvas'; hasSketchLines: boolean }
-
-type SketchContextTool =
-  | 'sketch-line'
-  | 'sketch-rectangle'
-  | 'sketch-circle'
-  | 'sketch-arc'
-  | 'sketch-construction-line'
-  | 'smart-dimension'
-
-function invokeFloorplanAction(action: NodeActionMenuExtraAction | undefined) {
-  if (!action?.onClick || action.disabled) {
-    return
-  }
-
-  action.onClick({
-    preventDefault: () => undefined,
-    stopPropagation: () => undefined,
-  } as ReactMouseEvent<HTMLButtonElement>)
-}
-
-type FloorplanSketchContextMenuContentProps = {
-  target: FloorplanSketchContextTarget | null
-  sketchLineActions: NodeActionMenuExtraAction[]
-  selectedSketchLineCount: number
-  onActivateTool: (tool: SketchContextTool) => void
-  onCancelSketchDraft: () => void
-  onClearEndpointCoincident: (
-    target: Extract<FloorplanSketchContextTarget, { kind: 'sketch-endpoint' }>,
-  ) => void
-  onCommitSketchDraft: () => void
-  onConnectEndpoint: (
-    target: Extract<FloorplanSketchContextTarget, { kind: 'sketch-endpoint' }>,
-  ) => void
-  onContinueFromEndpoint: (
-    target: Extract<FloorplanSketchContextTarget, { kind: 'sketch-endpoint' }>,
-  ) => void
-  onDeleteSketchLines: () => void
-  onEndSketchDraft: () => void
-  onSelectAllSketchLines: () => void
-  onZoomToFit: () => void
-}
-
-const FloorplanSketchContextMenuContent = memo(function FloorplanSketchContextMenuContent({
-  target,
-  sketchLineActions,
-  selectedSketchLineCount,
-  onActivateTool,
-  onCancelSketchDraft,
-  onClearEndpointCoincident,
-  onCommitSketchDraft,
-  onConnectEndpoint,
-  onContinueFromEndpoint,
-  onDeleteSketchLines,
-  onEndSketchDraft,
-  onSelectAllSketchLines,
-  onZoomToFit,
-}: FloorplanSketchContextMenuContentProps) {
-  const actionById = useMemo(
-    () => new Map(sketchLineActions.map((action) => [action.id, action] as const)),
-    [sketchLineActions],
-  )
-
-  if (!target) {
-    return null
-  }
-
-  const renderActionItem = (
-    actionId: string,
-    options: { label?: string; disabled?: boolean; checkable?: boolean } = {},
-  ) => {
-    const action = actionById.get(actionId)
-    if (!action) {
-      return null
-    }
-
-    const disabled = options.disabled || action.disabled
-    const label = options.label ?? action.label
-
-    if (options.checkable) {
-      return (
-        <ContextMenuCheckboxItem
-          checked={Boolean(action.active)}
-          disabled={disabled}
-          key={actionId}
-          onSelect={() => invokeFloorplanAction(action)}
-        >
-          {action.icon}
-          <span>{label}</span>
-        </ContextMenuCheckboxItem>
-      )
-    }
-
-    return (
-      <ContextMenuItem
-        disabled={disabled}
-        key={actionId}
-        onSelect={() => invokeFloorplanAction(action)}
-      >
-        {action.icon}
-        <span>{label}</span>
-        {action.active && <Icon className="ml-auto text-primary" height={15} icon="mdi:check" width={15} />}
-      </ContextMenuItem>
-    )
-  }
-
-  if (target.kind === 'sketch-drawing') {
-    const draftLabel =
-      target.draft === 'rectangle'
-        ? '完成矩形'
-        : target.draft === 'circle'
-          ? '完成圆'
-          : target.draft === 'arc'
-            ? '完成圆弧'
-            : '完成当前线段'
-
-    return (
-      <ContextMenuContent className="w-56">
-        <ContextMenuLabel>草图绘制</ContextMenuLabel>
-        <ContextMenuItem disabled={!target.canCommit} onSelect={onCommitSketchDraft}>
-          <Icon height={16} icon="mdi:check" width={16} />
-          <span>{draftLabel}</span>
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={onCancelSketchDraft}>
-          <Icon height={16} icon="mdi:close" width={16} />
-          <span>取消当前操作</span>
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={onEndSketchDraft}>
-          <Icon height={16} icon="mdi:keyboard-return" width={16} />
-          <span>结束绘制</span>
-        </ContextMenuItem>
-      </ContextMenuContent>
-    )
-  }
-
-  if (target.kind === 'sketch-endpoint') {
-    const fixedAction = actionById.get('sketch-line-fixed')
-    return (
-      <ContextMenuContent className="w-60">
-        <ContextMenuLabel>草图端点</ContextMenuLabel>
-        <ContextMenuItem onSelect={() => onContinueFromEndpoint(target)}>
-          <Icon height={16} icon="mdi:vector-line" width={16} />
-          <span>从此点继续绘制</span>
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={() => onConnectEndpoint(target)}>
-          <Icon height={16} icon="mdi:vector-combine" width={16} />
-          <span>连接到最近端点</span>
-        </ContextMenuItem>
-        <ContextMenuItem
-          disabled={!target.hasCoincident}
-          onSelect={() => onClearEndpointCoincident(target)}
-        >
-          <Icon height={16} icon="mdi:link-off" width={16} />
-          <span>取消重合关系</span>
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        {renderActionItem('sketch-line-set-length')}
-        {renderActionItem('sketch-line-fixed', {
-          label: fixedAction?.active ? '解除固定' : '固定',
-          checkable: true,
-        })}
-        <ContextMenuSeparator />
-        {renderActionItem('sketch-line-create-wall')}
-        <ContextMenuSeparator />
-        <ContextMenuItem variant="destructive" onSelect={onDeleteSketchLines}>
-          <img alt="" className="h-4 w-4 shrink-0 object-contain" src="/icons/delete.svg" />
-          <span>删除草图线</span>
-        </ContextMenuItem>
-      </ContextMenuContent>
-    )
-  }
-
-  if (target.kind === 'sketch-line') {
-    const fixedAction = actionById.get('sketch-line-fixed')
-    const constructionAction = actionById.get('sketch-line-construction')
-    const hasMultiSelection = selectedSketchLineCount > 1
-
-    return (
-      <ContextMenuContent className="w-60">
-        <ContextMenuLabel>
-          {hasMultiSelection ? `${selectedSketchLineCount} 条草图线` : '草图线'}
-        </ContextMenuLabel>
-        {renderActionItem('sketch-line-set-length', { disabled: hasMultiSelection })}
-        {renderActionItem('sketch-line-horizontal', { disabled: hasMultiSelection, checkable: true })}
-        {renderActionItem('sketch-line-vertical', { disabled: hasMultiSelection, checkable: true })}
-        {renderActionItem('sketch-line-fixed', {
-          label: fixedAction?.active ? '解除固定' : '固定',
-          disabled: hasMultiSelection,
-          checkable: true,
-        })}
-        {renderActionItem('sketch-line-construction', {
-          label: constructionAction?.active ? '切换为轮廓线' : '切换为参考线',
-          disabled: hasMultiSelection,
-          checkable: true,
-        })}
-        <ContextMenuSeparator />
-        {renderActionItem('sketch-line-trim-extend', { disabled: hasMultiSelection })}
-        {renderActionItem('sketch-line-split', { disabled: hasMultiSelection })}
-        {renderActionItem('sketch-line-offset')}
-        {renderActionItem('sketch-line-fillet', { disabled: selectedSketchLineCount < 2 })}
-        {renderActionItem('sketch-line-chamfer', { disabled: selectedSketchLineCount < 2 })}
-        {hasMultiSelection && (
-          <>
-            {renderActionItem('sketch-line-equal-length')}
-            {renderActionItem('sketch-line-mirror')}
-            {renderActionItem('sketch-line-linear-pattern')}
-          </>
-        )}
-        <ContextMenuSeparator />
-        {actionById.has('sketch-profile-walls') ? (
-          <>
-            {renderActionItem('sketch-profile-walls')}
-            {renderActionItem('sketch-profile-slab')}
-            {renderActionItem('sketch-profile-zone')}
-          </>
-        ) : (
-          renderActionItem('sketch-line-create-wall')
-        )}
-        <ContextMenuSeparator />
-        <ContextMenuItem variant="destructive" onSelect={onDeleteSketchLines}>
-          <img alt="" className="h-4 w-4 shrink-0 object-contain" src="/icons/delete.svg" />
-          <span>删除</span>
-        </ContextMenuItem>
-      </ContextMenuContent>
-    )
-  }
-
-  return (
-    <ContextMenuContent className="w-56">
-      <ContextMenuLabel>草图</ContextMenuLabel>
-      <ContextMenuItem onSelect={() => onActivateTool('sketch-line')}>
-        <Icon height={16} icon="mdi:vector-line" width={16} />
-        <span>草图线</span>
-      </ContextMenuItem>
-      <ContextMenuItem onSelect={() => onActivateTool('sketch-rectangle')}>
-        <Icon height={16} icon="mdi:rectangle-outline" width={16} />
-        <span>矩形</span>
-      </ContextMenuItem>
-      <ContextMenuItem onSelect={() => onActivateTool('sketch-circle')}>
-        <Icon height={16} icon="mdi:circle-outline" width={16} />
-        <span>圆</span>
-      </ContextMenuItem>
-      <ContextMenuItem onSelect={() => onActivateTool('sketch-arc')}>
-        <Icon height={16} icon="mdi:vector-curve" width={16} />
-        <span>圆弧</span>
-      </ContextMenuItem>
-      <ContextMenuItem onSelect={() => onActivateTool('sketch-construction-line')}>
-        <Icon height={16} icon="mdi:vector-line" width={16} />
-        <span>参考线</span>
-      </ContextMenuItem>
-      <ContextMenuItem onSelect={() => onActivateTool('smart-dimension')}>
-        <Icon height={16} icon="mdi:ruler-square" width={16} />
-        <span>智能尺寸</span>
-      </ContextMenuItem>
-      <ContextMenuSeparator />
-      <ContextMenuItem disabled={!target.hasSketchLines} onSelect={onSelectAllSketchLines}>
-        <Icon height={16} icon="mdi:select-all" width={16} />
-        <span>全选草图</span>
-      </ContextMenuItem>
-      <ContextMenuItem onSelect={onZoomToFit}>
-        <Icon height={16} icon="mdi:fit-to-screen-outline" width={16} />
-        <span>缩放至适合</span>
-      </ContextMenuItem>
-    </ContextMenuContent>
-  )
-})
-
 type FloorplanCursorIndicatorOverlayProps = {
   cursorPosition: SvgPoint | null
   cursorAnchorPosition: SvgPoint | null
@@ -5579,6 +5822,61 @@ type FloorplanWallLengthInputOverlayProps = {
   onSubmit: (value: string) => void
 }
 
+type GuideCalibrationDialogState = {
+  guideId: GuideNode['id']
+  guideScale: number
+  measuredDistance: number
+  points: [WallPlanPoint, WallPlanPoint]
+}
+
+const MIN_GUIDE_DETECTION_REGION_RATIO = 0.01
+
+const FLOORPLAN_GUIDE_CALIBRATION_COPY = {
+  'zh-CN': {
+    apply: '应用校准',
+    cancel: '取消',
+    description: '已选取两个校准点，请输入它们之间的实际距离（米）。',
+    distanceLabel: '实际距离（米）',
+    invalidDistance: '请输入有效的米制距离。',
+    title: '校准距离',
+  },
+  en: {
+    apply: 'Apply calibration',
+    cancel: 'Cancel',
+    description: 'Two calibration points are set. Enter the real-world distance in meters.',
+    distanceLabel: 'Actual distance (m)',
+    invalidDistance: 'Enter a valid distance in meters.',
+    title: 'Calibrate Distance',
+  },
+} satisfies Record<
+  EditorLanguage,
+  {
+    apply: string
+    cancel: string
+    description: string
+    distanceLabel: string
+    invalidDistance: string
+    title: string
+  }
+>
+
+const FLOORPLAN_GUIDE_DETECTION_REGION_COPY = {
+  'zh-CN': {
+    activeLabel: '框选识别范围',
+    label: '识别范围',
+  },
+  en: {
+    activeLabel: 'Boxing Detection Area',
+    label: 'Detection Region',
+  },
+} satisfies Record<
+  EditorLanguage,
+  {
+    activeLabel: string
+    label: string
+  }
+>
+
 const FloorplanWallLengthInputOverlay = memo(function FloorplanWallLengthInputOverlay({
   input,
   position,
@@ -5616,9 +5914,7 @@ const FloorplanWallLengthInputOverlay = memo(function FloorplanWallLengthInputOv
       }}
     >
       {input.label && (
-        <span className="select-none font-medium text-muted-foreground text-xs">
-          {input.label}
-        </span>
+        <span className="select-none font-medium text-muted-foreground text-xs">{input.label}</span>
       )}
       <input
         ref={inputRef}
@@ -5641,11 +5937,81 @@ const FloorplanWallLengthInputOverlay = memo(function FloorplanWallLengthInputOv
   )
 })
 
+const FloorplanGuideCalibrationDialog = memo(function FloorplanGuideCalibrationDialog({
+  copy,
+  errorMessage,
+  inputValue,
+  open,
+  onChange,
+  onOpenChange,
+  onSubmit,
+}: {
+  copy: (typeof FLOORPLAN_GUIDE_CALIBRATION_COPY)[EditorLanguage]
+  errorMessage: string | null
+  inputValue: string
+  open: boolean
+  onChange: (value: string) => void
+  onOpenChange: (open: boolean) => void
+  onSubmit: () => void
+}) {
+  return (
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="sm:max-w-sm" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>{copy.title}</DialogTitle>
+          <DialogDescription>{copy.description}</DialogDescription>
+        </DialogHeader>
+
+        <form
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault()
+            onSubmit()
+          }}
+        >
+          <div className="space-y-2">
+            <label className="font-medium text-sm" htmlFor="floorplan-guide-calibration-distance">
+              {copy.distanceLabel}
+            </label>
+            <Input
+              aria-invalid={errorMessage ? true : undefined}
+              autoFocus
+              id="floorplan-guide-calibration-distance"
+              inputMode="decimal"
+              onChange={(event) => onChange(event.currentTarget.value)}
+              onFocus={(event) => event.currentTarget.select()}
+              placeholder="1.00"
+              step="0.01"
+              type="number"
+              value={inputValue}
+            />
+            {errorMessage ? (
+              <p className="text-destructive text-xs" role="alert">
+                {errorMessage}
+              </p>
+            ) : null}
+          </div>
+
+          <DialogFooter>
+            <Button onClick={() => onOpenChange(false)} type="button" variant="outline">
+              {copy.cancel}
+            </Button>
+            <Button type="submit">{copy.apply}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+})
+
 export function FloorplanPanel() {
   const viewportHostRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const panStateRef = useRef<PanState | null>(null)
   const guideInteractionRef = useRef<GuideInteractionState | null>(null)
+  const guideDetectionRegionInteractionRef = useRef<GuideDetectionRegionInteractionState | null>(
+    null,
+  )
   const guideTransformDraftRef = useRef<GuideTransformDraft | null>(null)
   const wallEndpointDragRef = useRef<WallEndpointDragState | null>(null)
   const wallCurveDragRef = useRef<WallCurveDragState | null>(null)
@@ -5669,9 +6035,19 @@ export function FloorplanPanel() {
   const setPreviewSelectedIds = useViewer((state) => state.setPreviewSelectedIds)
   const theme = useViewer((state) => state.theme)
   const unit = useViewer((state) => state.unit)
+  const language = useEditorLanguage()
   const showGrid = useViewer((state) => state.showGrid)
   const showGuides = useViewer((state) => state.showGuides)
   const setShowGuides = useViewer((state) => state.setShowGuides)
+  const deliveryOverlays = useDeliveryStore((state) => state.overlays)
+  const calibrationDraft = useDeliveryStore((state) => state.calibrationDraft)
+  const detectionRegionDraftGuideId = useDeliveryStore((state) => state.detectionRegionDraftGuideId)
+  const pushCalibrationPoint = useDeliveryStore((state) => state.pushCalibrationPoint)
+  const clearCalibrationDraft = useDeliveryStore((state) => state.clearCalibrationDraft)
+  const clearDetectionRegionDraft = useDeliveryStore((state) => state.clearDetectionRegionDraft)
+  const requestLockPrompt = useDeliveryStore((state) => state.requestLockPrompt)
+  const detectionCandidates = useDeliveryStore((state) => state.detectionCandidates)
+  const clearDetectionCandidates = useDeliveryStore((state) => state.clearDetectionCandidates)
   const selectedItem = useEditor((state) => state.selectedItem)
 
   const setFloorplanHovered = useEditor((state) => state.setFloorplanHovered)
@@ -5690,15 +6066,20 @@ export function FloorplanPanel() {
   const tool = useEditor((state) => state.tool)
   const wallEditOperation = useEditor((state) => state.wallEditOperation)
   const setWallEditOperation = useEditor((state) => state.setWallEditOperation)
+  const showSketchRelations = useEditor((state) => state.showSketchRelations)
   const deleteNode = useScene((state) => state.deleteNode)
   const updateNode = useScene((state) => state.updateNode)
   const levelNode = useScene((state) =>
     levelId ? (state.nodes[levelId] as LevelNode | undefined) : undefined,
   )
+  const sceneNodes = useScene((state) => state.nodes as Record<string, AnyNode>)
   const currentBuildingId =
     levelNode?.type === 'level' && levelNode.parentId
       ? (levelNode.parentId as BuildingNode['id'])
       : (buildingId as BuildingNode['id'] | null)
+  const currentBuildingNode = useScene((state) =>
+    currentBuildingId ? (state.nodes[currentBuildingId] as BuildingNode | undefined) : undefined,
+  )
   const buildingRotationY = useScene((state) => {
     if (!currentBuildingId) return 0
     const node = state.nodes[currentBuildingId]
@@ -5866,6 +6247,22 @@ export function FloorplanPanel() {
         .filter((node): node is SketchCircleNode => node?.type === 'sketch-circle')
     }),
   )
+  const sketchDimensions = useScene(
+    useShallow((state) => {
+      if (!levelId) {
+        return [] as SketchDimensionNode[]
+      }
+
+      const nextLevelNode = state.nodes[levelId]
+      if (!nextLevelNode || nextLevelNode.type !== 'level') {
+        return [] as SketchDimensionNode[]
+      }
+
+      return nextLevelNode.children
+        .map((childId) => state.nodes[childId])
+        .filter((node): node is SketchDimensionNode => node?.type === 'sketch-dimension')
+    }),
+  )
   const zones = useScene(
     useShallow((state) => {
       if (!levelId) {
@@ -5916,6 +6313,8 @@ export function FloorplanPanel() {
     setSketchArcDraft,
     sketchDimensionInput,
     setSketchDimensionInput,
+    sketchDistanceDimensionDraft,
+    setSketchDistanceDimensionDraft,
     clearSketchLinePlacementDraft,
     sketchRectangleDraftSegments,
   } = useFloorplanSketchState()
@@ -5943,11 +6342,18 @@ export function FloorplanPanel() {
   const [wallEditNumericInput, setWallEditNumericInput] =
     useState<WallEditNumericInputState | null>(null)
   const [wallEditFeedback, setWallEditFeedback] = useState<WallEditFeedback | null>(null)
+  const [guideCalibrationDialog, setGuideCalibrationDialog] =
+    useState<GuideCalibrationDialogState | null>(null)
+  const [guideDetectionRegionDraft, setGuideDetectionRegionDraft] =
+    useState<GuideDetectionRegionDraft | null>(null)
+  const [guideCalibrationInput, setGuideCalibrationInput] = useState('')
+  const [guideCalibrationError, setGuideCalibrationError] = useState<string | null>(null)
   const [hoveredOpeningId, setHoveredOpeningId] = useState<OpeningNode['id'] | null>(null)
   const [hoveredWallId, setHoveredWallId] = useState<WallNode['id'] | null>(null)
   const [hoveredSketchLineId, setHoveredSketchLineId] = useState<SketchLineNode['id'] | null>(null)
-  const [hoveredSketchCircleId, setHoveredSketchCircleId] =
-    useState<SketchCircleNode['id'] | null>(null)
+  const [hoveredSketchCircleId, setHoveredSketchCircleId] = useState<SketchCircleNode['id'] | null>(
+    null,
+  )
   const [hoveredSlabId, setHoveredSlabId] = useState<SlabNode['id'] | null>(null)
   const [hoveredCeilingId, setHoveredCeilingId] = useState<CeilingNode['id'] | null>(null)
   const [hoveredFenceId, setHoveredFenceId] = useState<FenceNode['id'] | null>(null)
@@ -5981,6 +6387,8 @@ export function FloorplanPanel() {
     width: PANEL_DEFAULT_WIDTH,
     height: PANEL_DEFAULT_HEIGHT,
   })
+  const guideCalibrationCopy = FLOORPLAN_GUIDE_CALIBRATION_COPY[language]
+  const guideDetectionRegionCopy = FLOORPLAN_GUIDE_DETECTION_REGION_COPY[language]
 
   const [isPanelReady, setIsPanelReady] = useState(false)
   const [surfaceSize, setSurfaceSize] = useState({ width: 1, height: 1 })
@@ -6078,6 +6486,32 @@ export function FloorplanPanel() {
   )
   const selectedGuideResolvedUrl = useResolvedAssetUrl(selectedGuide?.url ?? '')
   const selectedGuideDimensions = useGuideImageDimensions(selectedGuideResolvedUrl)
+  const selectedGuideCalibrationPoints = useMemo(() => {
+    if (!selectedGuide) return [] as Array<[number, number]>
+    if (calibrationDraft?.guideId === selectedGuide.id) {
+      return calibrationDraft.points
+    }
+    return selectedGuide.calibration?.points ? [...selectedGuide.calibration.points] : []
+  }, [calibrationDraft, selectedGuide])
+  useEffect(() => {
+    if (calibrationDraft && calibrationDraft.guideId !== selectedGuideId) {
+      clearCalibrationDraft()
+    }
+  }, [calibrationDraft, clearCalibrationDraft, selectedGuideId])
+  useEffect(() => {
+    if (detectionRegionDraftGuideId && detectionRegionDraftGuideId !== selectedGuideId) {
+      clearDetectionRegionDraft()
+      setGuideDetectionRegionDraft(null)
+      guideDetectionRegionInteractionRef.current = null
+    }
+  }, [clearDetectionRegionDraft, detectionRegionDraftGuideId, selectedGuideId])
+  useEffect(() => {
+    if (guideCalibrationDialog && calibrationDraft?.guideId !== guideCalibrationDialog.guideId) {
+      setGuideCalibrationDialog(null)
+      setGuideCalibrationInput('')
+      setGuideCalibrationError(null)
+    }
+  }, [calibrationDraft, guideCalibrationDialog])
   const activeGuideInteractionGuideId = guideTransformDraft
     ? (guideInteractionRef.current?.guideId ?? null)
     : null
@@ -6091,6 +6525,10 @@ export function FloorplanPanel() {
     () => new Map(sketchLines.map((line) => [line.id, line] as const)),
     [sketchLines],
   )
+  const sketchCircleById = useMemo(
+    () => new Map(sketchCircles.map((circle) => [circle.id, circle] as const)),
+    [sketchCircles],
+  )
   const sketchLineEntries = useMemo<FloorplanSketchLineEntry[]>(
     () =>
       sketchLines
@@ -6101,7 +6539,7 @@ export function FloorplanPanel() {
         })),
     [sketchLines],
   )
-  const sketchCircleEntries = useMemo(
+  const sketchCircleEntries = useMemo<FloorplanSketchCircleEntry[]>(
     () =>
       sketchCircles
         .filter((circle) => circle.visible !== false && circle.radius > 1e-6)
@@ -6145,6 +6583,13 @@ export function FloorplanPanel() {
         .map((id) => sketchLineById.get(id as SketchLineNode['id']))
         .filter((line): line is SketchLineNode => Boolean(line)),
     [selectedIds, sketchLineById],
+  )
+  const selectedSketchCircleList = useMemo(
+    () =>
+      selectedIds
+        .map((id) => sketchCircleById.get(id as SketchCircleNode['id']))
+        .filter((circle): circle is SketchCircleNode => Boolean(circle)),
+    [selectedIds, sketchCircleById],
   )
   const closedWallLoops = useMemo(() => detectClosedWallLoops(walls), [walls])
   const selectedClosedWallLoop = useMemo(() => {
@@ -6415,6 +6860,13 @@ export function FloorplanPanel() {
         : entry,
     )
   }, [zoneBoundaryDraft, zonePolygons])
+  const deliveryPerimeterGuides = useMemo(() => {
+    if (currentBuildingNode?.type !== 'building') {
+      return [] as PerimeterGuide[]
+    }
+
+    return getPerimeterGuidesForNode(currentBuildingNode, sceneNodes, unit)
+  }, [currentBuildingNode, sceneNodes, unit])
   const levelDescendantNodeById = useMemo(
     () => new Map(levelDescendantNodes.map((node) => [node.id, node] as const)),
     [levelDescendantNodes],
@@ -6526,6 +6978,13 @@ export function FloorplanPanel() {
 
     return sketchLineEntries.find(({ line }) => line.id === selectedIds[0]) ?? null
   }, [selectedIds, sketchLineEntries])
+  const selectedSketchCircleEntry = useMemo(() => {
+    if (selectedIds.length !== 1) {
+      return null
+    }
+
+    return sketchCircleEntries.find(({ circle }) => circle.id === selectedIds[0]) ?? null
+  }, [selectedIds, sketchCircleEntries])
   const selectedWallPair = useMemo(() => {
     if (selectedIds.length !== 2) {
       return null
@@ -6607,8 +7066,7 @@ export function FloorplanPanel() {
     phase === 'structure' && mode === 'build' && tool === 'sketch-rectangle'
   const isSketchCircleBuildActive =
     phase === 'structure' && mode === 'build' && tool === 'sketch-circle'
-  const isSketchArcBuildActive =
-    phase === 'structure' && mode === 'build' && tool === 'sketch-arc'
+  const isSketchArcBuildActive = phase === 'structure' && mode === 'build' && tool === 'sketch-arc'
   const isSketchDimensionActive =
     phase === 'structure' && mode === 'build' && tool === 'smart-dimension'
   const isSlabBuildActive = phase === 'structure' && mode === 'build' && tool === 'slab'
@@ -6622,12 +7080,60 @@ export function FloorplanPanel() {
   const isOpeningMoveActive = movingOpeningType !== null
   const isOpeningPlacementActive = isOpeningBuildActive || isOpeningMoveActive
   const isStairBuildActive = phase === 'structure' && mode === 'build' && tool === 'stair'
+  const activeSketchDraftKind = sketchLineDraft
+    ? 'line'
+    : sketchRectangleDraft
+      ? 'rectangle'
+      : sketchCircleDraft
+        ? 'circle'
+        : sketchArcDraft
+          ? 'arc'
+          : null
+  const canCommitSketchDraft = useMemo(() => {
+    if (sketchLineDraft) {
+      return isSketchLineLongEnough(sketchLineDraft.start, sketchLineDraft.end)
+    }
+
+    if (sketchRectangleDraft) {
+      return isSketchLineLongEnough(sketchRectangleDraft.start, sketchRectangleDraft.end)
+    }
+
+    if (sketchCircleDraft) {
+      return (
+        Math.hypot(
+          sketchCircleDraft.edge[0] - sketchCircleDraft.center[0],
+          sketchCircleDraft.edge[1] - sketchCircleDraft.center[1],
+        ) > 1e-6
+      )
+    }
+
+    if (sketchArcDraft?.start) {
+      return (
+        Math.hypot(
+          sketchArcDraft.end[0] - sketchArcDraft.center[0],
+          sketchArcDraft.end[1] - sketchArcDraft.center[1],
+        ) > 1e-6 &&
+        Math.hypot(
+          sketchArcDraft.end[0] - sketchArcDraft.start[0],
+          sketchArcDraft.end[1] - sketchArcDraft.start[1],
+        ) > 1e-6
+      )
+    }
+
+    return false
+  }, [sketchArcDraft, sketchCircleDraft, sketchLineDraft, sketchRectangleDraft])
   const isStairMoveActive = movingNode?.type === 'stair'
   const isSlabMoveActive = movingNode?.type === 'slab'
   const isCeilingMoveActive = movingNode?.type === 'ceiling'
   const isFenceMoveActive = movingNode?.type === 'fence'
   const isWallMoveActive = movingNode?.type === 'wall'
   const isWallCurveActive = curvingWall?.type === 'wall'
+
+  useEffect(() => {
+    if (!isSketchDimensionActive) {
+      setSketchDistanceDimensionDraft(null)
+    }
+  }, [isSketchDimensionActive, setSketchDistanceDimensionDraft])
   const isItemPlacementPreviewActive =
     (mode === 'build' && tool === 'item') || movingNode?.type === 'item'
   const isFloorItemBuildActive = mode === 'build' && tool === 'item' && !selectedItem?.attachTo
@@ -6713,7 +7219,8 @@ export function FloorplanPanel() {
   const canInteractElementFloorplanGeometry = isDeleteMode || canSelectElementFloorplanGeometry
   const canInteractFloorplanSketchLines =
     isDeleteMode || canSelectElementFloorplanGeometry || isSketchDimensionActive
-  const canInteractFloorplanSketchCircles = isDeleteMode || canSelectElementFloorplanGeometry
+  const canInteractFloorplanSketchCircles =
+    isDeleteMode || canSelectElementFloorplanGeometry || isSketchDimensionActive
   const canInteractFloorplanSlabs = isDeleteMode || canSelectElementFloorplanGeometry
   const canInteractFloorplanCeilings = isDeleteMode || canSelectElementFloorplanGeometry
   const canInteractFloorplanFences = isDeleteMode || canSelectElementFloorplanGeometry
@@ -7512,24 +8019,54 @@ export function FloorplanPanel() {
         : null,
     [selectedWallEntry, surfaceSize, viewBox],
   )
-  const selectedSketchLineActionMenuPosition = useMemo(
-    () => {
-      if (selectedSketchLineEntry) {
-        return getFloorplanActionMenuPosition(selectedSketchLineEntry.polygon, viewBox, surfaceSize)
-      }
+  const selectedSketchLineActionMenuPosition = useMemo(() => {
+    if (selectedSketchLineEntry) {
+      return getFloorplanActionMenuPosition(selectedSketchLineEntry.polygon, viewBox, surfaceSize)
+    }
 
-      if (selectedSketchLineList.length > 0) {
-        return getFloorplanActionMenuPosition(
-          selectedSketchLineList.flatMap((line) => [toPoint2D(line.start), toPoint2D(line.end)]),
-          viewBox,
-          surfaceSize,
-        )
-      }
+    if (selectedSketchLineList.length > 0) {
+      return getFloorplanActionMenuPosition(
+        selectedSketchLineList.flatMap((line) => [toPoint2D(line.start), toPoint2D(line.end)]),
+        viewBox,
+        surfaceSize,
+      )
+    }
 
+    return null
+  }, [selectedSketchLineEntry, selectedSketchLineList, surfaceSize, viewBox])
+  const selectedSketchCircleActionMenuPosition = useMemo(() => {
+    if (selectedSketchLineActionMenuPosition) {
       return null
-    },
-    [selectedSketchLineEntry, selectedSketchLineList, surfaceSize, viewBox],
-  )
+    }
+
+    if (selectedSketchCircleEntry) {
+      return getFloorplanActionMenuPosition(
+        selectedSketchCircleEntry.centerline,
+        viewBox,
+        surfaceSize,
+      )
+    }
+
+    if (selectedSketchCircleList.length > 0) {
+      return getFloorplanActionMenuPosition(
+        selectedSketchCircleList.flatMap(
+          (circle) =>
+            sketchCircleEntries.find((entry) => entry.circle.id === circle.id)?.centerline ?? [],
+        ),
+        viewBox,
+        surfaceSize,
+      )
+    }
+
+    return null
+  }, [
+    selectedSketchCircleEntry,
+    selectedSketchCircleList,
+    selectedSketchLineActionMenuPosition,
+    sketchCircleEntries,
+    surfaceSize,
+    viewBox,
+  ])
   const selectedStairActionMenuPosition = useMemo(
     () =>
       selectedStairEntry
@@ -7862,6 +8399,13 @@ export function FloorplanPanel() {
     document.body.style.cursor = ''
   }, [])
 
+  const clearGuideDetectionRegionInteraction = useCallback(() => {
+    guideDetectionRegionInteractionRef.current = null
+    setGuideDetectionRegionDraft(null)
+    document.body.style.userSelect = ''
+    document.body.style.cursor = ''
+  }, [])
+
   const finishPanelInteraction = useCallback(() => {
     panelInteractionRef.current = null
     setIsDraggingPanel(false)
@@ -7940,16 +8484,36 @@ export function FloorplanPanel() {
   }, [clearGuideInteraction, guideById])
 
   useEffect(() => {
+    const interaction = guideDetectionRegionInteractionRef.current
+    if (interaction && !guideById.has(interaction.guideId)) {
+      clearGuideDetectionRegionInteraction()
+    }
+  }, [clearGuideDetectionRegionInteraction, guideById])
+
+  useEffect(() => {
     if (!canInteractWithGuides) {
       clearGuideInteraction()
+      clearGuideDetectionRegionInteraction()
     }
-  }, [canInteractWithGuides, clearGuideInteraction])
+  }, [canInteractWithGuides, clearGuideDetectionRegionInteraction, clearGuideInteraction])
 
   useEffect(() => {
     return () => {
       clearGuideInteraction()
     }
   }, [clearGuideInteraction])
+
+  useEffect(() => {
+    if (!detectionRegionDraftGuideId) {
+      clearGuideDetectionRegionInteraction()
+    }
+  }, [clearGuideDetectionRegionInteraction, detectionRegionDraftGuideId])
+
+  useEffect(() => {
+    return () => {
+      clearGuideDetectionRegionInteraction()
+    }
+  }, [clearGuideDetectionRegionInteraction])
 
   const handlePanelDragStart = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -8346,6 +8910,7 @@ export function FloorplanPanel() {
     useFloorplanSketchEdit({
       canEdit: canSelectElementFloorplanGeometry && !isSketchDimensionActive,
       sketchLines,
+      sketchCircles,
       getPlanPointFromClientPoint,
       setCursorPoint,
       setSelection,
@@ -8386,6 +8951,10 @@ export function FloorplanPanel() {
     () => sketchCircleEntries.map((entry) => entry.circle),
     [sketchCircleEntries],
   )
+  const displaySketchDimensions = useMemo(
+    () => sketchDimensions.filter((dimension) => dimension.visible !== false),
+    [sketchDimensions],
+  )
 
   const displaySelectedSketchLineList = useMemo(() => {
     if (!sketchLineEditDraft) {
@@ -8408,13 +8977,21 @@ export function FloorplanPanel() {
     handleSketchCirclePlacementPoint,
     handleSketchArcPlacementPoint,
     handleSketchLineOperationClick,
+    handleSketchCircleOperationClick,
     sketchLineEditOperation,
+    sketchCircleEditOperation,
     openSketchDimensionInput,
+    openSketchDistanceDimensionInput,
     handleSketchDimensionInputCancel,
     handleSketchDimensionInputChange,
     handleSketchDimensionInputSubmit,
+    handleSketchDistanceDimensionReferencePick,
+    handleSketchDistanceDimensionDelete,
     handleSelectedSketchLineDelete,
+    handleSelectedSketchCircleDelete,
     sketchLineActionMenuExtraActions,
+    sketchCircleActionMenuExtraActions,
+    resetSketchOperations,
   } = useFloorplanSketchActions({
     levelId,
     tool,
@@ -8424,14 +9001,20 @@ export function FloorplanPanel() {
     sketchCircleDraft,
     sketchArcDraft,
     sketchDimensionInput,
+    sketchDistanceDimensionDraft,
     setSketchLineDraft,
     setSketchRectangleDraft,
     setSketchCircleDraft,
     setSketchArcDraft,
     setSketchDimensionInput,
+    setSketchDistanceDimensionDraft,
+    sketchDimensions: displaySketchDimensions,
     sketchLineById,
+    sketchCircleById,
     selectedSketchLineEntry,
     selectedSketchLineList,
+    selectedSketchCircleEntry: selectedSketchCircleEntry?.circle ?? null,
+    selectedSketchCircleList,
     selectedSketchProfile,
     sketchProfiles,
     setSelection,
@@ -8647,7 +9230,9 @@ export function FloorplanPanel() {
         if (selectedWallList.length === 0) {
           setSelectedReferenceId(null)
           setSelection({ selectedIds: [wall.id] })
-          showWallEditFeedback('Select the wall to mirror, then click a different wall as the axis.')
+          showWallEditFeedback(
+            'Select the wall to mirror, then click a different wall as the axis.',
+          )
           return true
         }
 
@@ -9290,6 +9875,45 @@ export function FloorplanPanel() {
 
   useEffect(() => {
     const handleWindowPointerMove = (event: PointerEvent) => {
+      const detectionRegionInteraction = guideDetectionRegionInteractionRef.current
+      if (
+        detectionRegionInteraction &&
+        event.pointerId === detectionRegionInteraction.pointerId
+      ) {
+        event.preventDefault()
+
+        const guide = guideById.get(detectionRegionInteraction.guideId)
+        if (!guide) {
+          return
+        }
+
+        const svgPoint = getSvgPointFromClientPoint(event.clientX, event.clientY)
+        if (!svgPoint) {
+          return
+        }
+
+        const nextLocalPoint = getGuideClampedLocalPointFromSvgPoint(
+          guide,
+          detectionRegionInteraction.dimensions,
+          svgPoint,
+        )
+        if (!nextLocalPoint) {
+          return
+        }
+
+        if (pointsEqual(detectionRegionInteraction.current, nextLocalPoint)) {
+          return
+        }
+
+        detectionRegionInteraction.current = nextLocalPoint
+        setGuideDetectionRegionDraft({
+          guideId: guide.id,
+          start: detectionRegionInteraction.start,
+          end: nextLocalPoint,
+        })
+        return
+      }
+
       const guideInteraction = guideInteractionRef.current
       if (guideInteraction && event.pointerId === guideInteraction.pointerId) {
         event.preventDefault()
@@ -9398,6 +10022,41 @@ export function FloorplanPanel() {
     }
 
     const commitGuideInteraction = (event: PointerEvent) => {
+      const detectionRegionInteraction = guideDetectionRegionInteractionRef.current
+      if (
+        detectionRegionInteraction &&
+        event.pointerId === detectionRegionInteraction.pointerId
+      ) {
+        event.preventDefault()
+
+        const guide = guideById.get(detectionRegionInteraction.guideId)
+        if (guide) {
+          const svgPoint = getSvgPointFromClientPoint(event.clientX, event.clientY)
+          const endLocalPoint =
+            svgPoint &&
+            getGuideClampedLocalPointFromSvgPoint(
+              guide,
+              detectionRegionInteraction.dimensions,
+              svgPoint,
+            )
+          const nextRegion = getGuideDetectionRegionFromLocalBounds(
+            guide,
+            detectionRegionInteraction.dimensions,
+            detectionRegionInteraction.start,
+            endLocalPoint ?? detectionRegionInteraction.current,
+          )
+
+          if (nextRegion) {
+            updateNode(guide.id, { detectionRegion: nextRegion })
+            clearDetectionCandidates()
+          }
+        }
+
+        clearDetectionRegionDraft()
+        clearGuideDetectionRegionInteraction()
+        return
+      }
+
       const interaction = guideInteractionRef.current
       if (!interaction || event.pointerId !== interaction.pointerId) {
         return
@@ -9440,6 +10099,16 @@ export function FloorplanPanel() {
     }
 
     const cancelGuideInteraction = (event: PointerEvent) => {
+      const detectionRegionInteraction = guideDetectionRegionInteractionRef.current
+      if (
+        detectionRegionInteraction &&
+        event.pointerId === detectionRegionInteraction.pointerId
+      ) {
+        clearDetectionRegionDraft()
+        clearGuideDetectionRegionInteraction()
+        return
+      }
+
       const interaction = guideInteractionRef.current
       if (!interaction || event.pointerId !== interaction.pointerId) {
         return
@@ -9537,6 +10206,9 @@ export function FloorplanPanel() {
       window.removeEventListener('pointercancel', cancelWallCurveDrag)
     }
   }, [
+    clearDetectionCandidates,
+    clearDetectionRegionDraft,
+    clearGuideDetectionRegionInteraction,
     clearWallCurveDrag,
     clearGuideInteraction,
     clearWallEndpointDrag,
@@ -10579,7 +11251,9 @@ export function FloorplanPanel() {
           loop.wallIds.includes(wall.id),
         )
         if (closedLoop) {
-          showWallEditFeedback('Closed loop detected. Select a wall in it to create a zone or slab.')
+          showWallEditFeedback(
+            'Closed loop detected. Select a wall in it to create a zone or slab.',
+          )
         }
       }
       setDraftStart(point)
@@ -11001,278 +11675,115 @@ export function FloorplanPanel() {
 
   const getSketchContextHitAtPoint = useCallback(
     (planPoint: WallPlanPoint) => {
-      const point = toPoint2D(planPoint)
-      const endpointTolerance = Math.max(
-        floorplanWorldUnitsPerPixel * (FLOORPLAN_ENDPOINT_HIT_STROKE_WIDTH / 2),
-        floorplanWallHitTolerance * 0.8,
-      )
-      let endpointHit:
-        | {
-            line: SketchLineNode
-            endpoint: 'start' | 'end'
-            distance: number
-          }
-        | null = null
-
-      for (const { line } of sketchLineEntries) {
-        for (const endpoint of ['start', 'end'] as const) {
-          const endpointPoint = endpoint === 'start' ? line.start : line.end
-          const distance = Math.hypot(point.x - endpointPoint[0], point.y - endpointPoint[1])
-          if (distance <= endpointTolerance && (!endpointHit || distance < endpointHit.distance)) {
-            endpointHit = { line, endpoint, distance }
-          }
-        }
-      }
-
-      if (endpointHit) {
-        return {
-          kind: 'sketch-endpoint',
-          lineId: endpointHit.line.id,
-          endpoint: endpointHit.endpoint,
-          hasCoincident: Boolean(endpointHit.line.coincident?.[endpointHit.endpoint]),
-        } satisfies FloorplanSketchContextTarget
-      }
-
-      let lineHit: { line: SketchLineNode; distance: number } | null = null
-      for (const { line } of sketchLineEntries) {
-        const distance = getDistanceToWallSegment(point, line.start, line.end)
-        if (distance <= floorplanWallHitTolerance && (!lineHit || distance < lineHit.distance)) {
-          lineHit = { line, distance }
-        }
-      }
-
-      return lineHit
-        ? ({ kind: 'sketch-line', lineId: lineHit.line.id } satisfies FloorplanSketchContextTarget)
-        : null
-    },
-    [floorplanWallHitTolerance, floorplanWorldUnitsPerPixel, sketchLineEntries],
-  )
-
-  const activateSketchContextTool = useCallback(
-    (nextTool: SketchContextTool) => {
-      clearDraft()
-      setPhase('structure')
-      setStructureLayer('elements')
-      setMode('build')
-      setTool(nextTool)
-    },
-    [clearDraft, setMode, setPhase, setStructureLayer, setTool],
-  )
-
-  const cancelSketchContextDraft = useCallback(() => {
-    clearSketchLinePlacementDraft()
-    setCursorPoint(null)
-    setWallSketchSnapResult(null)
-  }, [clearSketchLinePlacementDraft])
-
-  const endSketchContextDraft = useCallback(() => {
-    clearSketchLinePlacementDraft()
-    setCursorPoint(null)
-    setWallSketchSnapResult(null)
-    setMode('select')
-    setTool(null)
-  }, [clearSketchLinePlacementDraft, setMode, setTool])
-
-  const commitSketchContextDraft = useCallback(() => {
-    if (sketchLineDraft && isSketchLineLongEnough(sketchLineDraft.start, sketchLineDraft.end)) {
-      handleSketchLinePlacementPoint(sketchLineDraft.end, wallSketchSnapResult?.target ?? null)
-      return
-    }
-
-    if (
-      sketchRectangleDraft &&
-      isSketchLineLongEnough(sketchRectangleDraft.start, sketchRectangleDraft.end)
-    ) {
-      handleSketchRectanglePlacementPoint(
-        sketchRectangleDraft.end,
-        wallSketchSnapResult?.target ?? null,
-      )
-      return
-    }
-
-    if (
-      sketchCircleDraft &&
-      Math.hypot(
-        sketchCircleDraft.edge[0] - sketchCircleDraft.center[0],
-        sketchCircleDraft.edge[1] - sketchCircleDraft.center[1],
-      ) > 1e-6
-    ) {
-      handleSketchCirclePlacementPoint(sketchCircleDraft.edge)
-      return
-    }
-
-    if (
-      sketchArcDraft?.start &&
-      Math.hypot(
-        sketchArcDraft.end[0] - sketchArcDraft.center[0],
-        sketchArcDraft.end[1] - sketchArcDraft.center[1],
-      ) > 1e-6 &&
-      Math.hypot(
-        sketchArcDraft.end[0] - sketchArcDraft.start[0],
-        sketchArcDraft.end[1] - sketchArcDraft.start[1],
-      ) > 1e-6
-    ) {
-      handleSketchArcPlacementPoint(sketchArcDraft.end)
-    }
-  }, [
-    handleSketchArcPlacementPoint,
-    handleSketchCirclePlacementPoint,
-    handleSketchLinePlacementPoint,
-    handleSketchRectanglePlacementPoint,
-    sketchArcDraft,
-    sketchCircleDraft,
-    sketchLineDraft,
-    sketchRectangleDraft,
-    wallSketchSnapResult?.target,
-  ])
-
-  const continueSketchFromEndpoint = useCallback(
-    (target: Extract<FloorplanSketchContextTarget, { kind: 'sketch-endpoint' }>) => {
-      const line = sketchLineById.get(target.lineId)
-      if (!line) {
-        return
-      }
-
-      const point = target.endpoint === 'start' ? line.start : line.end
-      clearDraft()
-      setPhase('structure')
-      setStructureLayer('elements')
-      setMode('build')
-      setTool(line.construction ? 'sketch-construction-line' : 'sketch-line')
-      setSelection({ selectedIds: [line.id] })
-      setSketchLineDraft({
-        start: point,
-        end: point,
-        construction: line.construction,
-        startConnection: { lineId: line.id, endpoint: target.endpoint },
+      return resolveSketchContextHitAtPoint({
+        planPoint,
+        sketchLineEntries,
+        sketchCircleEntries,
+        floorplanWallHitTolerance,
+        floorplanWorldUnitsPerPixel,
+        endpointHitStrokeWidth: FLOORPLAN_ENDPOINT_HIT_STROKE_WIDTH,
       })
-      setCursorPoint(point)
-      setWallSketchSnapResult(null)
-      showWallEditFeedback('已从端点继续绘制草图线。')
     },
     [
-      clearDraft,
-      setMode,
-      setPhase,
-      setSelection,
-      setSketchLineDraft,
-      setStructureLayer,
-      setTool,
-      showWallEditFeedback,
-      sketchLineById,
+      floorplanWallHitTolerance,
+      floorplanWorldUnitsPerPixel,
+      sketchCircleEntries,
+      sketchLineEntries,
     ],
   )
 
-  const findNearestSketchEndpoint = useCallback(
-    (target: Extract<FloorplanSketchContextTarget, { kind: 'sketch-endpoint' }>) => {
-      const sourceLine = sketchLineById.get(target.lineId)
-      if (!sourceLine) {
-        return null
-      }
+  const {
+    activateSketchContextTool,
+    cancelSketchContextDraft,
+    endSketchContextDraft,
+    commitSketchContextDraft,
+    continueSketchFromEndpoint,
+    connectSketchEndpointToNearest,
+    connectSketchEndpointToNearestCircle,
+    connectSketchEndpointToNearestLine,
+    connectSketchEndpointToNearestMidpoint,
+    clearSketchEndpointCoincident,
+    deleteSketchContextSelection,
+    deleteSketchCircleContextSelection,
+    selectAllSketchLines,
+    zoomFloorplanToFit,
+  } = useFloorplanSketchContextActions({
+    clearDraft,
+    clearSketchLinePlacementDraft,
+    setCursorPoint,
+    setWallSketchSnapResult,
+    setMode,
+    setTool,
+    setPhase,
+    setStructureLayer,
+    sketchLineDraft,
+    sketchRectangleDraft,
+    sketchCircleDraft,
+    sketchArcDraft,
+    wallSketchSnapTarget: wallSketchSnapResult?.target ?? null,
+    handleSketchLinePlacementPoint,
+    handleSketchRectanglePlacementPoint,
+    handleSketchCirclePlacementPoint,
+    handleSketchArcPlacementPoint,
+    sketchLineById,
+    sketchLineEntries,
+    sketchCircleEntries,
+    floorplanWorldUnitsPerPixel,
+    setSelection,
+    setSketchLineDraft,
+    showWallEditFeedback,
+    updateNode,
+    handleSelectedSketchLineDelete,
+    handleSelectedSketchCircleDelete,
+    commitFloorplanSelection,
+    fittedViewport,
+    setViewport,
+    hasUserAdjustedViewportRef,
+  })
 
-      const sourcePoint = target.endpoint === 'start' ? sourceLine.start : sourceLine.end
-      const maxDistance = Math.max(0.75, floorplanWorldUnitsPerPixel * 48)
-      let nearest:
-        | {
-            line: SketchLineNode
-            endpoint: 'start' | 'end'
-            point: WallPlanPoint
-            distance: number
-          }
-        | null = null
-
-      for (const { line } of sketchLineEntries) {
-        if (line.id === sourceLine.id) {
-          continue
-        }
-
-        for (const endpoint of ['start', 'end'] as const) {
-          const point = endpoint === 'start' ? line.start : line.end
-          const distance = Math.hypot(sourcePoint[0] - point[0], sourcePoint[1] - point[1])
-          if (distance <= maxDistance && (!nearest || distance < nearest.distance)) {
-            nearest = { line, endpoint, point, distance }
-          }
-        }
-      }
-
-      return nearest
+  const handleActivateSketchToolbarTool = useCallback(
+    (nextTool: SketchContextTool) => {
+      resetSketchOperations()
+      activateSketchContextTool(nextTool)
     },
-    [floorplanWorldUnitsPerPixel, sketchLineById, sketchLineEntries],
+    [activateSketchContextTool, resetSketchOperations],
   )
 
-  const connectSketchEndpointToNearest = useCallback(
-    (target: Extract<FloorplanSketchContextTarget, { kind: 'sketch-endpoint' }>) => {
-      const line = sketchLineById.get(target.lineId)
-      if (!line) {
-        return
-      }
+  const handleCancelSketchToolbarDraft = useCallback(() => {
+    cancelSketchContextDraft()
+    resetSketchOperations()
+  }, [cancelSketchContextDraft, resetSketchOperations])
 
-      if (line.relations?.includes('fixed')) {
-        showWallEditFeedback('该草图线已固定，请先解除固定再连接端点。')
-        return
-      }
+  const handleExitSketchWorkbench = useCallback(() => {
+    resetSketchOperations()
+    clearDraft()
+    setWallSketchSnapResult(null)
+    setSelection({ selectedIds: [] })
+    setMode('select')
+    setTool(null)
+  }, [clearDraft, resetSketchOperations, setMode, setSelection, setTool, setWallSketchSnapResult])
 
-      const nearest = findNearestSketchEndpoint(target)
-      if (!nearest) {
-        showWallEditFeedback('附近没有可连接的草图端点。')
-        return
-      }
-
-      const coincident = {
-        ...(line.coincident ?? {}),
-        [target.endpoint]: { lineId: nearest.line.id, endpoint: nearest.endpoint },
-      }
-
-      updateNode(line.id as AnyNodeId, {
-        [target.endpoint]: nearest.point,
-        coincident,
-        dimensions: {},
-      } as Partial<AnyNode>)
-      useScene.getState().dirtyNodes.add(line.id as AnyNodeId)
-      setSelection({ selectedIds: [line.id] })
-      sfxEmitter.emit('sfx:structure-build')
-      showWallEditFeedback('草图端点已连接。')
-    },
-    [findNearestSketchEndpoint, setSelection, showWallEditFeedback, sketchLineById, updateNode],
+  const isSketchWorkbenchActive = useMemo(
+    () =>
+      phase === 'structure' &&
+      structureLayer === 'elements' &&
+      (isSketchStructureTool(tool) ||
+        selectedSketchLineList.length > 0 ||
+        selectedSketchCircleList.length > 0 ||
+        activeSketchDraftKind !== null ||
+        Boolean(sketchLineEditOperation) ||
+        Boolean(sketchCircleEditOperation)),
+    [
+      activeSketchDraftKind,
+      phase,
+      selectedSketchCircleList.length,
+      selectedSketchLineList.length,
+      sketchCircleEditOperation,
+      sketchLineEditOperation,
+      structureLayer,
+      tool,
+    ],
   )
-
-  const clearSketchEndpointCoincident = useCallback(
-    (target: Extract<FloorplanSketchContextTarget, { kind: 'sketch-endpoint' }>) => {
-      const line = sketchLineById.get(target.lineId)
-      if (!line?.coincident?.[target.endpoint]) {
-        showWallEditFeedback('该端点没有重合关系。')
-        return
-      }
-
-      const coincident = { ...(line.coincident ?? {}) }
-      delete coincident[target.endpoint]
-      updateNode(line.id as AnyNodeId, { coincident } as Partial<AnyNode>)
-      useScene.getState().dirtyNodes.add(line.id as AnyNodeId)
-      setSelection({ selectedIds: [line.id] })
-      sfxEmitter.emit('sfx:structure-build')
-      showWallEditFeedback('已取消端点重合关系。')
-    },
-    [setSelection, showWallEditFeedback, sketchLineById, updateNode],
-  )
-
-  const deleteSketchContextSelection = useCallback(() => {
-    handleSelectedSketchLineDelete({
-      preventDefault: () => undefined,
-      stopPropagation: () => undefined,
-    } as ReactMouseEvent<HTMLButtonElement>)
-  }, [handleSelectedSketchLineDelete])
-
-  const selectAllSketchLines = useCallback(() => {
-    commitFloorplanSelection([
-      ...sketchLineEntries.map(({ line }) => line.id),
-      ...sketchCircleEntries.map(({ circle }) => circle.id),
-    ])
-  }, [commitFloorplanSelection, sketchCircleEntries, sketchLineEntries])
-
-  const zoomFloorplanToFit = useCallback(() => {
-    hasUserAdjustedViewportRef.current = false
-    setViewport(fittedViewport)
-  }, [fittedViewport])
 
   const handleFloorplanContextMenuCapture = useCallback(
     (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -11283,8 +11794,7 @@ export function FloorplanPanel() {
 
       if (sketchLineDraft || sketchRectangleDraft || sketchCircleDraft || sketchArcDraft) {
         const canCommit = Boolean(
-          (sketchLineDraft &&
-            isSketchLineLongEnough(sketchLineDraft.start, sketchLineDraft.end)) ||
+          (sketchLineDraft && isSketchLineLongEnough(sketchLineDraft.start, sketchLineDraft.end)) ||
             (sketchRectangleDraft &&
               isSketchLineLongEnough(sketchRectangleDraft.start, sketchRectangleDraft.end)) ||
             (sketchCircleDraft &&
@@ -11318,17 +11828,28 @@ export function FloorplanPanel() {
       }
 
       const planPoint = getPlanPointFromClientPoint(event.clientX, event.clientY)
-      const hit = planPoint && canInteractFloorplanSketchLines ? getSketchContextHitAtPoint(planPoint) : null
+      const hit =
+        planPoint && (canInteractFloorplanSketchLines || canInteractFloorplanSketchCircles)
+          ? getSketchContextHitAtPoint(planPoint)
+          : null
 
-      if (hit && (hit.kind === 'sketch-line' || hit.kind === 'sketch-endpoint')) {
+      if (
+        hit &&
+        (hit.kind === 'sketch-line' ||
+          hit.kind === 'sketch-endpoint' ||
+          hit.kind === 'sketch-circle')
+      ) {
         const shouldKeepMultiSelection =
-          hit.kind === 'sketch-line' &&
-          selectedSketchLineList.length > 1 &&
-          selectedIdSet.has(hit.lineId)
+          (hit.kind === 'sketch-line' &&
+            selectedSketchLineList.length > 1 &&
+            selectedIdSet.has(hit.lineId)) ||
+          (hit.kind === 'sketch-circle' &&
+            selectedSketchCircleList.length > 1 &&
+            selectedIdSet.has(hit.circleId))
 
         if (!shouldKeepMultiSelection) {
           flushSync(() => {
-            commitFloorplanSelection([hit.lineId])
+            commitFloorplanSelection([hit.kind === 'sketch-circle' ? hit.circleId : hit.lineId])
           })
         }
 
@@ -11347,6 +11868,7 @@ export function FloorplanPanel() {
       setSketchContextMenuTarget(null)
     },
     [
+      canInteractFloorplanSketchCircles,
       canInteractFloorplanSketchLines,
       commitFloorplanSelection,
       getPlanPointFromClientPoint,
@@ -11354,6 +11876,7 @@ export function FloorplanPanel() {
       levelNode,
       phase,
       selectedIdSet,
+      selectedSketchCircleList.length,
       selectedSketchLineList.length,
       sketchArcDraft,
       sketchCircleDraft,
@@ -11593,7 +12116,7 @@ export function FloorplanPanel() {
 
   const handleSketchLineClick = useCallback(
     (line: SketchLineNode, event: ReactMouseEvent<SVGElement>) => {
-      if (sketchLineEditOperation) {
+      if (sketchLineEditOperation || sketchCircleEditOperation) {
         event.preventDefault()
         event.stopPropagation()
         const planPoint = getPlanPointFromClientPoint(event.clientX, event.clientY)
@@ -11609,7 +12132,29 @@ export function FloorplanPanel() {
       if (isDeleteMode) {
         event.preventDefault()
         event.stopPropagation()
+        const constraintCleanupUpdates = buildRemoveSketchLineConstraintReferencesPlan({
+          linesById: sketchLineById,
+          deletedIds: [line.id],
+        })
+        const distanceDimensionIds = collectSketchDistanceDimensionIdsReferencingEntities({
+          dimensions: displaySketchDimensions,
+          deletedLineIds: [line.id],
+        })
+        if (constraintCleanupUpdates.length > 0) {
+          useScene.getState().updateNodes(
+            constraintCleanupUpdates.map((update) => ({
+              id: update.id as AnyNodeId,
+              data: update.data as Partial<AnyNode>,
+            })),
+          )
+          for (const update of constraintCleanupUpdates) {
+            useScene.getState().dirtyNodes.add(update.id as AnyNodeId)
+          }
+        }
         sfxEmitter.emit('sfx:item-delete')
+        for (const dimensionId of distanceDimensionIds) {
+          deleteNode(dimensionId as AnyNodeId)
+        }
         deleteNode(line.id as AnyNodeId)
         setSelection({ selectedIds: [] })
         return
@@ -11636,25 +12181,98 @@ export function FloorplanPanel() {
       openSketchDimensionInput,
       setSelection,
       showWallEditFeedback,
+      displaySketchDimensions,
+      sketchLineById,
+      sketchCircleEditOperation,
       sketchLineEditOperation,
       toggleFloorplanSelection,
     ],
   )
 
+  const cleanupAndDeleteSketchCircles = useCallback(
+    (circleIds: SketchCircleNode['id'][]) => {
+      const cleanupUpdates = buildRemoveSketchCircleConstraintReferencesPlan({
+        circlesById: sketchCircleById,
+        deletedIds: circleIds,
+      })
+      const tangentCleanupUpdates = buildRemoveSketchLineTangentReferencesPlan({
+        deletedCircleIds: circleIds,
+        linesById: sketchLineById,
+      })
+      const distanceDimensionIds = collectSketchDistanceDimensionIdsReferencingEntities({
+        dimensions: displaySketchDimensions,
+        deletedCircleIds: circleIds,
+      })
+      if (cleanupUpdates.length > 0 || tangentCleanupUpdates.length > 0) {
+        useScene.getState().updateNodes([
+          ...cleanupUpdates.map((update) => ({
+            id: update.id as AnyNodeId,
+            data: update.data as Partial<AnyNode>,
+          })),
+          ...tangentCleanupUpdates.map((update) => ({
+            id: update.id as AnyNodeId,
+            data: update.data as Partial<AnyNode>,
+          })),
+        ])
+        for (const update of [...cleanupUpdates, ...tangentCleanupUpdates]) {
+          useScene.getState().dirtyNodes.add(update.id as AnyNodeId)
+        }
+      }
+
+      sfxEmitter.emit('sfx:item-delete')
+      for (const dimensionId of distanceDimensionIds) {
+        deleteNode(dimensionId as AnyNodeId)
+      }
+      for (const circleId of circleIds) {
+        deleteNode(circleId as AnyNodeId)
+      }
+      setSelection({ selectedIds: [] })
+    },
+    [deleteNode, displaySketchDimensions, setSelection, sketchCircleById, sketchLineById],
+  )
+
   const handleSketchCircleClick = useCallback(
     (circle: SketchCircleNode, event: ReactMouseEvent<SVGElement>) => {
+      if (
+        sketchCircleEditOperation === 'trim-extend' ||
+        sketchLineEditOperation === 'trim-extend' ||
+        sketchLineEditOperation === 'tangent'
+      ) {
+        event.preventDefault()
+        event.stopPropagation()
+        handleSketchCircleOperationClick(circle)
+        return
+      }
+
       if (isDeleteMode) {
         event.preventDefault()
         event.stopPropagation()
-        sfxEmitter.emit('sfx:item-delete')
-        deleteNode(circle.id as AnyNodeId)
-        setSelection({ selectedIds: [] })
+        cleanupAndDeleteSketchCircles([circle.id])
+        return
+      }
+
+      if (isSketchDimensionActive) {
+        openSketchDimensionInput(
+          circle,
+          getFloorplanOverlayPositionFromClientPoint(event.clientX, event.clientY) ?? undefined,
+        )
+        event.preventDefault()
         return
       }
 
       toggleFloorplanSelection(circle.id, getSelectionModifierKeys(event))
     },
-    [deleteNode, isDeleteMode, setSelection, toggleFloorplanSelection],
+    [
+      cleanupAndDeleteSketchCircles,
+      getFloorplanOverlayPositionFromClientPoint,
+      handleSketchCircleOperationClick,
+      isDeleteMode,
+      isSketchDimensionActive,
+      openSketchDimensionInput,
+      sketchCircleEditOperation,
+      sketchLineEditOperation,
+      toggleFloorplanSelection,
+    ],
   )
 
   const handleSketchLineDimensionClick = useCallback(
@@ -11690,6 +12308,175 @@ export function FloorplanPanel() {
       )
     },
     [getFloorplanOverlayPositionFromClientPoint, openSketchDimensionInput],
+  )
+
+  const handleSketchLineAngleDimensionClick = useCallback(
+    (line: SketchLineNode, event: ReactMouseEvent<SVGElement>) => {
+      event.preventDefault()
+      event.stopPropagation()
+
+      if (isSketchDimensionActive) {
+        openSketchDimensionInput(
+          line,
+          getFloorplanOverlayPositionFromClientPoint(event.clientX, event.clientY) ?? undefined,
+          'angle',
+        )
+        return
+      }
+
+      toggleFloorplanSelection(line.id, getSelectionModifierKeys(event))
+    },
+    [
+      getFloorplanOverlayPositionFromClientPoint,
+      isSketchDimensionActive,
+      openSketchDimensionInput,
+      toggleFloorplanSelection,
+    ],
+  )
+
+  const handleSketchLineAngleDimensionDoubleClick = useCallback(
+    (line: SketchLineNode, event: ReactMouseEvent<SVGElement>) => {
+      event.preventDefault()
+      event.stopPropagation()
+      openSketchDimensionInput(
+        line,
+        getFloorplanOverlayPositionFromClientPoint(event.clientX, event.clientY) ?? undefined,
+        'angle',
+      )
+    },
+    [getFloorplanOverlayPositionFromClientPoint, openSketchDimensionInput],
+  )
+
+  const handleSketchCircleDimensionClick = useCallback(
+    (circle: SketchCircleNode, event: ReactMouseEvent<SVGElement>) => {
+      event.preventDefault()
+      event.stopPropagation()
+
+      if (isSketchDimensionActive) {
+        openSketchDimensionInput(
+          circle,
+          getFloorplanOverlayPositionFromClientPoint(event.clientX, event.clientY) ?? undefined,
+        )
+        return
+      }
+
+      toggleFloorplanSelection(circle.id, getSelectionModifierKeys(event))
+    },
+    [
+      getFloorplanOverlayPositionFromClientPoint,
+      isSketchDimensionActive,
+      openSketchDimensionInput,
+      toggleFloorplanSelection,
+    ],
+  )
+
+  const handleSketchCircleDimensionDoubleClick = useCallback(
+    (circle: SketchCircleNode, event: ReactMouseEvent<SVGElement>) => {
+      event.preventDefault()
+      event.stopPropagation()
+      openSketchDimensionInput(
+        circle,
+        getFloorplanOverlayPositionFromClientPoint(event.clientX, event.clientY) ?? undefined,
+      )
+    },
+    [getFloorplanOverlayPositionFromClientPoint, openSketchDimensionInput],
+  )
+
+  const handleSketchLineEndpointDimensionClick = useCallback(
+    (line: SketchLineNode, endpoint: 'start' | 'end', event: ReactMouseEvent<SVGCircleElement>) => {
+      event.preventDefault()
+      event.stopPropagation()
+
+      if (!isSketchDimensionActive) {
+        toggleFloorplanSelection(line.id, getSelectionModifierKeys(event))
+        return
+      }
+
+      handleSketchDistanceDimensionReferencePick({
+        kind: 'line-endpoint',
+        lineId: line.id,
+        endpoint,
+      })
+    },
+    [handleSketchDistanceDimensionReferencePick, isSketchDimensionActive, toggleFloorplanSelection],
+  )
+
+  const handleSketchLineReferenceDimensionClick = useCallback(
+    (line: SketchLineNode, event: ReactMouseEvent<SVGCircleElement>) => {
+      event.preventDefault()
+      event.stopPropagation()
+
+      if (!isSketchDimensionActive) {
+        toggleFloorplanSelection(line.id, getSelectionModifierKeys(event))
+        return
+      }
+
+      handleSketchDistanceDimensionReferencePick({
+        kind: 'line',
+        lineId: line.id,
+      })
+    },
+    [handleSketchDistanceDimensionReferencePick, isSketchDimensionActive, toggleFloorplanSelection],
+  )
+
+  const handleSketchCircleCenterDimensionClick = useCallback(
+    (circle: SketchCircleNode, event: ReactMouseEvent<SVGCircleElement>) => {
+      event.preventDefault()
+      event.stopPropagation()
+
+      if (!isSketchDimensionActive) {
+        toggleFloorplanSelection(circle.id, getSelectionModifierKeys(event))
+        return
+      }
+
+      handleSketchDistanceDimensionReferencePick({
+        kind: 'circle-center',
+        circleId: circle.id,
+      })
+    },
+    [handleSketchDistanceDimensionReferencePick, isSketchDimensionActive, toggleFloorplanSelection],
+  )
+
+  const handleSketchDistanceDimensionClick = useCallback(
+    (dimension: SketchDimensionNode, event: ReactMouseEvent<SVGGElement>) => {
+      event.preventDefault()
+      event.stopPropagation()
+
+      if (isDeleteMode) {
+        handleSketchDistanceDimensionDelete(dimension.id)
+        return
+      }
+
+      if (isSketchDimensionActive) {
+        openSketchDistanceDimensionInput(
+          dimension,
+          getFloorplanOverlayPositionFromClientPoint(event.clientX, event.clientY) ?? undefined,
+        )
+        return
+      }
+
+      toggleFloorplanSelection(dimension.id, getSelectionModifierKeys(event))
+    },
+    [
+      getFloorplanOverlayPositionFromClientPoint,
+      handleSketchDistanceDimensionDelete,
+      isDeleteMode,
+      isSketchDimensionActive,
+      openSketchDistanceDimensionInput,
+      toggleFloorplanSelection,
+    ],
+  )
+
+  const handleSketchDistanceDimensionDoubleClick = useCallback(
+    (dimension: SketchDimensionNode, event: ReactMouseEvent<SVGGElement>) => {
+      event.preventDefault()
+      event.stopPropagation()
+      openSketchDistanceDimensionInput(
+        dimension,
+        getFloorplanOverlayPositionFromClientPoint(event.clientX, event.clientY) ?? undefined,
+      )
+    },
+    [getFloorplanOverlayPositionFromClientPoint, openSketchDistanceDimensionInput],
   )
 
   const handleWallClick = useCallback(
@@ -11795,6 +12582,150 @@ export function FloorplanPanel() {
     },
     [setSelectedReferenceId, setSelection],
   )
+  const closeGuideCalibrationDialog = useCallback(() => {
+    setGuideCalibrationDialog(null)
+    setGuideCalibrationInput('')
+    setGuideCalibrationError(null)
+  }, [])
+  const handleGuideCalibrationDialogOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        closeGuideCalibrationDialog()
+      }
+    },
+    [closeGuideCalibrationDialog],
+  )
+  const handleGuideCalibrationInputChange = useCallback((value: string) => {
+    setGuideCalibrationInput(value)
+    setGuideCalibrationError(null)
+  }, [])
+  const handleGuideCalibrationDialogSubmit = useCallback(() => {
+    if (!guideCalibrationDialog) {
+      return
+    }
+
+    const distance = Number.parseFloat(guideCalibrationInput.trim())
+    if (!Number.isFinite(distance) || distance <= 0) {
+      setGuideCalibrationError(guideCalibrationCopy.invalidDistance)
+      return
+    }
+
+    updateNode(guideCalibrationDialog.guideId, {
+      scale:
+        guideCalibrationDialog.guideScale * (distance / guideCalibrationDialog.measuredDistance),
+      calibration: {
+        kind: 'two-point',
+        distance,
+        measuredDistance: guideCalibrationDialog.measuredDistance,
+        points: guideCalibrationDialog.points,
+        unit: 'm',
+      },
+    })
+    clearCalibrationDraft()
+    requestLockPrompt(guideCalibrationDialog.guideId)
+    closeGuideCalibrationDialog()
+  }, [
+    clearCalibrationDraft,
+    closeGuideCalibrationDialog,
+    guideCalibrationCopy.invalidDistance,
+    guideCalibrationDialog,
+    guideCalibrationInput,
+    requestLockPrompt,
+    updateNode,
+  ])
+  const handleGuideCalibrationPoint = useCallback(
+    (
+      guide: GuideNode,
+      dimensions: GuideImageDimensions,
+      event: ReactPointerEvent<SVGRectElement>,
+    ) => {
+      if (event.button !== 0 || calibrationDraft?.guideId !== guide.id) {
+        return
+      }
+
+      const svgPoint = getSvgPointFromClientPoint(event.clientX, event.clientY)
+      if (!svgPoint) return
+
+      const localPoint = getGuideLocalPointFromSvgPoint(guide, dimensions, svgPoint)
+      if (!localPoint) return
+
+      const currentPoints = calibrationDraft.points
+      const nextPoints =
+        currentPoints.length === 0
+          ? [localPoint]
+          : [currentPoints[currentPoints.length - 1]!, localPoint]
+      pushCalibrationPoint(guide.id, localPoint)
+
+      if (nextPoints.length < 2) {
+        return
+      }
+
+      const measuredDistance = Math.hypot(
+        nextPoints[1]![0] - nextPoints[0]![0],
+        nextPoints[1]![1] - nextPoints[0]![1],
+      )
+      if (measuredDistance <= 1e-6) {
+        return
+      }
+
+      setGuideCalibrationDialog({
+        guideId: guide.id,
+        guideScale: guide.scale,
+        measuredDistance,
+        points: [nextPoints[0]!, nextPoints[1]!],
+      })
+      setGuideCalibrationInput(
+        guide.calibration?.distance ? guide.calibration.distance.toFixed(2) : '1',
+      )
+      setGuideCalibrationError(null)
+    },
+    [calibrationDraft, getSvgPointFromClientPoint, pushCalibrationPoint],
+  )
+  const handleGuideDetectionRegionStart = useCallback(
+    (
+      guide: GuideNode,
+      dimensions: GuideImageDimensions,
+      event: ReactPointerEvent<SVGRectElement>,
+    ) => {
+      if (
+        event.button !== 0 ||
+        !canInteractWithGuides ||
+        detectionRegionDraftGuideId !== guide.id ||
+        !guide.locked
+      ) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+
+      const svgPoint = getSvgPointFromClientPoint(event.clientX, event.clientY)
+      if (!svgPoint) {
+        return
+      }
+
+      const localPoint = getGuideLocalPointFromSvgPoint(guide, dimensions, svgPoint)
+      if (!localPoint) {
+        return
+      }
+
+      guideDetectionRegionInteractionRef.current = {
+        pointerId: event.pointerId,
+        guideId: guide.id,
+        dimensions,
+        start: localPoint,
+        current: localPoint,
+      }
+      setGuideDetectionRegionDraft({
+        guideId: guide.id,
+        start: localPoint,
+        end: localPoint,
+      })
+      document.body.style.userSelect = 'none'
+      document.body.style.cursor = 'crosshair'
+    },
+    [canInteractWithGuides, detectionRegionDraftGuideId, getSvgPointFromClientPoint],
+  )
   const handleGuideCornerPointerDown = useCallback(
     (
       guide: GuideNode,
@@ -11802,7 +12733,7 @@ export function FloorplanPanel() {
       corner: GuideCorner,
       event: ReactPointerEvent<SVGCircleElement>,
     ) => {
-      if (event.button !== 0 || !canInteractWithGuides) {
+      if (event.button !== 0 || !canInteractWithGuides || guide.locked) {
         return
       }
 
@@ -11865,7 +12796,12 @@ export function FloorplanPanel() {
   )
   const handleGuideTranslateStart = useCallback(
     (guide: GuideNode, event: ReactPointerEvent<SVGRectElement>) => {
-      if (event.button !== 0 || !canInteractWithGuides || selectedGuideId !== guide.id) {
+      if (
+        event.button !== 0 ||
+        !canInteractWithGuides ||
+        selectedGuideId !== guide.id ||
+        guide.locked
+      ) {
         return
       }
 
@@ -13559,663 +14495,771 @@ export function FloorplanPanel() {
               isPanning={isPanning}
               movingOpeningType={movingOpeningType}
             />
-        <FloorplanWallLengthInputOverlay
-          input={
-            wallLengthInput
-              ? {
-                  value: wallLengthInput.value,
-                  unitLabel: unit === 'imperial' ? 'ft' : 'm',
-                }
-              : null
-          }
-          onCancel={() => setWallLengthInput(null)}
-          onChange={(value) => setWallLengthInput({ value })}
-          onSubmit={handleWallLengthInputSubmit}
-          position={floorplanCursorPosition}
-        />
-        <FloorplanWallLengthInputOverlay
-          input={
-            wallEditNumericInput
-              ? {
-                  label: getNumericInputLabel(wallEditNumericInput.operation),
-                  unitLabel:
-                    wallEditNumericInput.operation === 'linear-pattern'
-                      ? `${unit === 'imperial' ? 'ft' : 'm'}, #`
-                      : unit === 'imperial'
-                        ? 'ft'
-                        : 'm',
-                  value: wallEditNumericInput.value,
-                }
-              : null
-          }
-          onCancel={handleWallEditNumericInputCancel}
-          onChange={handleWallEditNumericInputChange}
-          onSubmit={handleWallEditNumericInputSubmit}
-          position={
-            floorplanCursorPosition ??
-            selectedWallActionMenuPosition ??
-            floorplanCursorAnchorPosition ??
-            { x: 16, y: 16 }
-          }
-        />
-        <FloorplanWallLengthInputOverlay
-          input={
-            sketchDimensionInput
-              ? {
-                  label: '智能尺寸',
-                  unitLabel: unit === 'imperial' ? 'ft' : 'm',
-                  value: sketchDimensionInput.value,
-                }
-              : null
-          }
-          onCancel={handleSketchDimensionInputCancel}
-          onChange={handleSketchDimensionInputChange}
-          onSubmit={handleSketchDimensionInputSubmit}
-          position={
-            sketchDimensionInput?.position ??
-            floorplanCursorPosition ??
-            selectedSketchLineActionMenuPosition ??
-            floorplanCursorAnchorPosition ??
-            { x: 16, y: 16 }
-          }
-        />
-        {wallEditFeedback && (
-          <div
-            className="editor-floorplan-feedback pointer-events-none absolute bottom-28 left-1/2 z-30 max-w-[calc(100%-2rem)] -translate-x-1/2 rounded-md px-3 py-2 text-center font-medium text-foreground text-xs"
-          >
-            {wallEditFeedback.message}
-          </div>
-        )}
-        {showGuides && canInteractWithGuides && selectedGuide && (
-          <FloorplanGuideHandleHint
-            anchor={guideHandleHintAnchor}
-            isDarkMode={theme === 'dark'}
-            isMacPlatform={isMacPlatform}
-            rotationModifierPressed={rotationModifierPressed}
-          />
-        )}
-        <FloorplanActionMenuLayer
-          ceiling={{
-            position: selectedCeilingActionMenuPosition,
-            onDelete: handleSelectedCeilingDelete,
-            onMove: handleSelectedCeilingMove,
-          }}
-          item={{
-            position: selectedItemActionMenuPosition,
-            onDelete: handleSelectedItemDelete,
-            onDuplicate: handleSelectedItemDuplicate,
-            onMove: handleSelectedItemMove,
-          }}
-          opening={{
-            position: selectedOpeningActionMenuPosition,
-            onDelete: handleSelectedOpeningDelete,
-            onDuplicate: handleSelectedOpeningDuplicate,
-            onMove: handleSelectedOpeningMove,
-          }}
-          slab={{
-            position: selectedSlabActionMenuPosition,
-            onDelete: handleSelectedSlabDelete,
-            onMove: handleSelectedSlabMove,
-          }}
-          sketchLine={{
-            position: selectedSketchLineActionMenuPosition,
-            onDelete: handleSelectedSketchLineDelete,
-            extraActions: sketchLineActionMenuExtraActions,
-          }}
-          stair={{
-            position: selectedStairActionMenuPosition,
-            onDelete: handleSelectedStairDelete,
-            onDuplicate: handleSelectedStairDuplicate,
-            onMove: handleSelectedStairMove,
-          }}
-          wall={{
-            position: selectedWallActionMenuPosition,
-            onDelete: handleSelectedWallDelete,
-            extraActions: wallActionMenuExtraActions,
-            onMove: handleSelectedWallMove,
-          }}
-        />
-
-        {!levelNode || levelNode.type !== 'level' ? (
-          <div className="flex h-full items-center justify-center px-6 text-center text-muted-foreground text-sm">
-            Switch to a building level to view and edit the floorplan.
-          </div>
-        ) : (
-          <svg
-            className="h-full w-full touch-none"
-            data-editor-floorplan-thumbnail="true"
-            onClick={isMarqueeSelectionToolActive ? undefined : handleBackgroundClick}
-            onDoubleClick={isMarqueeSelectionToolActive ? undefined : handleBackgroundDoubleClick}
-            onPointerCancel={endPanning}
-            onPointerDown={handlePointerDown}
-            onPointerLeave={handleSvgPointerLeave}
-            onPointerMove={handleSvgPointerMove}
-            onPointerUp={endPanning}
-            ref={svgRef}
-            style={{ cursor: EDITOR_CURSOR }}
-            viewBox={`${viewBox.minX} ${viewBox.minY} ${viewBox.width} ${viewBox.height}`}
-          >
-            <rect
-              fill={palette.surface}
-              height={viewBox.height}
-              width={viewBox.width}
-              x={viewBox.minX}
-              y={viewBox.minY}
+            <FloorplanGuideCalibrationDialog
+              copy={guideCalibrationCopy}
+              errorMessage={guideCalibrationError}
+              inputValue={guideCalibrationInput}
+              onChange={handleGuideCalibrationInputChange}
+              onOpenChange={handleGuideCalibrationDialogOpenChange}
+              onSubmit={handleGuideCalibrationDialogSubmit}
+              open={!!guideCalibrationDialog}
+            />
+            <FloorplanWallLengthInputOverlay
+              input={
+                wallLengthInput
+                  ? {
+                      value: wallLengthInput.value,
+                      unitLabel: unit === 'imperial' ? 'ft' : 'm',
+                    }
+                  : null
+              }
+              onCancel={() => setWallLengthInput(null)}
+              onChange={(value) => setWallLengthInput({ value })}
+              onSubmit={handleWallLengthInputSubmit}
+              position={floorplanCursorPosition}
+            />
+            <FloorplanWallLengthInputOverlay
+              input={
+                wallEditNumericInput
+                  ? {
+                      label: getNumericInputLabel(wallEditNumericInput.operation),
+                      unitLabel:
+                        wallEditNumericInput.operation === 'linear-pattern'
+                          ? `${unit === 'imperial' ? 'ft' : 'm'}, #`
+                          : unit === 'imperial'
+                            ? 'ft'
+                            : 'm',
+                      value: wallEditNumericInput.value,
+                    }
+                  : null
+              }
+              onCancel={handleWallEditNumericInputCancel}
+              onChange={handleWallEditNumericInputChange}
+              onSubmit={handleWallEditNumericInputSubmit}
+              position={
+                floorplanCursorPosition ??
+                selectedWallActionMenuPosition ??
+                floorplanCursorAnchorPosition ?? { x: 16, y: 16 }
+              }
+            />
+            <FloorplanWallLengthInputOverlay
+              input={
+                sketchDimensionInput
+                  ? {
+                      label:
+                        sketchDimensionInput.target.kind === 'line'
+                          ? sketchDimensionInput.target.metric === 'angle'
+                            ? '智能角度'
+                            : '智能尺寸'
+                          : sketchDimensionInput.target.kind === 'distance'
+                            ? '草图距离'
+                            : '智能尺寸',
+                      unitLabel:
+                        sketchDimensionInput.target.kind === 'line' &&
+                        sketchDimensionInput.target.metric === 'angle'
+                          ? '°'
+                          : unit === 'imperial'
+                            ? 'ft'
+                            : 'm',
+                      value: sketchDimensionInput.value,
+                    }
+                  : null
+              }
+              onCancel={handleSketchDimensionInputCancel}
+              onChange={handleSketchDimensionInputChange}
+              onSubmit={handleSketchDimensionInputSubmit}
+              position={
+                sketchDimensionInput?.position ??
+                floorplanCursorPosition ??
+                selectedSketchLineActionMenuPosition ??
+                floorplanCursorAnchorPosition ?? { x: 16, y: 16 }
+              }
+            />
+            {wallEditFeedback && (
+              <div className="editor-floorplan-feedback pointer-events-none absolute bottom-28 left-1/2 z-30 max-w-[calc(100%-2rem)] -translate-x-1/2 rounded-md px-3 py-2 text-center font-medium text-foreground text-xs">
+                {wallEditFeedback.message}
+              </div>
+            )}
+            {isSketchWorkbenchActive && (
+              <FloorplanSketchCommandBar
+                activeTool={isSketchStructureTool(tool) ? tool : null}
+                canCommitDraft={canCommitSketchDraft}
+                circleSelectionCount={selectedSketchCircleList.length}
+                draftKind={activeSketchDraftKind}
+                lineSelectionCount={selectedSketchLineList.length}
+                onActivateTool={handleActivateSketchToolbarTool}
+                onCancelDraft={handleCancelSketchToolbarDraft}
+                onCommitDraft={commitSketchContextDraft}
+                onExitSketch={handleExitSketchWorkbench}
+                sketchCircleActions={sketchCircleActionMenuExtraActions}
+                sketchLineActions={sketchLineActionMenuExtraActions}
+              />
+            )}
+            {showGuides && canInteractWithGuides && selectedGuide && (
+              <FloorplanGuideHandleHint
+                anchor={guideHandleHintAnchor}
+                isDarkMode={theme === 'dark'}
+                isMacPlatform={isMacPlatform}
+                rotationModifierPressed={rotationModifierPressed}
+              />
+            )}
+            <FloorplanActionMenuLayer
+              ceiling={{
+                position: selectedCeilingActionMenuPosition,
+                onDelete: handleSelectedCeilingDelete,
+                onMove: handleSelectedCeilingMove,
+              }}
+              offsetY={FLOORPLAN_ACTION_MENU_OFFSET_Y}
+              item={{
+                position: selectedItemActionMenuPosition,
+                onDelete: handleSelectedItemDelete,
+                onDuplicate: handleSelectedItemDuplicate,
+                onMove: handleSelectedItemMove,
+              }}
+              opening={{
+                position: selectedOpeningActionMenuPosition,
+                onDelete: handleSelectedOpeningDelete,
+                onDuplicate: handleSelectedOpeningDuplicate,
+                onMove: handleSelectedOpeningMove,
+              }}
+              slab={{
+                position: selectedSlabActionMenuPosition,
+                onDelete: handleSelectedSlabDelete,
+                onMove: handleSelectedSlabMove,
+              }}
+              sketchCircle={{
+                position: isSketchWorkbenchActive ? null : selectedSketchCircleActionMenuPosition,
+                onDelete: handleSelectedSketchCircleDelete,
+                extraActions: sketchCircleActionMenuExtraActions,
+              }}
+              sketchLine={{
+                position: isSketchWorkbenchActive ? null : selectedSketchLineActionMenuPosition,
+                onDelete: handleSelectedSketchLineDelete,
+                extraActions: sketchLineActionMenuExtraActions,
+              }}
+              stair={{
+                position: selectedStairActionMenuPosition,
+                onDelete: handleSelectedStairDelete,
+                onDuplicate: handleSelectedStairDuplicate,
+                onMove: handleSelectedStairMove,
+              }}
+              wall={{
+                position: selectedWallActionMenuPosition,
+                onDelete: handleSelectedWallDelete,
+                extraActions: wallActionMenuExtraActions,
+                onMove: handleSelectedWallMove,
+              }}
             />
 
-            <g transform={buildingRotationDeg !== 0 ? `rotate(${buildingRotationDeg})` : undefined}>
-              <FloorplanGridLayer
-                majorGridPath={majorGridPath}
-                minorGridPath={minorGridPath}
-                palette={palette}
-                showGrid={showGrid}
-              />
-
-              <FloorplanGuideLayer
-                activeGuideInteractionGuideId={activeGuideInteractionGuideId}
-                activeGuideInteractionMode={activeGuideInteractionMode}
-                guides={displayGuides}
-                isInteractive={canInteractWithGuides}
-                onGuideSelect={handleGuideSelect}
-                onGuideTranslateStart={handleGuideTranslateStart}
-                selectedGuideId={selectedGuideId}
-              />
-
-              <FloorplanSiteLayer isEditing={isSiteEditActive} sitePolygon={visibleSitePolygon} />
-
-              <FloorplanGeometryLayer
-                canFocusGeometry={canSelectElementFloorplanGeometry}
-                canSelectGeometry={canInteractElementFloorplanGeometry}
-                canSelectSlabs={canInteractFloorplanSlabs}
-                highlightedIdSet={highlightedFloorplanIdSet}
-                hoveredOpeningId={hoveredOpeningId}
-                hoveredSlabId={hoveredSlabId}
-                hoveredWallId={hoveredWallId}
-                isDeleteMode={isDeleteMode}
-                onOpeningDoubleClick={handleOpeningDoubleClick}
-                onOpeningHoverChange={handleOpeningHoverChange}
-                onOpeningPointerDown={handleOpeningPointerDown}
-                onOpeningSelect={handleOpeningSelect}
-                onSlabDoubleClick={handleSlabDoubleClick}
-                onSlabHoverChange={handleSlabHoverChange}
-                onSlabSelect={handleSlabSelect}
-                onWallClick={handleWallClick}
-                onWallDoubleClick={handleWallDoubleClick}
-                onWallHoverChange={handleWallHoverChange}
-                openingsPolygons={openingsPolygons}
-                palette={palette}
-                selectedIdSet={selectedIdSet}
-                slabPolygons={displaySlabPolygons}
-                unit={unit}
-                wallPolygons={displayWallPolygons}
-              />
-
-              <FloorplanSketchProfileLayer
-                highlightedIdSet={highlightedFloorplanIdSet}
-                palette={palette}
-                profiles={sketchProfiles}
-                selectedProfile={selectedSketchProfile}
-              />
-
-              <FloorplanSketchLayer
-                canSelectSketchLines={canInteractFloorplanSketchLines}
-                highlightedIdSet={highlightedFloorplanIdSet}
-                hoveredSketchLineId={hoveredSketchLineId}
-                isDeleteMode={isDeleteMode}
-                onSketchLineClick={handleSketchLineClick}
-                onSketchLineDimensionClick={handleSketchLineDimensionClick}
-                onSketchLineDimensionDoubleClick={handleSketchLineDimensionDoubleClick}
-                onSketchLineHoverChange={handleSketchLineHoverChange}
-                palette={palette}
-                selectedIdSet={selectedIdSet}
-                sketchLines={displaySketchLines}
-                unit={unit}
-              />
-
-              <FloorplanSketchCircleLayer
-                canSelectSketchCircles={canInteractFloorplanSketchCircles}
-                highlightedIdSet={highlightedFloorplanIdSet}
-                hoveredSketchCircleId={hoveredSketchCircleId}
-                isDeleteMode={isDeleteMode}
-                onSketchCircleClick={handleSketchCircleClick}
-                onSketchCircleHoverChange={handleSketchCircleHoverChange}
-                palette={palette}
-                selectedIdSet={selectedIdSet}
-                sketchCircles={displaySketchCircles}
-              />
-
-              <FloorplanSketchEditLayer
-                canEditSketchLines={
-                  canSelectElementFloorplanGeometry &&
-                  !isSketchDimensionActive &&
-                  !isDeleteMode
+            {!levelNode || levelNode.type !== 'level' ? (
+              <div className="flex h-full items-center justify-center px-6 text-center text-muted-foreground text-sm">
+                Switch to a building level to view and edit the floorplan.
+              </div>
+            ) : (
+              <svg
+                className="h-full w-full touch-none"
+                data-editor-floorplan-thumbnail="true"
+                onClick={isMarqueeSelectionToolActive ? undefined : handleBackgroundClick}
+                onDoubleClick={
+                  isMarqueeSelectionToolActive ? undefined : handleBackgroundDoubleClick
                 }
-                editDraft={sketchLineEditDraft}
-                onSketchLineEditPointerDown={handleSketchLineEditPointerDown}
-                palette={palette}
-                selectedSketchLines={displaySelectedSketchLineList}
-              />
-
-              <FloorplanZoneLayer
-                canSelectZones={canInteractFloorplanZones}
-                hoveredZoneId={hoveredZoneId}
-                isDeleteMode={isDeleteMode}
-                onZoneHoverChange={handleZoneHoverChange}
-                onZoneSelect={handleZoneSelect}
-                palette={palette}
-                selectedZoneId={selectedZoneId}
-                zonePolygons={visibleZonePolygons}
-              />
-
-              <FloorplanNodeLayer
-                canFocusItems={canFocusFloorplanItems}
-                canFocusStairs={canFocusFloorplanStairs}
-                canSelectItems={canSelectFloorplanItems}
-                canSelectStairs={canSelectFloorplanStairs}
-                highlightedIdSet={highlightedFloorplanIdSet}
-                hoveredItemId={hoveredItemId}
-                hoveredStairId={hoveredStairId}
-                isDeleteMode={isDeleteMode}
-                isFurnishContextActive={isFloorplanFurnishContextActive}
-                itemEntries={floorplanItemEntries}
-                onItemDoubleClick={handleItemDoubleClick}
-                onItemHoverChange={handleItemHoverChange}
-                onItemHoverEnter={handleFloorplanItemHoverEnter}
-                onItemPointerDown={handleItemPointerDown}
-                onItemSelect={handleItemSelect}
-                onStairDoubleClick={handleStairDoubleClick}
-                onStairHoverChange={handleStairHoverChange}
-                onStairHoverEnter={handleFloorplanStairHoverEnter}
-                onStairSelect={handleStairSelect}
-                palette={palette}
-                selectedIdSet={selectedIdSet}
-                stairEntries={renderedFloorplanStairEntries}
-              />
-
-              {/* Zone labels: always visible so users can click to select zones from any mode */}
-              <FloorplanZoneLabelLayer
-                onLabelHoverChange={handleZoneHoverChange}
-                onZoneLabelClick={handleZoneLabelClick}
-                selectedZoneId={selectedZoneId}
-                svgRef={svgRef}
-                viewBox={viewBox}
-                zonePolygons={displayZonePolygons}
-              />
-
-              <FloorplanPolygonHandleLayer
-                hoveredHandleId={hoveredSiteHandleId}
-                midpointHandles={siteMidpointHandles}
-                onHandleHoverChange={setHoveredSiteHandleId}
-                onMidpointPointerDown={(nodeId, edgeIndex, event) =>
-                  handleSiteMidpointPointerDown(nodeId as SiteNode['id'], edgeIndex, event)
-                }
-                onVertexDoubleClick={(nodeId, vertexIndex, event) =>
-                  handleSiteVertexDoubleClick(nodeId as SiteNode['id'], vertexIndex, event)
-                }
-                onVertexPointerDown={(nodeId, vertexIndex, event) =>
-                  handleSiteVertexPointerDown(nodeId as SiteNode['id'], vertexIndex, event)
-                }
-                palette={palette}
-                vertexHandles={siteVertexHandles}
-              />
-
-              {isMarqueeSelectionToolActive && (
+                onPointerCancel={endPanning}
+                onPointerDown={handlePointerDown}
+                onPointerLeave={handleSvgPointerLeave}
+                onPointerMove={handleSvgPointerMove}
+                onPointerUp={endPanning}
+                ref={svgRef}
+                style={{ cursor: EDITOR_CURSOR }}
+                viewBox={`${viewBox.minX} ${viewBox.minY} ${viewBox.width} ${viewBox.height}`}
+              >
                 <rect
-                  fill="transparent"
+                  fill={palette.surface}
                   height={viewBox.height}
-                  onClick={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                  }}
-                  onDoubleClick={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                  }}
-                  onPointerCancel={handleMarqueePointerCancel}
-                  onPointerDown={handleMarqueePointerDown}
-                  onPointerMove={handleMarqueePointerMove}
-                  onPointerUp={handleMarqueePointerUp}
-                  style={{ cursor: EDITOR_CURSOR }}
                   width={viewBox.width}
                   x={viewBox.minX}
                   y={viewBox.minY}
                 />
-              )}
 
-              {visibleSvgMarqueeBounds && (
-                <>
-                  <rect
-                    fill={palette.cursor}
-                    fillOpacity={0.12}
-                    height={visibleSvgMarqueeBounds.height}
-                    pointerEvents="none"
-                    stroke={palette.cursor}
-                    strokeOpacity={0.26}
-                    strokeWidth={FLOORPLAN_MARQUEE_GLOW_WIDTH}
-                    vectorEffect="non-scaling-stroke"
-                    width={visibleSvgMarqueeBounds.width}
-                    x={visibleSvgMarqueeBounds.x}
-                    y={visibleSvgMarqueeBounds.y}
+                <g
+                  transform={
+                    buildingRotationDeg !== 0 ? `rotate(${buildingRotationDeg})` : undefined
+                  }
+                >
+                  <FloorplanGridLayer
+                    majorGridPath={majorGridPath}
+                    minorGridPath={minorGridPath}
+                    palette={palette}
+                    showGrid={showGrid}
                   />
-                  <rect
-                    fill="none"
-                    height={visibleSvgMarqueeBounds.height}
-                    pointerEvents="none"
-                    stroke={palette.cursor}
-                    strokeOpacity={0.96}
-                    strokeWidth={FLOORPLAN_MARQUEE_OUTLINE_WIDTH}
-                    vectorEffect="non-scaling-stroke"
-                    width={visibleSvgMarqueeBounds.width}
-                    x={visibleSvgMarqueeBounds.x}
-                    y={visibleSvgMarqueeBounds.y}
+
+                  <FloorplanGuideLayer
+                    activeGuideInteractionGuideId={activeGuideInteractionGuideId}
+                    activeGuideInteractionMode={activeGuideInteractionMode}
+                    calibrationGuideId={calibrationDraft?.guideId ?? null}
+                    detectionRegionGuideId={detectionRegionDraftGuideId}
+                    guides={displayGuides}
+                    isInteractive={canInteractWithGuides}
+                    onGuideCalibrationPoint={handleGuideCalibrationPoint}
+                    onGuideDetectionRegionStart={handleGuideDetectionRegionStart}
+                    onGuideSelect={handleGuideSelect}
+                    onGuideTranslateStart={handleGuideTranslateStart}
+                    selectedGuideId={selectedGuideId}
                   />
-                </>
-              )}
 
-              {draftPolygon && (
-                <polygon
-                  fill={palette.draftFill}
-                  fillOpacity={0.35}
-                  points={draftPolygonPoints ?? undefined}
-                  stroke={palette.draftStroke}
-                  strokeDasharray="0.24 0.12"
-                  strokeWidth="0.07"
-                  vectorEffect="non-scaling-stroke"
-                />
-              )}
+                  {detectionCandidates ? (
+                    <FloorplanGuideDetectionOverlay candidates={detectionCandidates} />
+                  ) : null}
 
-              {wallOffsetPreviewPoints && (
-                <polygon
-                  fill={palette.draftFill}
-                  fillOpacity={0.18}
-                  points={wallOffsetPreviewPoints}
-                  stroke={palette.draftStroke}
-                  strokeDasharray="0.2 0.12"
-                  strokeWidth="0.06"
-                  vectorEffect="non-scaling-stroke"
-                />
-              )}
+                  <FloorplanSiteLayer
+                    isEditing={isSiteEditActive}
+                    sitePolygon={visibleSitePolygon}
+                  />
 
-              {wallFilletPreviewPoints && (
-                <polyline
-                  fill="none"
-                  points={wallFilletPreviewPoints}
-                  stroke={palette.draftStroke}
-                  strokeDasharray="0.12 0.08"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="0.08"
-                  vectorEffect="non-scaling-stroke"
-                />
-              )}
+                  {deliveryOverlays.showPerimeterGuides && (
+                    <FloorplanPerimeterGuideLayer
+                      guides={deliveryPerimeterGuides}
+                      palette={palette}
+                    />
+                  )}
 
-              {wallEditPreviewSegments.map((segment) => (
-                <line
-                  key={segment.id}
-                  pointerEvents="none"
-                  stroke={segment.isValid ? palette.draftStroke : palette.deleteStroke}
-                  strokeDasharray={segment.isValid ? '0.18 0.1' : '0.08 0.08'}
-                  strokeLinecap="round"
-                  strokeOpacity={segment.isValid ? 0.85 : 0.72}
-                  strokeWidth={segment.isValid ? '0.08' : '0.07'}
-                  vectorEffect="non-scaling-stroke"
-                  x1={toSvgX(segment.start[0])}
-                  x2={toSvgX(segment.end[0])}
-                  y1={toSvgY(segment.start[1])}
-                  y2={toSvgY(segment.end[1])}
-                />
-              ))}
+                  <FloorplanGeometryLayer
+                    canFocusGeometry={canSelectElementFloorplanGeometry}
+                    canSelectGeometry={canInteractElementFloorplanGeometry}
+                    canSelectSlabs={canInteractFloorplanSlabs}
+                    highlightedIdSet={highlightedFloorplanIdSet}
+                    hoveredOpeningId={hoveredOpeningId}
+                    hoveredSlabId={hoveredSlabId}
+                    hoveredWallId={hoveredWallId}
+                    isDeleteMode={isDeleteMode}
+                    onOpeningDoubleClick={handleOpeningDoubleClick}
+                    onOpeningHoverChange={handleOpeningHoverChange}
+                    onOpeningPointerDown={handleOpeningPointerDown}
+                    onOpeningSelect={handleOpeningSelect}
+                    onSlabDoubleClick={handleSlabDoubleClick}
+                    onSlabHoverChange={handleSlabHoverChange}
+                    onSlabSelect={handleSlabSelect}
+                    onWallClick={handleWallClick}
+                    onWallDoubleClick={handleWallDoubleClick}
+                    onWallHoverChange={handleWallHoverChange}
+                    openingsPolygons={openingsPolygons}
+                    palette={palette}
+                    selectedIdSet={selectedIdSet}
+                    showWallLengths={deliveryOverlays.showWallLength}
+                    slabPolygons={displaySlabPolygons}
+                    unit={unit}
+                    wallPolygons={displayWallPolygons}
+                  />
 
-              {sketchLineDraft &&
-                isSketchLineLongEnough(sketchLineDraft.start, sketchLineDraft.end) && (
-                  <line
-                    pointerEvents="none"
-                    stroke={
-                      sketchLineDraft.construction
-                        ? palette.measurementStroke
-                        : palette.draftStroke
+                  <FloorplanSketchProfileLayer
+                    highlightedIdSet={highlightedFloorplanIdSet}
+                    palette={palette}
+                    profiles={sketchProfiles}
+                    selectedProfile={selectedSketchProfile}
+                  />
+
+                  <FloorplanSketchLayer
+                    activeDimensionAnchor={sketchDistanceDimensionDraft?.start ?? null}
+                    alwaysShowSketchRelations={showSketchRelations}
+                    canSelectSketchLines={canInteractFloorplanSketchLines}
+                    highlightedIdSet={highlightedFloorplanIdSet}
+                    hoveredSketchLineId={hoveredSketchLineId}
+                    isDeleteMode={isDeleteMode}
+                    onSketchLineEndpointDimensionClick={handleSketchLineEndpointDimensionClick}
+                    onSketchLineReferenceDimensionClick={handleSketchLineReferenceDimensionClick}
+                    onSketchLineAngleDimensionClick={handleSketchLineAngleDimensionClick}
+                    onSketchLineAngleDimensionDoubleClick={
+                      handleSketchLineAngleDimensionDoubleClick
                     }
-                    strokeDasharray={sketchLineDraft.construction ? '0.16 0.1' : '0.18 0.1'}
-                    strokeLinecap="round"
-                    strokeOpacity={0.82}
-                    strokeWidth={
-                      sketchLineDraft.construction
-                        ? FLOORPLAN_SKETCH_CONSTRUCTION_LINE_SELECTED_STROKE_WIDTH
-                        : FLOORPLAN_SKETCH_LINE_SELECTED_STROKE_WIDTH
+                    onSketchLineClick={handleSketchLineClick}
+                    onSketchLineDimensionClick={handleSketchLineDimensionClick}
+                    onSketchLineDimensionDoubleClick={handleSketchLineDimensionDoubleClick}
+                    onSketchLineHoverChange={handleSketchLineHoverChange}
+                    palette={palette}
+                    selectedIdSet={selectedIdSet}
+                    showDimensionAnchors={isSketchDimensionActive}
+                    sketchLines={displaySketchLines}
+                    unit={unit}
+                  />
+
+                  <FloorplanSketchCircleLayer
+                    activeDimensionAnchor={sketchDistanceDimensionDraft?.start ?? null}
+                    alwaysShowSketchRelations={showSketchRelations}
+                    canSelectSketchCircles={canInteractFloorplanSketchCircles}
+                    highlightedIdSet={highlightedFloorplanIdSet}
+                    hoveredSketchCircleId={hoveredSketchCircleId}
+                    isDeleteMode={isDeleteMode}
+                    onSketchCircleClick={handleSketchCircleClick}
+                    onSketchCircleCenterDimensionClick={handleSketchCircleCenterDimensionClick}
+                    onSketchCircleDimensionClick={handleSketchCircleDimensionClick}
+                    onSketchCircleDimensionDoubleClick={handleSketchCircleDimensionDoubleClick}
+                    onSketchCircleHoverChange={handleSketchCircleHoverChange}
+                    palette={palette}
+                    selectedIdSet={selectedIdSet}
+                    showDimensionAnchors={isSketchDimensionActive}
+                    sketchCircles={displaySketchCircles}
+                    sketchLines={displaySketchLines}
+                    unit={unit}
+                  />
+
+                  <FloorplanSketchDistanceDimensionLayer
+                    dimensions={displaySketchDimensions}
+                    isDeleteMode={isDeleteMode}
+                    onSketchDistanceDimensionClick={handleSketchDistanceDimensionClick}
+                    onSketchDistanceDimensionDoubleClick={handleSketchDistanceDimensionDoubleClick}
+                    palette={palette}
+                    selectedIdSet={selectedIdSet}
+                    sketchCircles={displaySketchCircles}
+                    sketchLines={displaySketchLines}
+                    unit={unit}
+                  />
+
+                  <FloorplanSketchEditLayer
+                    canEditSketchLines={
+                      canSelectElementFloorplanGeometry && !isSketchDimensionActive && !isDeleteMode
                     }
-                    vectorEffect="non-scaling-stroke"
-                    x1={toSvgX(sketchLineDraft.start[0])}
-                    x2={toSvgX(sketchLineDraft.end[0])}
-                    y1={toSvgY(sketchLineDraft.start[1])}
-                    y2={toSvgY(sketchLineDraft.end[1])}
+                    editDraft={sketchLineEditDraft}
+                    onSketchLineEditPointerDown={handleSketchLineEditPointerDown}
+                    palette={palette}
+                    selectedSketchLines={displaySelectedSketchLineList}
                   />
-                )}
 
-              {sketchRectangleDraftSegments.map((segment, index) => (
-                <line
-                  key={`sketch-rectangle-draft:${index}`}
-                  pointerEvents="none"
-                  stroke={palette.draftStroke}
-                  strokeDasharray="0.18 0.1"
-                  strokeLinecap="round"
-                  strokeOpacity={0.82}
-                  strokeWidth={FLOORPLAN_SKETCH_LINE_SELECTED_STROKE_WIDTH}
-                  vectorEffect="non-scaling-stroke"
-                  x1={toSvgX(segment.start[0])}
-                  x2={toSvgX(segment.end[0])}
-                  y1={toSvgY(segment.start[1])}
-                  y2={toSvgY(segment.end[1])}
-                />
-              ))}
-
-              {sketchCircleDraftPath && (
-                <path
-                  d={sketchCircleDraftPath}
-                  fill="none"
-                  pointerEvents="none"
-                  stroke={palette.draftStroke}
-                  strokeDasharray="0.18 0.1"
-                  strokeLinecap="round"
-                  strokeOpacity={0.82}
-                  strokeWidth={FLOORPLAN_SKETCH_LINE_SELECTED_STROKE_WIDTH}
-                  vectorEffect="non-scaling-stroke"
-                />
-              )}
-
-              {sketchArcDraft && !sketchArcDraft.start && (
-                <line
-                  pointerEvents="none"
-                  stroke={palette.measurementStroke}
-                  strokeDasharray="0.16 0.1"
-                  strokeLinecap="round"
-                  strokeOpacity={0.72}
-                  strokeWidth={FLOORPLAN_SKETCH_CONSTRUCTION_LINE_SELECTED_STROKE_WIDTH}
-                  vectorEffect="non-scaling-stroke"
-                  x1={toSvgX(sketchArcDraft.center[0])}
-                  x2={toSvgX(sketchArcDraft.end[0])}
-                  y1={toSvgY(sketchArcDraft.center[1])}
-                  y2={toSvgY(sketchArcDraft.end[1])}
-                />
-              )}
-
-              {sketchArcDraftPath && (
-                <path
-                  d={sketchArcDraftPath}
-                  fill="none"
-                  pointerEvents="none"
-                  stroke={palette.draftStroke}
-                  strokeDasharray="0.18 0.1"
-                  strokeLinecap="round"
-                  strokeOpacity={0.82}
-                  strokeWidth={FLOORPLAN_SKETCH_LINE_SELECTED_STROKE_WIDTH}
-                  vectorEffect="non-scaling-stroke"
-                />
-              )}
-
-              <FloorplanWallSketchFeedbackLayer
-                draftEnd={
-                  draftEnd ??
-                  sketchLineDraft?.end ??
-                  sketchRectangleDraft?.end ??
-                  sketchCircleDraft?.edge ??
-                  sketchArcDraft?.end ??
-                  null
-                }
-                draftStart={
-                  draftStart ??
-                  sketchLineDraft?.start ??
-                  sketchRectangleDraft?.start ??
-                  sketchCircleDraft?.center ??
-                  sketchArcDraft?.center ??
-                  null
-                }
-                palette={palette}
-                snapResult={wallSketchSnapResult}
-                unit={unit}
-              />
-
-              {polygonDraftPolygonPoints && (
-                <polygon
-                  fill={palette.draftFill}
-                  fillOpacity={0.2}
-                  points={polygonDraftPolygonPoints}
-                  stroke="none"
-                />
-              )}
-
-              {polygonDraftPolylinePoints && (
-                <polyline
-                  fill="none"
-                  points={polygonDraftPolylinePoints}
-                  stroke={palette.draftStroke}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="0.08"
-                  vectorEffect="non-scaling-stroke"
-                />
-              )}
-
-              {polygonDraftClosingSegment && (
-                <line
-                  stroke={palette.draftStroke}
-                  strokeDasharray="0.16 0.1"
-                  strokeLinecap="round"
-                  strokeOpacity={0.75}
-                  strokeWidth="0.05"
-                  vectorEffect="non-scaling-stroke"
-                  x1={polygonDraftClosingSegment.x1}
-                  x2={polygonDraftClosingSegment.x2}
-                  y1={polygonDraftClosingSegment.y1}
-                  y2={polygonDraftClosingSegment.y2}
-                />
-              )}
-
-              {activePolygonDraftPoints.map((point, index) => (
-                <circle
-                  cx={toSvgX(point[0])}
-                  cy={toSvgY(point[1])}
-                  fill={index === 0 ? palette.anchor : palette.draftStroke}
-                  fillOpacity={0.95}
-                  key={`polygon-draft-${index}`}
-                  pointerEvents="none"
-                  r={index === 0 ? 0.12 : 0.1}
-                  vectorEffect="non-scaling-stroke"
-                />
-              ))}
-
-              <FloorplanWallEndpointLayer
-                endpointHandles={wallEndpointHandles}
-                hoveredEndpointId={hoveredEndpointId}
-                onEndpointHoverChange={setHoveredEndpointId}
-                onWallEndpointPointerDown={handleWallEndpointPointerDown}
-                palette={palette}
-              />
-
-              <FloorplanWallCurveHandleLayer
-                curveHandles={wallCurveHandles}
-                hoveredHandleId={hoveredWallCurveHandleId}
-                onHandleHoverChange={setHoveredWallCurveHandleId}
-                onWallCurvePointerDown={handleWallCurvePointerDown}
-                palette={palette}
-              />
-
-              <FloorplanPolygonHandleLayer
-                hoveredHandleId={hoveredSlabHandleId}
-                midpointHandles={slabMidpointHandles}
-                onHandleHoverChange={setHoveredSlabHandleId}
-                onMidpointPointerDown={(nodeId, edgeIndex, event) =>
-                  handleSlabMidpointPointerDown(nodeId as SlabNode['id'], edgeIndex, event)
-                }
-                onVertexDoubleClick={(nodeId, vertexIndex, event) =>
-                  handleSlabVertexDoubleClick(nodeId as SlabNode['id'], vertexIndex, event)
-                }
-                onVertexPointerDown={(nodeId, vertexIndex, event) =>
-                  handleSlabVertexPointerDown(nodeId as SlabNode['id'], vertexIndex, event)
-                }
-                palette={palette}
-                vertexHandles={slabVertexHandles}
-              />
-
-              <FloorplanPolygonHandleLayer
-                hoveredHandleId={hoveredZoneHandleId}
-                midpointHandles={zoneMidpointHandles}
-                onHandleHoverChange={setHoveredZoneHandleId}
-                onMidpointPointerDown={(nodeId, edgeIndex, event) =>
-                  handleZoneMidpointPointerDown(nodeId as ZoneNodeType['id'], edgeIndex, event)
-                }
-                onVertexDoubleClick={(nodeId, vertexIndex, event) =>
-                  handleZoneVertexDoubleClick(nodeId as ZoneNodeType['id'], vertexIndex, event)
-                }
-                onVertexPointerDown={(nodeId, vertexIndex, event) =>
-                  handleZoneVertexPointerDown(nodeId as ZoneNodeType['id'], vertexIndex, event)
-                }
-                palette={palette}
-                vertexHandles={zoneVertexHandles}
-              />
-
-              {selectedGuide && showGuides && (
-                <FloorplanGuideSelectionOverlay
-                  guide={selectedGuide}
-                  isDarkMode={theme === 'dark'}
-                  onCornerHoverChange={setHoveredGuideCorner}
-                  onCornerPointerDown={handleGuideCornerPointerDown}
-                  rotationModifierPressed={rotationModifierPressed}
-                  showHandles={canInteractWithGuides}
-                />
-              )}
-
-              {cursorPoint && (
-                <g>
-                  <circle
-                    cx={toSvgX(cursorPoint[0])}
-                    cy={toSvgY(cursorPoint[1])}
-                    fill={floorplanCursorColor}
-                    fillOpacity={0.25}
-                    r={FLOORPLAN_CURSOR_MARKER_GLOW_RADIUS}
+                  <FloorplanZoneLayer
+                    canSelectZones={canInteractFloorplanZones}
+                    hoveredZoneId={hoveredZoneId}
+                    isDeleteMode={isDeleteMode}
+                    onZoneHoverChange={handleZoneHoverChange}
+                    onZoneSelect={handleZoneSelect}
+                    palette={palette}
+                    selectedZoneId={selectedZoneId}
+                    zonePolygons={visibleZonePolygons}
                   />
-                  <circle
-                    cx={toSvgX(cursorPoint[0])}
-                    cy={toSvgY(cursorPoint[1])}
-                    fill={floorplanCursorColor}
-                    fillOpacity={0.9}
-                    r={FLOORPLAN_CURSOR_MARKER_CORE_RADIUS}
+
+                  <FloorplanNodeLayer
+                    canFocusItems={canFocusFloorplanItems}
+                    canFocusStairs={canFocusFloorplanStairs}
+                    canSelectItems={canSelectFloorplanItems}
+                    canSelectStairs={canSelectFloorplanStairs}
+                    highlightedIdSet={highlightedFloorplanIdSet}
+                    hoveredItemId={hoveredItemId}
+                    hoveredStairId={hoveredStairId}
+                    isDeleteMode={isDeleteMode}
+                    isFurnishContextActive={isFloorplanFurnishContextActive}
+                    itemEntries={floorplanItemEntries}
+                    onItemDoubleClick={handleItemDoubleClick}
+                    onItemHoverChange={handleItemHoverChange}
+                    onItemHoverEnter={handleFloorplanItemHoverEnter}
+                    onItemPointerDown={handleItemPointerDown}
+                    onItemSelect={handleItemSelect}
+                    onStairDoubleClick={handleStairDoubleClick}
+                    onStairHoverChange={handleStairHoverChange}
+                    onStairHoverEnter={handleFloorplanStairHoverEnter}
+                    onStairSelect={handleStairSelect}
+                    palette={palette}
+                    selectedIdSet={selectedIdSet}
+                    stairEntries={renderedFloorplanStairEntries}
                   />
+
+                  {deliveryOverlays.showRoomArea && (
+                    <FloorplanZoneAreaLabelLayer unit={unit} zonePolygons={displayZonePolygons} />
+                  )}
+
+                  {deliveryOverlays.showRoomName && (
+                    <FloorplanZoneLabelLayer
+                      onLabelHoverChange={handleZoneHoverChange}
+                      onZoneLabelClick={handleZoneLabelClick}
+                      selectedZoneId={selectedZoneId}
+                      svgRef={svgRef}
+                      viewBox={viewBox}
+                      zonePolygons={displayZonePolygons}
+                    />
+                  )}
+
+                  <FloorplanPolygonHandleLayer
+                    hoveredHandleId={hoveredSiteHandleId}
+                    midpointHandles={siteMidpointHandles}
+                    onHandleHoverChange={setHoveredSiteHandleId}
+                    onMidpointPointerDown={(nodeId, edgeIndex, event) =>
+                      handleSiteMidpointPointerDown(nodeId as SiteNode['id'], edgeIndex, event)
+                    }
+                    onVertexDoubleClick={(nodeId, vertexIndex, event) =>
+                      handleSiteVertexDoubleClick(nodeId as SiteNode['id'], vertexIndex, event)
+                    }
+                    onVertexPointerDown={(nodeId, vertexIndex, event) =>
+                      handleSiteVertexPointerDown(nodeId as SiteNode['id'], vertexIndex, event)
+                    }
+                    palette={palette}
+                    vertexHandles={siteVertexHandles}
+                  />
+
+                  {isMarqueeSelectionToolActive && (
+                    <rect
+                      fill="transparent"
+                      height={viewBox.height}
+                      onClick={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                      }}
+                      onDoubleClick={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                      }}
+                      onPointerCancel={handleMarqueePointerCancel}
+                      onPointerDown={handleMarqueePointerDown}
+                      onPointerMove={handleMarqueePointerMove}
+                      onPointerUp={handleMarqueePointerUp}
+                      style={{ cursor: EDITOR_CURSOR }}
+                      width={viewBox.width}
+                      x={viewBox.minX}
+                      y={viewBox.minY}
+                    />
+                  )}
+
+                  {visibleSvgMarqueeBounds && (
+                    <>
+                      <rect
+                        fill={palette.cursor}
+                        fillOpacity={0.12}
+                        height={visibleSvgMarqueeBounds.height}
+                        pointerEvents="none"
+                        stroke={palette.cursor}
+                        strokeOpacity={0.26}
+                        strokeWidth={FLOORPLAN_MARQUEE_GLOW_WIDTH}
+                        vectorEffect="non-scaling-stroke"
+                        width={visibleSvgMarqueeBounds.width}
+                        x={visibleSvgMarqueeBounds.x}
+                        y={visibleSvgMarqueeBounds.y}
+                      />
+                      <rect
+                        fill="none"
+                        height={visibleSvgMarqueeBounds.height}
+                        pointerEvents="none"
+                        stroke={palette.cursor}
+                        strokeOpacity={0.96}
+                        strokeWidth={FLOORPLAN_MARQUEE_OUTLINE_WIDTH}
+                        vectorEffect="non-scaling-stroke"
+                        width={visibleSvgMarqueeBounds.width}
+                        x={visibleSvgMarqueeBounds.x}
+                        y={visibleSvgMarqueeBounds.y}
+                      />
+                    </>
+                  )}
+
+                  {draftPolygon && (
+                    <polygon
+                      fill={palette.draftFill}
+                      fillOpacity={0.35}
+                      points={draftPolygonPoints ?? undefined}
+                      stroke={palette.draftStroke}
+                      strokeDasharray="0.24 0.12"
+                      strokeWidth="0.07"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  )}
+
+                  {wallOffsetPreviewPoints && (
+                    <polygon
+                      fill={palette.draftFill}
+                      fillOpacity={0.18}
+                      points={wallOffsetPreviewPoints}
+                      stroke={palette.draftStroke}
+                      strokeDasharray="0.2 0.12"
+                      strokeWidth="0.06"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  )}
+
+                  {wallFilletPreviewPoints && (
+                    <polyline
+                      fill="none"
+                      points={wallFilletPreviewPoints}
+                      stroke={palette.draftStroke}
+                      strokeDasharray="0.12 0.08"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="0.08"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  )}
+
+                  {wallEditPreviewSegments.map((segment) => (
+                    <line
+                      key={segment.id}
+                      pointerEvents="none"
+                      stroke={segment.isValid ? palette.draftStroke : palette.deleteStroke}
+                      strokeDasharray={segment.isValid ? '0.18 0.1' : '0.08 0.08'}
+                      strokeLinecap="round"
+                      strokeOpacity={segment.isValid ? 0.85 : 0.72}
+                      strokeWidth={segment.isValid ? '0.08' : '0.07'}
+                      vectorEffect="non-scaling-stroke"
+                      x1={toSvgX(segment.start[0])}
+                      x2={toSvgX(segment.end[0])}
+                      y1={toSvgY(segment.start[1])}
+                      y2={toSvgY(segment.end[1])}
+                    />
+                  ))}
+
+                  {sketchLineDraft &&
+                    isSketchLineLongEnough(sketchLineDraft.start, sketchLineDraft.end) && (
+                      <line
+                        pointerEvents="none"
+                        stroke={
+                          sketchLineDraft.construction
+                            ? palette.measurementStroke
+                            : palette.draftStroke
+                        }
+                        strokeDasharray={sketchLineDraft.construction ? '0.16 0.1' : '0.18 0.1'}
+                        strokeLinecap="round"
+                        strokeOpacity={0.82}
+                        strokeWidth={
+                          sketchLineDraft.construction
+                            ? FLOORPLAN_SKETCH_CONSTRUCTION_LINE_SELECTED_STROKE_WIDTH
+                            : FLOORPLAN_SKETCH_LINE_SELECTED_STROKE_WIDTH
+                        }
+                        vectorEffect="non-scaling-stroke"
+                        x1={toSvgX(sketchLineDraft.start[0])}
+                        x2={toSvgX(sketchLineDraft.end[0])}
+                        y1={toSvgY(sketchLineDraft.start[1])}
+                        y2={toSvgY(sketchLineDraft.end[1])}
+                      />
+                    )}
+
+                  {sketchRectangleDraftSegments.map((segment, index) => (
+                    <line
+                      key={`sketch-rectangle-draft:${index}`}
+                      pointerEvents="none"
+                      stroke={palette.draftStroke}
+                      strokeDasharray="0.18 0.1"
+                      strokeLinecap="round"
+                      strokeOpacity={0.82}
+                      strokeWidth={FLOORPLAN_SKETCH_LINE_SELECTED_STROKE_WIDTH}
+                      vectorEffect="non-scaling-stroke"
+                      x1={toSvgX(segment.start[0])}
+                      x2={toSvgX(segment.end[0])}
+                      y1={toSvgY(segment.start[1])}
+                      y2={toSvgY(segment.end[1])}
+                    />
+                  ))}
+
+                  {sketchCircleDraftPath && (
+                    <path
+                      d={sketchCircleDraftPath}
+                      fill="none"
+                      pointerEvents="none"
+                      stroke={palette.draftStroke}
+                      strokeDasharray="0.18 0.1"
+                      strokeLinecap="round"
+                      strokeOpacity={0.82}
+                      strokeWidth={FLOORPLAN_SKETCH_LINE_SELECTED_STROKE_WIDTH}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  )}
+
+                  {sketchArcDraft && !sketchArcDraft.start && (
+                    <line
+                      pointerEvents="none"
+                      stroke={palette.measurementStroke}
+                      strokeDasharray="0.16 0.1"
+                      strokeLinecap="round"
+                      strokeOpacity={0.72}
+                      strokeWidth={FLOORPLAN_SKETCH_CONSTRUCTION_LINE_SELECTED_STROKE_WIDTH}
+                      vectorEffect="non-scaling-stroke"
+                      x1={toSvgX(sketchArcDraft.center[0])}
+                      x2={toSvgX(sketchArcDraft.end[0])}
+                      y1={toSvgY(sketchArcDraft.center[1])}
+                      y2={toSvgY(sketchArcDraft.end[1])}
+                    />
+                  )}
+
+                  {sketchArcDraftPath && (
+                    <path
+                      d={sketchArcDraftPath}
+                      fill="none"
+                      pointerEvents="none"
+                      stroke={palette.draftStroke}
+                      strokeDasharray="0.18 0.1"
+                      strokeLinecap="round"
+                      strokeOpacity={0.82}
+                      strokeWidth={FLOORPLAN_SKETCH_LINE_SELECTED_STROKE_WIDTH}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  )}
+
+                  <FloorplanWallSketchFeedbackLayer
+                    draftEnd={
+                      draftEnd ??
+                      sketchLineDraft?.end ??
+                      sketchRectangleDraft?.end ??
+                      sketchCircleDraft?.edge ??
+                      sketchArcDraft?.end ??
+                      null
+                    }
+                    draftStart={
+                      draftStart ??
+                      sketchLineDraft?.start ??
+                      sketchRectangleDraft?.start ??
+                      sketchCircleDraft?.center ??
+                      sketchArcDraft?.center ??
+                      null
+                    }
+                    palette={palette}
+                    snapResult={wallSketchSnapResult}
+                    unit={unit}
+                  />
+
+                  {polygonDraftPolygonPoints && (
+                    <polygon
+                      fill={palette.draftFill}
+                      fillOpacity={0.2}
+                      points={polygonDraftPolygonPoints}
+                      stroke="none"
+                    />
+                  )}
+
+                  {polygonDraftPolylinePoints && (
+                    <polyline
+                      fill="none"
+                      points={polygonDraftPolylinePoints}
+                      stroke={palette.draftStroke}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="0.08"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  )}
+
+                  {polygonDraftClosingSegment && (
+                    <line
+                      stroke={palette.draftStroke}
+                      strokeDasharray="0.16 0.1"
+                      strokeLinecap="round"
+                      strokeOpacity={0.75}
+                      strokeWidth="0.05"
+                      vectorEffect="non-scaling-stroke"
+                      x1={polygonDraftClosingSegment.x1}
+                      x2={polygonDraftClosingSegment.x2}
+                      y1={polygonDraftClosingSegment.y1}
+                      y2={polygonDraftClosingSegment.y2}
+                    />
+                  )}
+
+                  {activePolygonDraftPoints.map((point, index) => (
+                    <circle
+                      cx={toSvgX(point[0])}
+                      cy={toSvgY(point[1])}
+                      fill={index === 0 ? palette.anchor : palette.draftStroke}
+                      fillOpacity={0.95}
+                      key={`polygon-draft-${index}`}
+                      pointerEvents="none"
+                      r={index === 0 ? 0.12 : 0.1}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  ))}
+
+                  <FloorplanWallEndpointLayer
+                    endpointHandles={wallEndpointHandles}
+                    hoveredEndpointId={hoveredEndpointId}
+                    onEndpointHoverChange={setHoveredEndpointId}
+                    onWallEndpointPointerDown={handleWallEndpointPointerDown}
+                    palette={palette}
+                  />
+
+                  <FloorplanWallCurveHandleLayer
+                    curveHandles={wallCurveHandles}
+                    hoveredHandleId={hoveredWallCurveHandleId}
+                    onHandleHoverChange={setHoveredWallCurveHandleId}
+                    onWallCurvePointerDown={handleWallCurvePointerDown}
+                    palette={palette}
+                  />
+
+                  <FloorplanPolygonHandleLayer
+                    hoveredHandleId={hoveredSlabHandleId}
+                    midpointHandles={slabMidpointHandles}
+                    onHandleHoverChange={setHoveredSlabHandleId}
+                    onMidpointPointerDown={(nodeId, edgeIndex, event) =>
+                      handleSlabMidpointPointerDown(nodeId as SlabNode['id'], edgeIndex, event)
+                    }
+                    onVertexDoubleClick={(nodeId, vertexIndex, event) =>
+                      handleSlabVertexDoubleClick(nodeId as SlabNode['id'], vertexIndex, event)
+                    }
+                    onVertexPointerDown={(nodeId, vertexIndex, event) =>
+                      handleSlabVertexPointerDown(nodeId as SlabNode['id'], vertexIndex, event)
+                    }
+                    palette={palette}
+                    vertexHandles={slabVertexHandles}
+                  />
+
+                  <FloorplanPolygonHandleLayer
+                    hoveredHandleId={hoveredZoneHandleId}
+                    midpointHandles={zoneMidpointHandles}
+                    onHandleHoverChange={setHoveredZoneHandleId}
+                    onMidpointPointerDown={(nodeId, edgeIndex, event) =>
+                      handleZoneMidpointPointerDown(nodeId as ZoneNodeType['id'], edgeIndex, event)
+                    }
+                    onVertexDoubleClick={(nodeId, vertexIndex, event) =>
+                      handleZoneVertexDoubleClick(nodeId as ZoneNodeType['id'], vertexIndex, event)
+                    }
+                    onVertexPointerDown={(nodeId, vertexIndex, event) =>
+                      handleZoneVertexPointerDown(nodeId as ZoneNodeType['id'], vertexIndex, event)
+                    }
+                    palette={palette}
+                    vertexHandles={zoneVertexHandles}
+                  />
+
+                  {selectedGuide && showGuides && (
+                    <>
+                      <FloorplanGuideDetectionRegionOverlay
+                        activeLabel={guideDetectionRegionCopy.activeLabel}
+                        draft={guideDetectionRegionDraft}
+                        guide={selectedGuide}
+                        label={guideDetectionRegionCopy.label}
+                      />
+                      <FloorplanGuideCalibrationOverlay
+                        guide={selectedGuide}
+                        points={selectedGuideCalibrationPoints}
+                      />
+                      <FloorplanGuideSelectionOverlay
+                        guide={selectedGuide}
+                        isDarkMode={theme === 'dark'}
+                        onCornerHoverChange={setHoveredGuideCorner}
+                        onCornerPointerDown={handleGuideCornerPointerDown}
+                        rotationModifierPressed={rotationModifierPressed}
+                        showHandles={canInteractWithGuides && !selectedGuide.locked}
+                      />
+                    </>
+                  )}
+
+                  {cursorPoint && (
+                    <g>
+                      <circle
+                        cx={toSvgX(cursorPoint[0])}
+                        cy={toSvgY(cursorPoint[1])}
+                        fill={floorplanCursorColor}
+                        fillOpacity={0.25}
+                        r={FLOORPLAN_CURSOR_MARKER_GLOW_RADIUS}
+                      />
+                      <circle
+                        cx={toSvgX(cursorPoint[0])}
+                        cy={toSvgY(cursorPoint[1])}
+                        fill={floorplanCursorColor}
+                        fillOpacity={0.9}
+                        r={FLOORPLAN_CURSOR_MARKER_CORE_RADIUS}
+                      />
+                    </g>
+                  )}
+
+                  {activeDraftAnchorPoint && (
+                    <circle
+                      cx={toSvgX(activeDraftAnchorPoint[0])}
+                      cy={toSvgY(activeDraftAnchorPoint[1])}
+                      fill={palette.anchor}
+                      fillOpacity={0.95}
+                      r="0.14"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  )}
                 </g>
-              )}
-
-              {activeDraftAnchorPoint && (
-                <circle
-                  cx={toSvgX(activeDraftAnchorPoint[0])}
-                  cy={toSvgY(activeDraftAnchorPoint[1])}
-                  fill={palette.anchor}
-                  fillOpacity={0.95}
-                  r="0.14"
-                  vectorEffect="non-scaling-stroke"
-                />
-              )}
-            </g>
-          </svg>
-        )}
+              </svg>
+            )}
           </div>
         </ContextMenuTrigger>
         <FloorplanSketchContextMenuContent
@@ -14224,12 +15268,18 @@ export function FloorplanPanel() {
           onClearEndpointCoincident={clearSketchEndpointCoincident}
           onCommitSketchDraft={commitSketchContextDraft}
           onConnectEndpoint={connectSketchEndpointToNearest}
+          onConnectEndpointToCircle={connectSketchEndpointToNearestCircle}
+          onConnectEndpointToLine={connectSketchEndpointToNearestLine}
+          onConnectEndpointToMidpoint={connectSketchEndpointToNearestMidpoint}
           onContinueFromEndpoint={continueSketchFromEndpoint}
+          onDeleteSketchCircles={deleteSketchCircleContextSelection}
           onDeleteSketchLines={deleteSketchContextSelection}
           onEndSketchDraft={endSketchContextDraft}
           onSelectAllSketchLines={selectAllSketchLines}
           onZoomToFit={zoomFloorplanToFit}
+          selectedSketchCircleCount={selectedSketchCircleList.length}
           selectedSketchLineCount={selectedSketchLineList.length}
+          sketchCircleActions={sketchCircleActionMenuExtraActions}
           sketchLineActions={sketchLineActionMenuExtraActions}
           target={sketchContextMenuTarget}
         />

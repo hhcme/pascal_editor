@@ -3,10 +3,17 @@ import { useFrame } from '@react-three/fiber'
 import { useMemo, useRef } from 'react'
 import type { AmbientLight, DirectionalLight, OrthographicCamera } from 'three/webgpu'
 import * as THREE from 'three/webgpu'
+import { getSolarPositionForLocation } from '../../lib/solar-position'
+import { resolveSiteSolarLocation } from '../../lib/site-solar'
 import {
+  getDefaultSunStudyDate,
+  getSunPositionFromAngles,
   getSunPositionForProgress,
+  resolveRealSunLighting,
   resolveSunLighting,
+  resolveSunMinutesOfDay,
   resolveSunProgress,
+  resolveSunStudyDate,
 } from '../../lib/sun-study'
 import useViewer from '../../store/use-viewer'
 
@@ -46,15 +53,41 @@ function rotateSunPosition(
 export function Lights() {
   const theme = useViewer((state) => state.theme)
   const sunStudy = useViewer((state) => state.sunStudy)
-  const siteOrientationDegrees = useScene((state) => {
+  const siteNode = useScene((state) => {
     const rootId = state.rootNodeIds[0]
     const node = rootId ? state.nodes[rootId] : null
-    return node?.type === 'site' ? getSiteOrientationDegrees(node as SiteNode) : 0
+    return node?.type === 'site' ? (node as SiteNode) : null
   })
   const isDark = theme === 'dark'
   const sunEnabled = sunStudy.enabled
-  const sunProgress = resolveSunProgress(sunStudy.timeOfDay, sunStudy.progress)
-  const sunPreset = resolveSunLighting(sunProgress)
+  const siteOrientationDegrees = getSiteOrientationDegrees(siteNode)
+  const solarLocation = resolveSiteSolarLocation(siteNode)
+  const activeSun = useMemo(() => {
+    if (sunStudy.mode === 'real' && solarLocation) {
+      const date = resolveSunStudyDate(sunStudy.date) ?? getDefaultSunStudyDate()
+      const minutesOfDay = resolveSunMinutesOfDay(sunStudy.minutesOfDay)
+      const solarPosition = getSolarPositionForLocation(solarLocation, date, minutesOfDay)
+
+      if (solarPosition) {
+        return {
+          lighting: resolveRealSunLighting(solarPosition.azimuthDeg, solarPosition.elevationDeg),
+          position: getSunPositionFromAngles(
+            solarPosition.azimuthDeg,
+            solarPosition.elevationDeg,
+            36,
+          ),
+        }
+      }
+    }
+
+    const sunProgress = resolveSunProgress(sunStudy.timeOfDay, sunStudy.progress)
+    const lighting = resolveSunLighting(sunProgress)
+
+    return {
+      lighting,
+      position: getSunPositionForProgress(sunProgress, 36),
+    }
+  }, [solarLocation, sunStudy])
 
   const light1Ref = useRef<DirectionalLight>(null)
   const shadowCamera = useRef<OrthographicCamera>(null)
@@ -80,10 +113,8 @@ export function Lights() {
   useFrame((_, delta) => {
     // clamp delta to avoid huge jumps on tab switch
     const dt = Math.min(delta, 0.1) * 4
-    const sunPosition = rotateSunPosition(
-      getSunPositionForProgress(sunProgress, 36),
-      siteOrientationDegrees,
-    )
+    const sunPosition = rotateSunPosition(activeSun.position, siteOrientationDegrees)
+    const sunPreset = activeSun.lighting
 
     const l1Intensity = sunEnabled ? sunPreset.intensity * (isDark ? 0.34 : 1) : isDark ? 0.8 : 4
     const l1Color = sunEnabled ? sunPreset.color : isDark ? '#e0e5ff' : '#ffffff'

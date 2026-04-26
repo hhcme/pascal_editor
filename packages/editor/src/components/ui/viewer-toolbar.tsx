@@ -1,7 +1,13 @@
 'use client'
 
-import { emitter } from '@pascal-app/core'
+import { emitter, type SiteNode, useScene } from '@pascal-app/core'
 import {
+  formatSunMinutesOfDay,
+  getDefaultSunStudyDate,
+  getSolarPositionForLocation,
+  resolveSiteSolarLocation,
+  resolveSunMinutesOfDay,
+  resolveSunStudyDate,
   SUN_TIME_OPTIONS,
   WEATHER_OPTIONS,
   type SunTimeOfDay,
@@ -9,6 +15,9 @@ import {
   useViewer,
 } from '@pascal-app/viewer'
 import {
+  ArrowLeftRight,
+  ArrowUpDown,
+  Box,
   Camera,
   Check,
   ChevronsLeft,
@@ -18,14 +27,18 @@ import {
   CloudSnow,
   CloudSun,
   Compass,
+  DraftingCompass,
+  Grid3X3,
+  Ruler,
+  Square,
   SunMedium,
   Volume2,
   VolumeX,
 } from 'lucide-react'
-import { useCallback } from 'react'
+import { useCallback, useMemo, type ComponentType } from 'react'
 import { cn } from '../../lib/utils'
 import useEditor from '../../store/use-editor'
-import type { GridSnapStep, ViewMode } from '../../store/use-editor'
+import type { GridSnapStep, MeasurementMode, ViewMode } from '../../store/use-editor'
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -37,6 +50,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './primitives/dropdown-menu'
+import { Input } from './primitives/input'
 import { Slider } from './primitives/slider'
 import { useSidebarStore } from './primitives/sidebar'
 import { Switch } from './primitives/switch'
@@ -199,6 +213,88 @@ function ViewpointCameraButton() {
   )
 }
 
+const measurementModeLabels: Record<MeasurementMode, string> = {
+  distance: '距离',
+  area: '面积',
+  volume: '体积',
+  clearance: '净空',
+  angle: '角度',
+  perimeter: '周长',
+  grid: '轴网',
+}
+
+const measurementModeIcons: Record<MeasurementMode, ComponentType<{ className?: string }>> = {
+  distance: Ruler,
+  area: Square,
+  volume: Box,
+  clearance: ArrowUpDown,
+  angle: DraftingCompass,
+  perimeter: ArrowLeftRight,
+  grid: Grid3X3,
+}
+
+function MeasurementControl() {
+  const measurementMode = useEditor((s) => s.measurementMode)
+  const setMeasurementMode = useEditor((s) => s.setMeasurementMode)
+  const isFirstPersonMode = useEditor((s) => s.isFirstPersonMode)
+
+  if (isFirstPersonMode) return null
+
+  const ActiveIcon = measurementMode ? measurementModeIcons[measurementMode] : Ruler
+
+  return (
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <button
+              className={cn(
+                TOOLBAR_BTN,
+                'w-auto gap-1.5 px-2.5',
+                measurementMode && 'bg-primary/10 text-primary',
+              )}
+              type="button"
+            >
+              <ActiveIcon className="h-4 w-4" />
+              <span className="font-medium text-xs">
+                {measurementMode ? measurementModeLabels[measurementMode] : '测量'}
+              </span>
+            </button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          {measurementMode ? `3D 测量: ${measurementModeLabels[measurementMode]}` : '3D 测量'}
+        </TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="center" className="w-40" side="bottom">
+        <DropdownMenuLabel>3D 测量</DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          onValueChange={(value) => setMeasurementMode(value as MeasurementMode)}
+          value={measurementMode ?? ''}
+        >
+          {Object.entries(measurementModeLabels).map(([mode, label]) => {
+            const Icon = measurementModeIcons[mode as MeasurementMode]
+            return (
+              <DropdownMenuRadioItem key={mode} value={mode}>
+                <span className="mr-2 flex h-4 w-4 items-center justify-center">
+                  <Icon className="h-3.5 w-3.5" />
+                </span>
+                {label}
+              </DropdownMenuRadioItem>
+            )
+          })}
+        </DropdownMenuRadioGroup>
+        {measurementMode ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => setMeasurementMode(null)}>关闭测量</DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 function UnitToggle() {
   const unit = useViewer((s) => s.unit)
   const setUnit = useViewer((s) => s.setUnit)
@@ -242,13 +338,94 @@ function ThemeToggle() {
   )
 }
 
+const QUICK_SUN_DATES = [
+  { dateKey: 'spring-equinox', label: '春分', month: 3, day: 20 },
+  { dateKey: 'june-solstice', label: '夏至', month: 6, day: 21 },
+  { dateKey: 'autumn-equinox', label: '秋分', month: 9, day: 22 },
+  { dateKey: 'december-solstice', label: '冬至', month: 12, day: 21 },
+] as const
+
+function formatDatePart(value: number) {
+  return value.toString().padStart(2, '0')
+}
+
+function getSunStudyYear(date: string | null | undefined) {
+  const match = /^(\d{4})-/.exec(date ?? '')
+  return match ? Number.parseInt(match[1] ?? '', 10) : new Date().getFullYear()
+}
+
+function getQuickSunStudyDate(
+  key: (typeof QUICK_SUN_DATES)[number]['dateKey'],
+  currentDate: string | null | undefined,
+) {
+  const option = QUICK_SUN_DATES.find((entry) => entry.dateKey === key)
+  if (!option) return getDefaultSunStudyDate()
+
+  const year = getSunStudyYear(currentDate)
+  return `${year}-${formatDatePart(option.month)}-${formatDatePart(option.day)}`
+}
+
+function parseTimeInputValue(value: string) {
+  const match = /^(\d{2}):(\d{2})$/.exec(value)
+  if (!match) return null
+
+  const hours = Number.parseInt(match[1] ?? '', 10)
+  const minutes = Number.parseInt(match[2] ?? '', 10)
+  if (!(Number.isInteger(hours) && Number.isInteger(minutes))) return null
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null
+
+  return hours * 60 + minutes
+}
+
 function OrientationSunControl() {
+  const siteNode = useScene((state) => {
+    const rootId = state.rootNodeIds[0]
+    const node = rootId ? state.nodes[rootId] : null
+    return node?.type === 'site' ? (node as SiteNode) : null
+  })
   const showCompass = useViewer((s) => s.showCompass)
   const setShowCompass = useViewer((s) => s.setShowCompass)
   const sunStudy = useViewer((s) => s.sunStudy)
   const setSunStudyEnabled = useViewer((s) => s.setSunStudyEnabled)
+  const setSunStudyMode = useViewer((s) => s.setSunStudyMode)
   const setSunTimeOfDay = useViewer((s) => s.setSunTimeOfDay)
+  const setSunStudyDate = useViewer((s) => s.setSunStudyDate)
+  const setSunMinutesOfDay = useViewer((s) => s.setSunMinutesOfDay)
+  const setPhase = useEditor((s) => s.setPhase)
   const isActive = showCompass || sunStudy.enabled
+  const solarLocation = resolveSiteSolarLocation(siteNode)
+  const hasSolarLocation = solarLocation !== null
+  const isRealSun = sunStudy.mode === 'real'
+  const resolvedDate = resolveSunStudyDate(sunStudy.date) ?? getDefaultSunStudyDate()
+  const resolvedMinutesOfDay = resolveSunMinutesOfDay(sunStudy.minutesOfDay)
+  const realSunSummary = useMemo(() => {
+    if (!(solarLocation && isRealSun)) return null
+
+    return getSolarPositionForLocation(solarLocation, resolvedDate, resolvedMinutesOfDay)
+  }, [isRealSun, resolvedDate, resolvedMinutesOfDay, solarLocation])
+
+  const openSiteSolarSettings = useCallback(() => {
+    setPhase('site')
+    emitter.emit('site:open-solar-settings' as any, undefined)
+  }, [setPhase])
+
+  const handleRealSunCheckedChange = useCallback(
+    (checked: boolean) => {
+      if (checked !== true) {
+        setSunStudyMode('preset')
+        return
+      }
+
+      if (!hasSolarLocation) {
+        openSiteSolarSettings()
+        return
+      }
+
+      setSunStudyEnabled(true)
+      setSunStudyMode('real')
+    },
+    [hasSolarLocation, openSiteSolarSettings, setSunStudyEnabled, setSunStudyMode],
+  )
 
   return (
     <DropdownMenu>
@@ -263,33 +440,176 @@ function OrientationSunControl() {
             </button>
           </DropdownMenuTrigger>
         </TooltipTrigger>
-        <TooltipContent side="bottom">Orientation and sun</TooltipContent>
+        <TooltipContent side="bottom">方位与日照</TooltipContent>
       </Tooltip>
-      <DropdownMenuContent align="center" className="w-48" side="bottom">
+      <DropdownMenuContent align="center" className="w-72" side="bottom">
         <DropdownMenuCheckboxItem
           checked={showCompass}
           onCheckedChange={(checked) => setShowCompass(checked === true)}
         >
-          Compass markers
+          方位标识
         </DropdownMenuCheckboxItem>
         <DropdownMenuCheckboxItem
           checked={sunStudy.enabled}
           onCheckedChange={(checked) => setSunStudyEnabled(checked === true)}
         >
-          Sun shadows
+          日照阴影
         </DropdownMenuCheckboxItem>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel>Sun position</DropdownMenuLabel>
-        <DropdownMenuRadioGroup
-          onValueChange={(value) => setSunTimeOfDay(value as SunTimeOfDay)}
-          value={sunStudy.timeOfDay}
+        <div
+          className="space-y-3 px-2 py-2"
+          onKeyDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
         >
-          {SUN_TIME_OPTIONS.map((option) => (
-            <DropdownMenuRadioItem key={option.id} value={option.id}>
-              {option.label}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
+          <div
+            className={cn(
+              'flex items-center justify-between rounded-md bg-muted/40 px-2 py-1.5 transition-colors',
+              !hasSolarLocation &&
+                !isRealSun &&
+                'cursor-pointer ring-1 ring-amber-300/45 hover:bg-accent/55',
+            )}
+            onClick={!hasSolarLocation && !isRealSun ? openSiteSolarSettings : undefined}
+          >
+            <div className="min-w-0">
+              <div className="font-medium text-xs text-foreground">真实太阳</div>
+              <div className="truncate text-[11px] text-muted-foreground">
+                {hasSolarLocation
+                  ? solarLocation?.timezone
+                  : '点击后前往“场地规则 > 位置与日照”填写经纬度和时区。'}
+              </div>
+            </div>
+            <Switch
+              checked={isRealSun}
+              onCheckedChange={handleRealSunCheckedChange}
+            />
+          </div>
+
+          {!hasSolarLocation ? (
+            <div className="flex items-center justify-between gap-3 rounded-md border border-dashed border-border/60 bg-muted/30 px-2 py-2 text-[11px] text-muted-foreground">
+              <span className="min-w-0 flex-1">
+                真实太阳需要先填写场地纬度、经度和有效时区。
+              </span>
+              <button
+                className="shrink-0 rounded-md border border-border/60 px-2 py-1 text-foreground transition-colors hover:bg-accent/55"
+                onClick={openSiteSolarSettings}
+                type="button"
+              >
+                去设置
+              </button>
+            </div>
+          ) : null}
+
+          {isRealSun ? (
+            hasSolarLocation ? (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="space-y-1">
+                    <span className="text-[11px] text-muted-foreground">日期</span>
+                    <Input
+                      className="h-8 text-xs"
+                      onChange={(event) => setSunStudyDate(event.target.value)}
+                      type="date"
+                      value={resolvedDate}
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-[11px] text-muted-foreground">时间</span>
+                    <Input
+                      className="h-8 text-xs"
+                      onChange={(event) => {
+                        const minutesOfDay = parseTimeInputValue(event.target.value)
+                        if (minutesOfDay !== null) setSunMinutesOfDay(minutesOfDay)
+                      }}
+                      type="time"
+                      value={formatSunMinutesOfDay(resolvedMinutesOfDay)}
+                    />
+                  </label>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-muted-foreground text-xs">
+                    <span>日内时间</span>
+                    <span>{formatSunMinutesOfDay(resolvedMinutesOfDay)}</span>
+                  </div>
+                  <Slider
+                    max={23 * 60 + 59}
+                    min={0}
+                    onValueChange={(value) => setSunMinutesOfDay(value[0] ?? resolvedMinutesOfDay)}
+                    step={1}
+                    value={[resolvedMinutesOfDay]}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-1">
+                  {QUICK_SUN_DATES.map((option) => {
+                    const nextDate = getQuickSunStudyDate(option.dateKey, resolvedDate)
+                    const isSelected = resolvedDate === nextDate
+
+                    return (
+                      <button
+                        className={cn(
+                          'rounded-md border px-2 py-1.5 text-left text-[11px] transition-colors',
+                          isSelected
+                            ? 'border-primary/35 bg-primary/10 text-primary'
+                            : 'border-border/55 bg-card text-muted-foreground hover:bg-accent/55 hover:text-foreground',
+                        )}
+                        key={option.dateKey}
+                        onClick={() => setSunStudyDate(nextDate)}
+                        type="button"
+                      >
+                        {option.label}
+                      </button>
+                    )
+                  })}
+                </div>
+                {realSunSummary ? (
+                  <div className="rounded-md bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
+                    方位角 {realSunSummary.azimuthDeg.toFixed(1)}°
+                    {' · '}
+                    高度角 {realSunSummary.elevationDeg.toFixed(1)}°
+                    {realSunSummary.isAboveHorizon ? '' : ' · 地平线下'}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div className="flex items-center justify-between gap-3 rounded-md border border-dashed border-border/60 bg-muted/30 px-2 py-2 text-[11px] text-muted-foreground">
+                <span className="min-w-0 flex-1">
+                  真实太阳需要先填写场地纬度、经度和有效时区。
+                </span>
+                <button
+                  className="shrink-0 rounded-md border border-border/60 px-2 py-1 text-foreground transition-colors hover:bg-accent/55"
+                  onClick={openSiteSolarSettings}
+                  type="button"
+                >
+                  去设置
+                </button>
+              </div>
+            )
+          ) : (
+            <div className="space-y-1">
+              <div className="text-[11px] text-muted-foreground">太阳位置</div>
+              <div className="grid grid-cols-2 gap-1">
+                {SUN_TIME_OPTIONS.map((option) => {
+                  const isSelected = sunStudy.timeOfDay === option.id
+
+                  return (
+                    <button
+                      className={cn(
+                        'rounded-md border px-2 py-1.5 text-left text-xs transition-colors',
+                        isSelected
+                          ? 'border-primary/35 bg-primary/10 text-primary'
+                          : 'border-border/55 bg-card text-muted-foreground hover:bg-accent/55 hover:text-foreground',
+                      )}
+                      key={option.id}
+                      onClick={() => setSunTimeOfDay(option.id as SunTimeOfDay)}
+                      type="button"
+                    >
+                      {option.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -705,6 +1025,7 @@ export function ViewerToolbarRight() {
       <OrientationSunControl />
       <WeatherControl />
       <CameraModeToggle />
+      <MeasurementControl />
       <ViewpointCameraButton />
       <ViewDirectionButtons />
       <div className="my-2 w-px bg-border/70" />

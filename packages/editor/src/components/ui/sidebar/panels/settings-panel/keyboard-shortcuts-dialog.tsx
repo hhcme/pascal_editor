@@ -56,6 +56,15 @@ const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
     shortcuts: [
       { keys: ['V'], action: 'Switch to Select mode' },
       { keys: ['B'], action: 'Switch to Build mode' },
+      { keys: ['M'], action: 'Toggle 3D measurement mode' },
+      {
+        keys: ['1 / 2 / 3 / 4 / 5 / 6 / 7'],
+        action: 'When measurement mode is open, switch between distance, area, volume, clearance, angle, perimeter, and grid',
+      },
+      {
+        keys: ['F / H / V / P'],
+        action: 'When distance mode is active, switch between free, horizontal, vertical, and path distance',
+      },
       {
         keys: ['Esc'],
         action: 'Cancel the active tool and return to Select mode',

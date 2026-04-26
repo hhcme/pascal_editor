@@ -29,6 +29,7 @@ import { float } from 'three/tsl'
 import { useStore } from 'zustand'
 import { sfxEmitter } from '../../lib/sfx-bus'
 import useEditor from '../../store/use-editor'
+import { collectSketchDistanceDimensionIdsReferencingEntities } from '../tools/sketch/sketch-distance-dimensions'
 import { NodeActionMenu } from './node-action-menu'
 import { SelectionTransformGizmo } from './selection-transform-gizmo'
 
@@ -689,6 +690,16 @@ export function FloatingActionMenu() {
     (e: React.MouseEvent) => {
       e.stopPropagation()
       if (!selectedId) return
+      const scene = useScene.getState()
+      const sketchDimensions = Object.values(scene.nodes).filter(
+        (candidate): candidate is AnyNode & { type: 'sketch-dimension' } =>
+          candidate.type === 'sketch-dimension',
+      )
+      const dependentSketchDimensionIds = collectSketchDistanceDimensionIdsReferencingEntities({
+        dimensions: sketchDimensions,
+        deletedLineIds: node?.type === 'sketch-line' ? [node.id] : undefined,
+        deletedCircleIds: node?.type === 'sketch-circle' ? [node.id] : undefined,
+      })
       if (node?.type === 'item') {
         sfxEmitter.emit('sfx:item-delete')
       } else {
@@ -697,7 +708,10 @@ export function FloatingActionMenu() {
       setActionMenuNodeId(null)
       setActionMenuAnchor(null)
       setSelection({ selectedIds: [] })
-      useScene.getState().deleteNode(selectedId as AnyNodeId)
+      for (const dimensionId of dependentSketchDimensionIds) {
+        scene.deleteNode(dimensionId as AnyNodeId)
+      }
+      scene.deleteNode(selectedId as AnyNodeId)
     },
     [node?.type, selectedId, setSelection],
   )

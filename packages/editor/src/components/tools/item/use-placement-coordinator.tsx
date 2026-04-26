@@ -114,6 +114,24 @@ export function usePlacementCoordinator(config: PlacementCoordinatorConfig): Rea
 
     // ---- Helpers ----
 
+    const setPlacementHoveredIds = (ids: AnyNodeId[]) => {
+      useViewer.getState().setPlacementHoveredIds(ids)
+    }
+
+    const syncPlacementHoveredIds = () => {
+      if (
+        placementState.current.surface === 'item-surface' &&
+        placementState.current.surfaceItemId
+      ) {
+        setPlacementHoveredIds([placementState.current.surfaceItemId as AnyNodeId])
+        return
+      }
+
+      setPlacementHoveredIds([])
+    }
+
+    syncPlacementHoveredIds()
+
     const getContext = () => ({
       asset,
       levelId: useViewer.getState().selection.levelId,
@@ -150,6 +168,7 @@ export function usePlacementCoordinator(config: PlacementCoordinatorConfig): Rea
 
     const applyTransition = (result: TransitionResult) => {
       Object.assign(placementState.current, result.stateUpdate)
+      syncPlacementHoveredIds()
       gridPosition.current.set(...result.gridPosition)
 
       const c = worldToBuildingLocal(...result.cursorPosition)
@@ -463,6 +482,7 @@ export function usePlacementCoordinator(config: PlacementCoordinatorConfig): Rea
           // Create mode: destroy transient and reset state
           draftNode.destroy()
           Object.assign(placementState.current, result.stateUpdate)
+          syncPlacementHoveredIds()
         }
       } else {
         applyTransition(result)
@@ -551,6 +571,7 @@ export function usePlacementCoordinator(config: PlacementCoordinatorConfig): Rea
       const floorPos: [number, number, number] = [wx, 0, wz]
 
       Object.assign(placementState.current, { surface: 'floor', surfaceItemId: null })
+      syncPlacementHoveredIds()
       gridPosition.current.set(wx, 0, wz)
       cursorGroupRef.current.position.x = wx
       cursorGroupRef.current.position.z = wz
@@ -704,6 +725,7 @@ export function usePlacementCoordinator(config: PlacementCoordinatorConfig): Rea
           // Create mode: destroy transient and reset state
           draftNode.destroy()
           Object.assign(placementState.current, result.stateUpdate)
+          syncPlacementHoveredIds()
         }
       } else {
         applyTransition(result)
@@ -815,6 +837,7 @@ export function usePlacementCoordinator(config: PlacementCoordinatorConfig): Rea
 
     // ---- tool:cancel (Escape / programmatic) ----
     const onCancel = () => {
+      setPlacementHoveredIds([])
       if (configRef.current.onCancel) {
         configRef.current.onCancel()
       }
@@ -825,7 +848,7 @@ export function usePlacementCoordinator(config: PlacementCoordinatorConfig): Rea
     const onContextMenu = (event: MouseEvent) => {
       if (configRef.current.onCancel) {
         event.preventDefault()
-        configRef.current.onCancel()
+        onCancel()
       }
     }
     window.addEventListener('contextmenu', onContextMenu)
@@ -883,6 +906,7 @@ export function usePlacementCoordinator(config: PlacementCoordinatorConfig): Rea
     return () => {
       tearingDown = true
       unsubDraftWatch()
+      setPlacementHoveredIds([])
       // Clear live transform for any remaining draft
       if (draftNode.current) {
         useLiveTransforms.getState().clear(draftNode.current.id)

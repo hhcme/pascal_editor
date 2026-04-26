@@ -10,6 +10,7 @@ import { RoofNode } from './nodes/roof'
 import { RoofSegmentNode } from './nodes/roof-segment'
 import { ScanNode } from './nodes/scan'
 import { SketchCircleNode } from './nodes/sketch-circle'
+import { SketchDimensionNode } from './nodes/sketch-dimension'
 import { SketchLineNode } from './nodes/sketch-line'
 import { SiteNode } from './nodes/site'
 import { SlabNode } from './nodes/slab'
@@ -35,6 +36,7 @@ export const AnyNode = z.discriminatedUnion('type', [
   StairSegmentNode,
   ScanNode,
   GuideNode,
+  SketchDimensionNode,
   SketchCircleNode,
   SketchLineNode,
   WindowNode,

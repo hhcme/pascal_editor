@@ -5,8 +5,8 @@ import useEditor from '../../store/use-editor'
 import { useSidebarStore } from '../ui/primitives/sidebar'
 import { type SidebarTab, TabBar } from '../ui/sidebar/tab-bar'
 
-const SIDEBAR_MIN_WIDTH = 320
-const SIDEBAR_MAX_WIDTH = 560
+const SIDEBAR_MIN_WIDTH = 340
+const SIDEBAR_MAX_WIDTH = 640
 const SIDEBAR_COLLAPSE_THRESHOLD = 236
 
 // ── Left column: resizable panel with tab bar ────────────────────────────────
@@ -45,9 +45,9 @@ function LeftColumn({
     }
   }, [tabs, activePanel, setActivePanel])
 
-  // Leaving the items tab while furnishing should drop back to select mode
+  // Leaving the furnish tab while placing items should drop back to select mode.
   useEffect(() => {
-    if (activePanel === 'items') return
+    if (activePanel === 'furnish') return
     const { phase, mode, setMode } = useEditor.getState()
     if (phase === 'furnish' && mode === 'build') {
       setMode('select')
@@ -148,12 +148,14 @@ function RightColumn({
   toolbarRight,
   children,
   inspector,
+  inspectorWidth,
   overlays,
 }: {
   toolbarLeft?: ReactNode
   toolbarRight?: ReactNode
   children: ReactNode
   inspector?: ReactNode
+  inspectorWidth?: string
   overlays?: ReactNode
 }) {
   return (
@@ -187,7 +189,7 @@ function RightColumn({
       {inspector ? (
         <aside
           className="editor-docked-inspector flex min-h-0 shrink-0 flex-col overflow-hidden"
-          style={{ flexBasis: 'clamp(300px, 18vw, 340px)' }}
+          style={{ flexBasis: inspectorWidth ?? 'clamp(300px, 18vw, 340px)' }}
         >
           {inspector}
         </aside>
@@ -207,6 +209,7 @@ export interface EditorLayoutV2Props {
   viewerToolbarRight?: ReactNode
   viewerContent: ReactNode
   inspector?: ReactNode
+  inspectorWidth?: string
   overlays?: ReactNode
 }
 
@@ -219,6 +222,7 @@ export function EditorLayoutV2({
   viewerToolbarRight,
   viewerContent,
   inspector,
+  inspectorWidth,
   overlays,
 }: EditorLayoutV2Props) {
   return (
@@ -237,6 +241,7 @@ export function EditorLayoutV2({
         )}
         <RightColumn
           inspector={inspector}
+          inspectorWidth={inspectorWidth}
           overlays={overlays}
           toolbarLeft={viewerToolbarLeft}
           toolbarRight={viewerToolbarRight}

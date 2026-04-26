@@ -2,6 +2,32 @@ import { loadAssetUrl } from '@pascal-app/core'
 
 export const ASSETS_CDN_URL = process.env.NEXT_PUBLIC_ASSETS_CDN_URL || 'https://editor.pascal.app'
 
+function getAssetsBaseUrl(): string {
+  if (typeof window !== 'undefined') {
+    const { hostname, origin, protocol } = window.location
+    const isLocalHttpHost =
+      (hostname === '127.0.0.1' || hostname === 'localhost') &&
+      (protocol === 'http:' || protocol === 'https:')
+
+    // Desktop shell and local editor dev serve bundled assets from the same origin.
+    if (isLocalHttpHost) {
+      return origin
+    }
+
+    // If no dedicated CDN is configured, default to same-origin in the browser.
+    if (!process.env.NEXT_PUBLIC_ASSETS_CDN_URL) {
+      return origin
+    }
+  }
+
+  return ASSETS_CDN_URL
+}
+
+function withAssetBase(url: string): string {
+  const normalizedPath = url.startsWith('/') ? url : `/${url}`
+  return `${getAssetsBaseUrl()}${normalizedPath}`
+}
+
 /**
  * Resolves an asset URL to the appropriate format:
  * - If URL starts with http:// or https://, return as-is (external URL)
@@ -22,9 +48,7 @@ export async function resolveAssetUrl(url: string | undefined | null): Promise<s
     return loadAssetUrl(url)
   }
 
-  // Absolute or relative path - prepend CDN URL
-  const normalizedPath = url.startsWith('/') ? url : `/${url}`
-  return `${ASSETS_CDN_URL}${normalizedPath}`
+  return withAssetBase(url)
 }
 
 /**
@@ -45,7 +69,5 @@ export function resolveCdnUrl(url: string | undefined | null): string | null {
     return null
   }
 
-  // Absolute or relative path - prepend CDN URL
-  const normalizedPath = url.startsWith('/') ? url : `/${url}`
-  return `${ASSETS_CDN_URL}${normalizedPath}`
+  return withAssetBase(url)
 }

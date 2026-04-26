@@ -26,6 +26,7 @@ describe('sketch circle geometry', () => {
     expect(circle.kind).toBe('circle')
     expect(circle.construction).toBe(false)
     expect(circle.relations).toEqual([])
+    expect(circle.constraints).toEqual([])
     expect(circle.dimensions).toEqual({})
     expect(isSketchCircleArc(circle)).toBe(false)
   })

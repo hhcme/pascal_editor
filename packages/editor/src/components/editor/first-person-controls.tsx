@@ -23,6 +23,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -30,13 +31,21 @@ import {
 import { Euler, Plane, Raycaster, Vector2, Vector3 } from 'three'
 import { cn } from '../../lib/utils'
 import useEditor, {
+  MAX_FIRST_PERSON_SPEED,
+  MIN_FIRST_PERSON_SPEED,
   type FirstPersonEyeHeightPreset,
+  type FirstPersonFlyCameraMode,
   type FirstPersonNavigationMode,
-  type FirstPersonSpeedPreset,
   MAX_FIRST_PERSON_FLY_CLEARANCE,
   MIN_FIRST_PERSON_FLY_CLEARANCE,
   normalizeFirstPersonFlyClearance,
+  normalizeFirstPersonSpeed,
 } from '../../store/use-editor'
+import {
+  buildBuildingFocusTarget,
+  getYawPitchToWorldPoint,
+  shouldAppendRouteSample,
+} from './first-person-flight-utils'
 import { type PathPoint, planWalkPath } from './first-person-pathfinding'
 
 const EYE_HEIGHT_CONFIG: Record<FirstPersonEyeHeightPreset, { label: string; height: number }> = {
@@ -44,27 +53,11 @@ const EYE_HEIGHT_CONFIG: Record<FirstPersonEyeHeightPreset, { label: string; hei
   child: { label: 'Child', height: 1.2 },
 }
 
-const SPEED_PRESETS: {
-  id: FirstPersonSpeedPreset
-  key: string
-  label: string
-  speed: number
-}[] = [
-  { id: 'inspect', key: '1', label: 'Inspect', speed: 1.4 },
-  { id: 'walk', key: '2', label: 'Walk', speed: 2.7 },
-  { id: 'quick', key: '3', label: 'Quick', speed: 5 },
-  { id: 'fly', key: '4', label: 'Fly', speed: 9 },
-]
-
-const SPEED_CONFIG = Object.fromEntries(
-  SPEED_PRESETS.map((preset) => [preset.id, preset]),
-) as Record<FirstPersonSpeedPreset, (typeof SPEED_PRESETS)[number]>
-const SPEED_ORDER = SPEED_PRESETS.map((preset) => preset.id)
-
 // Sprint/slow modifiers mirror common realtime visualization tools.
-const SPRINT_MULTIPLIER = 2
+const SPRINT_MULTIPLIER = 2.2
 const SLOW_MULTIPLIER = 0.35
-const VERTICAL_SPEED = 3
+const VERTICAL_SPEED = 6
+const FIRST_PERSON_SPEED_WHEEL_STEP = 5
 const MOUSE_SENSITIVITY = 0.002
 const DEFAULT_LEVEL_HEIGHT = 2.5
 const MIN_FLY_HEIGHT = 0.25
@@ -75,13 +68,21 @@ const DOOR_OPENING_PADDING = 0.16
 const MIN_WALL_LENGTH = 0.001
 const STAIR_SURFACE_PADDING = 0.18
 const TWO_PI = Math.PI * 2
-const MINIMAP_WIDTH = 260
-const MINIMAP_HEIGHT = 170
-const MINIMAP_PADDING = 14
+const MINIMAP_WIDTH = 284
+const MINIMAP_HEIGHT = 220
+const MINIMAP_PADDING = 18
+const MINIMAP_WORLD_MARGIN = 2.5
+const MINIMAP_ROUTE_SAMPLE_DISTANCE = 0.85
+const MINIMAP_VIEW_RANGE_DEFAULT = 1
+const MINIMAP_VIEW_RANGE_MIN = 1
+const MINIMAP_VIEW_RANGE_MAX = 12
+const MINIMAP_VIEW_RANGE_STEP = 0.5
+const MINIMAP_GRID_BASE_STEP = 0.5
+const MINIMAP_GRID_MIN_SCREEN_SPACING = 16
 const BOOKMARK_STORAGE_PREFIX = 'pascal:first-person-bookmarks'
 const BOOKMARK_LIMIT = 16
-const MANUAL_ROUTE_LIMIT = 16
-const TOUR_SPEED = 2.25
+const MANUAL_ROUTE_LIMIT = 128
+const TOUR_SPEED = 6.75
 const TOUR_WAYPOINT_DWELL = 1.25
 const TOUR_ARRIVAL_DISTANCE = 0.16
 const GAMEPAD_DEADZONE = 0.16
@@ -141,13 +142,6 @@ const MOVEMENT_KEY_CODES = new Set([
   'AltRight',
 ])
 
-const SPEED_KEY_TO_PRESET: Record<string, FirstPersonSpeedPreset> = {
-  Digit1: 'inspect',
-  Digit2: 'walk',
-  Digit3: 'quick',
-  Digit4: 'fly',
-}
-
 const _forward = new Vector3()
 const _right = new Vector3()
 const _moveVector = new Vector3()
@@ -160,9 +154,10 @@ const _raycaster = new Raycaster()
 
 type FirstPersonSettingsSnapshot = {
   navigationMode: FirstPersonNavigationMode
-  speedPreset: FirstPersonSpeedPreset
+  speed: number
   eyeHeight: number
   flyClearance: number
+  flyCameraMode: FirstPersonFlyCameraMode
 }
 
 type DoorOpening = {
@@ -220,6 +215,7 @@ type FirstPersonNavigationData = {
   activeLevelId: AnyNodeId | null
   buildingRotation: number
   buildingTopY: number | null
+  buildingFocusTarget: { x: number; y: number; z: number } | null
   level: LevelNode | null
   slabs: SlabNode[]
   stairs: StairWalkSurface[]
@@ -298,10 +294,13 @@ function hasAnyKey(keys: Set<string>, codes: string[]) {
   return codes.some((code) => keys.has(code))
 }
 
-function getNextSpeedPreset(current: FirstPersonSpeedPreset, delta: 1 | -1) {
-  const index = SPEED_ORDER.indexOf(current)
-  const nextIndex = Math.max(0, Math.min(SPEED_ORDER.length - 1, index + delta))
-  return SPEED_ORDER[nextIndex] ?? current
+function getAdjustedFirstPersonSpeed(current: number, delta: 1 | -1) {
+  return normalizeFirstPersonSpeed(current + delta * FIRST_PERSON_SPEED_WHEEL_STEP)
+}
+
+function formatFirstPersonSpeed(value: number) {
+  const rounded = Number(value.toFixed(2))
+  return Number.isInteger(rounded) ? `${rounded}` : `${rounded}`
 }
 
 function getLevelDisplayName(level: LevelNode | null) {
@@ -662,6 +661,7 @@ function buildFirstPersonNavigationData(
   activeLevelId: AnyNodeId | null | undefined,
 ): FirstPersonNavigationData {
   const doorsByWallId = new Map<string, DoorNode[]>()
+  const footprintPoints: PathPoint[] = []
   const slabs: SlabNode[] = []
   const stairs: StairWalkSurface[] = []
   const zones: ZoneNode[] = []
@@ -679,11 +679,17 @@ function buildFirstPersonNavigationData(
 
     if (node.type === 'slab' && (!levelId || node.parentId === levelId)) {
       slabs.push(node as SlabNode)
+      for (const [x, z] of getPlanPolygon((node as SlabNode).polygon)) {
+        footprintPoints.push({ x, z })
+      }
       continue
     }
 
     if (node.type === 'zone' && (!levelId || node.parentId === levelId)) {
       zones.push(node as ZoneNode)
+      for (const [x, z] of getPlanPolygon((node as ZoneNode).polygon)) {
+        footprintPoints.push({ x, z })
+      }
       continue
     }
 
@@ -727,14 +733,17 @@ function buildFirstPersonNavigationData(
       length,
       openings,
     })
+    footprintPoints.push({ x: wall.start[0], z: wall.start[1] }, { x: wall.end[0], z: wall.end[1] })
   }
 
   zones.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
+  const buildingFocusTarget = buildBuildingFocusTarget(footprintPoints, buildingTopY)
 
   return {
     activeLevelId: levelId,
     buildingRotation,
     buildingTopY,
+    buildingFocusTarget,
     level,
     slabs,
     stairs,
@@ -1063,7 +1072,74 @@ function getNavigationBounds(navigationData: FirstPersonNavigationData): MiniMap
     maxY += 0.5
   }
 
+  const width = maxX - minX
+  const height = maxY - minY
+  const margin = Math.max(MINIMAP_WORLD_MARGIN, Math.max(width, height) * 0.18)
+  minX -= margin
+  maxX += margin
+  minY -= margin
+  maxY += margin
+
   return { minX, maxX, minY, maxY }
+}
+
+function getMiniMapGridSteps(viewportWidth: number, surfaceWidth: number) {
+  const pixelsPerUnit = surfaceWidth / Math.max(viewportWidth, Number.EPSILON)
+  let minorStep = MINIMAP_GRID_BASE_STEP
+
+  while (minorStep * pixelsPerUnit < MINIMAP_GRID_MIN_SCREEN_SPACING) {
+    minorStep *= 2
+  }
+
+  return {
+    minorStep,
+    majorStep: Math.max(minorStep * 2, 2),
+  }
+}
+
+function buildMiniMapGridPath(
+  minX: number,
+  maxX: number,
+  minY: number,
+  maxY: number,
+  step: number,
+  projectPlan: (x: number, y: number) => { x: number; y: number },
+  options?: {
+    excludeStep?: number
+  },
+) {
+  if (!(Number.isFinite(step) && step > 0)) return ''
+
+  const commands: string[] = []
+  const startXIndex = Math.floor(minX / step)
+  const endXIndex = Math.ceil(maxX / step)
+  const startYIndex = Math.floor(minY / step)
+  const endYIndex = Math.ceil(maxY / step)
+  const excludeStep = options?.excludeStep
+
+  for (let index = startXIndex; index <= endXIndex; index += 1) {
+    const x = index * step
+    if (excludeStep && Math.abs(x / excludeStep - Math.round(x / excludeStep)) < 1e-4) {
+      continue
+    }
+
+    const start = projectPlan(x, minY)
+    const end = projectPlan(x, maxY)
+    commands.push(`M ${start.x.toFixed(2)} ${start.y.toFixed(2)} L ${end.x.toFixed(2)} ${end.y.toFixed(2)}`)
+  }
+
+  for (let index = startYIndex; index <= endYIndex; index += 1) {
+    const y = index * step
+    if (excludeStep && Math.abs(y / excludeStep - Math.round(y / excludeStep)) < 1e-4) {
+      continue
+    }
+
+    const start = projectPlan(minX, y)
+    const end = projectPlan(maxX, y)
+    commands.push(`M ${start.x.toFixed(2)} ${start.y.toFixed(2)} L ${end.x.toFixed(2)} ${end.y.toFixed(2)}`)
+  }
+
+  return commands.join(' ')
 }
 
 function getMiniMapPointBounds(points: MiniMapPoint[]) {
@@ -1304,10 +1380,11 @@ export const FirstPersonControls = () => {
   const navigationData = useFirstPersonNavigationData()
   const navigationMode = useEditor((s) => s.firstPersonNavigationMode)
   const setNavigationMode = useEditor((s) => s.setFirstPersonNavigationMode)
-  const speedPreset = useEditor((s) => s.firstPersonSpeedPreset)
-  const setSpeedPreset = useEditor((s) => s.setFirstPersonSpeedPreset)
+  const speed = useEditor((s) => s.firstPersonSpeed)
+  const setSpeed = useEditor((s) => s.setFirstPersonSpeed)
   const eyeHeightPreset = useEditor((s) => s.firstPersonEyeHeightPreset)
   const flyClearance = useEditor((s) => s.firstPersonFlyClearance)
+  const flyCameraMode = useEditor((s) => s.firstPersonFlyCameraMode)
 
   const keysRef = useRef<Set<string>>(new Set())
   const virtualMoveRef = useRef<VirtualMove>({ x: 0, z: 0 })
@@ -1325,16 +1402,17 @@ export const FirstPersonControls = () => {
   const previousNavigationModeRef = useRef(navigationMode)
   const settingsRef = useRef<FirstPersonSettingsSnapshot>({
     navigationMode,
-    speedPreset,
+    speed,
     eyeHeight: EYE_HEIGHT_CONFIG[eyeHeightPreset].height,
     flyClearance,
+    flyCameraMode,
   })
 
   const eyeHeight = EYE_HEIGHT_CONFIG[eyeHeightPreset].height
 
   useEffect(() => {
-    settingsRef.current = { navigationMode, speedPreset, eyeHeight, flyClearance }
-  }, [navigationMode, speedPreset, eyeHeight, flyClearance])
+    settingsRef.current = { navigationMode, speed, eyeHeight, flyClearance, flyCameraMode }
+  }, [flyCameraMode, navigationMode, speed, eyeHeight, flyClearance])
 
   useEffect(() => {
     navigationDataRef.current = navigationData
@@ -1753,7 +1831,7 @@ export const FirstPersonControls = () => {
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault()
       const direction = event.deltaY < 0 ? 1 : -1
-      setSpeedPreset(getNextSpeedPreset(settingsRef.current.speedPreset, direction))
+      setSpeed(getAdjustedFirstPersonSpeed(settingsRef.current.speed, direction))
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1766,14 +1844,6 @@ export const FirstPersonControls = () => {
         event.stopPropagation()
         exitPointerLockSafely(canvas)
         useEditor.getState().setFirstPersonMode(false)
-        return
-      }
-
-      const speedPresetFromKey = SPEED_KEY_TO_PRESET[code]
-      if (speedPresetFromKey) {
-        event.preventDefault()
-        event.stopPropagation()
-        setSpeedPreset(speedPresetFromKey)
         return
       }
 
@@ -1826,7 +1896,7 @@ export const FirstPersonControls = () => {
       exitPointerLockSafely(canvas)
       clearKeys()
     }
-  }, [gl, setMouseLookActive, setNavigationMode, setSpeedPreset, teleportToCanvasPoint])
+  }, [gl, setMouseLookActive, setNavigationMode, setSpeed, teleportToCanvasPoint])
 
   // Per-frame movement and camera rotation
   useFrame((_, delta) => {
@@ -1834,16 +1904,19 @@ export const FirstPersonControls = () => {
     const keys = keysRef.current
     const {
       navigationMode: currentMode,
-      speedPreset: currentSpeedPreset,
+      speed: currentSpeed,
       eyeHeight: currentEyeHeight,
+      flyCameraMode: currentFlyCameraMode,
     } = settingsRef.current
     const navigation = navigationDataRef.current
 
     const isSprinting = hasAnyKey(keys, ['ShiftLeft', 'ShiftRight'])
     const isSlowing = hasAnyKey(keys, ['AltLeft', 'AltRight'])
-    const baseSpeed = SPEED_CONFIG[currentSpeedPreset].speed
+    const baseSpeed = currentSpeed
     const speed =
       baseSpeed * (isSprinting ? SPRINT_MULTIPLIER : 1) * (isSlowing ? SLOW_MULTIPLIER : 1)
+    const verticalSpeed = Math.max(VERTICAL_SPEED, speed * 0.75)
+    const routeSpeed = Math.max(TOUR_SPEED, baseSpeed)
 
     _forward.set(-Math.sin(yawRef.current), 0, -Math.cos(yawRef.current))
     _right.set(Math.cos(yawRef.current), 0, -Math.sin(yawRef.current))
@@ -1860,7 +1933,7 @@ export const FirstPersonControls = () => {
 
     if (typeof navigator !== 'undefined' && typeof navigator.getGamepads === 'function') {
       const gamepad = Array.from(navigator.getGamepads()).find((pad) => pad?.connected)
-      if (gamepad) {
+        if (gamepad) {
         const leftX = applyDeadzone(gamepad.axes[0] ?? 0)
         const leftY = applyDeadzone(gamepad.axes[1] ?? 0)
         const rightX = applyDeadzone(gamepad.axes[2] ?? 0)
@@ -1881,7 +1954,7 @@ export const FirstPersonControls = () => {
         if (currentMode === 'fly') {
           const lift = (gamepad.buttons[7]?.value ?? 0) - (gamepad.buttons[6]?.value ?? 0)
           if (Math.abs(lift) > 0.02) {
-            camera.position.y += lift * VERTICAL_SPEED * dt
+            camera.position.y += lift * verticalSpeed * dt
           }
         }
       }
@@ -1903,7 +1976,7 @@ export const FirstPersonControls = () => {
           target.tourDwell === false ? Math.max(TOUR_ARRIVAL_DISTANCE, 0.28) : TOUR_ARRIVAL_DISTANCE
 
         if (distance > arrivalDistance) {
-          const step = Math.min(distance, TOUR_SPEED * dt)
+          const step = Math.min(distance, routeSpeed * dt)
           camera.position.x += (deltaX / distance) * step
           if (currentMode === 'fly') {
             camera.position.y += (deltaY / distance) * step
@@ -1957,8 +2030,8 @@ export const FirstPersonControls = () => {
     }
 
     if (currentMode === 'fly') {
-      if (keys.has('KeyQ')) camera.position.y += VERTICAL_SPEED * dt
-      if (keys.has('KeyE')) camera.position.y -= VERTICAL_SPEED * dt
+      if (keys.has('KeyQ')) camera.position.y += verticalSpeed * dt
+      if (keys.has('KeyE')) camera.position.y -= verticalSpeed * dt
       const minY = getFlyMinY(navigation, camera.position.x, camera.position.z)
       if (camera.position.y < minY) camera.position.y = minY
     } else {
@@ -1969,6 +2042,18 @@ export const FirstPersonControls = () => {
         currentEyeHeight,
       )
       camera.position.y += (targetY - camera.position.y) * Math.min(1, dt * 14)
+    }
+
+    if (currentMode === 'fly' && currentFlyCameraMode === 'focus-building') {
+      const focusTarget = navigation.buildingFocusTarget
+      if (focusTarget) {
+        const orientation = getYawPitchToWorldPoint(
+          { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+          focusTarget,
+        )
+        yawRef.current = orientation.yaw
+        pitchRef.current = orientation.pitch
+      }
     }
 
     _euler.set(pitchRef.current, yawRef.current, 0, 'YXZ')
@@ -2115,8 +2200,10 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
   const setViewerSelection = useViewer((s) => s.setSelection)
   const navigationMode = useEditor((s) => s.firstPersonNavigationMode)
   const setNavigationMode = useEditor((s) => s.setFirstPersonNavigationMode)
-  const speedPreset = useEditor((s) => s.firstPersonSpeedPreset)
-  const setSpeedPreset = useEditor((s) => s.setFirstPersonSpeedPreset)
+  const flyCameraMode = useEditor((s) => s.firstPersonFlyCameraMode)
+  const setFlyCameraMode = useEditor((s) => s.setFirstPersonFlyCameraMode)
+  const speed = useEditor((s) => s.firstPersonSpeed)
+  const setSpeed = useEditor((s) => s.setFirstPersonSpeed)
   const eyeHeightPreset = useEditor((s) => s.firstPersonEyeHeightPreset)
   const setEyeHeightPreset = useEditor((s) => s.setFirstPersonEyeHeightPreset)
   const flyClearance = useEditor((s) => s.firstPersonFlyClearance)
@@ -2154,7 +2241,6 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
   }, [activeLevelId, buildingId, sceneNodes])
 
   const eyeHeight = EYE_HEIGHT_CONFIG[eyeHeightPreset]
-  const speedLabel = SPEED_CONFIG[speedPreset].label
   const modeLabel = navigationMode === 'walk' ? 'Walk mode' : 'Fly mode'
   const flyHeightAnchor = pose ?? { x: 0, z: 0 }
   const flyHeight = pose
@@ -2386,8 +2472,8 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
   }, [])
 
   const activeSpeedDescription = useMemo(
-    () => `Speed ${SPEED_CONFIG[speedPreset].key}: ${speedLabel}`,
-    [speedLabel, speedPreset],
+    () => `Speed ${formatFirstPersonSpeed(speed)}`,
+    [speed],
   )
 
   return (
@@ -2414,13 +2500,13 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
           <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center px-4">
             <div className="max-w-[360px] rounded-lg border border-white/15 bg-slate-950/75 px-4 py-3 text-center text-white shadow-xl backdrop-blur-md">
               <div className="font-semibold text-sm">
-                {routePlanning ? 'Add route point' : 'Drag canvas to look around'}
+                {routePlanning ? '规划航线中' : 'Drag canvas to look around'}
               </div>
               <div className="mt-1 text-white/70 text-xs">
                 {routePlanning
                   ? navigationMode === 'fly'
-                    ? 'Double-click scene to add flight point'
-                    : 'Double-click floor to add point'
+                    ? '双击场景添加航点，或在右侧 2D 图上单击/拖拽画线'
+                    : '双击地面添加点位，或在右侧 2D 图上单击加点'
                   : 'Double-click floor to move there'}
               </div>
             </div>
@@ -2461,16 +2547,19 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
           bookmarks={bookmarks}
           currentZone={currentZone}
           arrivalMode={arrivalMode}
+          flyCameraMode={flyCameraMode}
           floorplanLevels={floorplanLevels}
           manualRoute={manualRoute}
           navigationData={navigationData}
           navigationMode={navigationMode}
           routePlanning={routePlanning}
           activeLevelId={activeLevelId}
+          onAddManualRoutePoint={addManualRoutePoint}
           onClearManualRoute={() => setManualRoute([])}
           onDeleteBookmark={deleteBookmark}
           onLevelSelect={selectLevel}
           onArrivalModeChange={setArrivalMode}
+          onFlyCameraModeChange={setFlyCameraMode}
           onSelectBookmark={selectBookmark}
           onSelectZone={selectZone}
           onSaveBookmark={saveBookmark}
@@ -2500,28 +2589,7 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
 
             <div className="mx-1 h-6 w-px bg-white/15" />
 
-            <div className="pointer-events-auto flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.07] p-0.5">
-              {SPEED_PRESETS.map((preset) => {
-                const active = preset.id === speedPreset
-                return (
-                  <button
-                    aria-label={`Speed ${preset.key}: ${preset.label}`}
-                    className={cn(
-                      'flex h-7 min-w-7 items-center justify-center rounded px-2 font-semibold text-[11px] transition-colors',
-                      active
-                        ? 'bg-white text-slate-950'
-                        : 'text-white/70 hover:bg-white/[0.12] hover:text-white',
-                    )}
-                    key={preset.id}
-                    onClick={() => setSpeedPreset(preset.id)}
-                    title={`Speed ${preset.key}: ${preset.label}`}
-                    type="button"
-                  >
-                    {preset.key}
-                  </button>
-                )
-              })}
-            </div>
+            <FirstPersonSpeedControl onChange={setSpeed} value={speed} />
 
             <button
               aria-label={modeLabel}
@@ -2744,14 +2812,17 @@ function FirstPersonNavigationPanel({
   bookmarks,
   currentZone,
   arrivalMode,
+  flyCameraMode,
   floorplanLevels,
   manualRoute,
   navigationData,
   navigationMode,
   routePlanning,
   activeLevelId,
+  onAddManualRoutePoint,
   onClearManualRoute,
   onArrivalModeChange,
+  onFlyCameraModeChange,
   onDeleteBookmark,
   onLevelSelect,
   onSaveBookmark,
@@ -2769,14 +2840,17 @@ function FirstPersonNavigationPanel({
   bookmarks: FirstPersonBookmark[]
   currentZone: ZoneNode | null
   arrivalMode: ArrivalMode
+  flyCameraMode: FirstPersonFlyCameraMode
   floorplanLevels: LevelNode[]
   manualRoute: FirstPersonPose[]
   navigationData: FirstPersonNavigationData
   navigationMode: FirstPersonNavigationMode
   routePlanning: boolean
   activeLevelId: LevelNode['id'] | null
+  onAddManualRoutePoint: (point: Partial<FirstPersonPose> & Pick<FirstPersonPose, 'x' | 'z'>) => void
   onClearManualRoute: () => void
   onArrivalModeChange: (mode: ArrivalMode) => void
+  onFlyCameraModeChange: (mode: FirstPersonFlyCameraMode) => void
   onDeleteBookmark: (bookmarkId: string) => void
   onLevelSelect: (level: LevelNode) => void
   onSaveBookmark: () => void
@@ -2904,10 +2978,14 @@ function FirstPersonNavigationPanel({
           <div className="mt-2">
             <FirstPersonMiniMap
               currentZone={currentZone}
+              flyCameraMode={flyCameraMode}
               manualRoute={manualRoute}
               navigationData={navigationData}
+              navigationMode={navigationMode}
+              onAddRoutePoint={onAddManualRoutePoint}
               onSelectZone={onSelectZone}
               pose={pose}
+              routePlanning={routePlanning}
             />
           </div>
 
@@ -2940,8 +3018,49 @@ function FirstPersonNavigationPanel({
 
         <div className="border-white/10 border-t px-3 py-2">
           <div className="flex items-center justify-between gap-2">
+            <div className="font-semibold text-[11px] text-white/80">飞行镜头</div>
+            <div className="text-[10px] text-white/45">
+              {flyCameraMode === 'focus-building' ? '全程拍摄房子' : '沿飞行方向'}
+            </div>
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-1 rounded-md border border-white/[0.08] bg-white/[0.04] p-0.5">
+            <button
+              className={cn(
+                'h-7 rounded px-2 font-medium text-[11px] transition-colors',
+                flyCameraMode === 'forward'
+                  ? 'bg-white text-slate-950'
+                  : 'text-white/70 hover:bg-white/[0.1] hover:text-white',
+              )}
+              onClick={() => onFlyCameraModeChange('forward')}
+              type="button"
+            >
+              沿航线
+            </button>
+            <button
+              className={cn(
+                'h-7 rounded px-2 font-medium text-[11px] transition-colors',
+                flyCameraMode === 'focus-building'
+                  ? 'bg-white text-slate-950'
+                  : 'text-white/70 hover:bg-white/[0.1] hover:text-white',
+              )}
+              onClick={() => onFlyCameraModeChange('focus-building')}
+              type="button"
+            >
+              看向房子
+            </button>
+          </div>
+          <div className="mt-2 text-[10px] leading-4 text-white/45">
+            飞行时可选择镜头沿航线前进，或持续锁定建筑中心。
+          </div>
+        </div>
+
+        <div className="border-white/10 border-t px-3 py-2">
+          <div className="flex items-center justify-between gap-2">
             <div className="font-semibold text-[11px] text-white/80">{routeLabel}</div>
             <div className="font-mono text-[10px] text-white/45">{manualRouteLength}</div>
+          </div>
+          <div className="mt-2 text-[10px] leading-4 text-white/45">
+            规划时可在 3D 里双击加点，也可以直接在 2D 图上单击或拖拽画线；滚轮缩放，拖动画布平移，规划时中键也可拖动视图。
           </div>
           <div className="mt-2 grid grid-cols-3 gap-1">
             <button
@@ -3017,214 +3136,687 @@ function FirstPersonNavigationPanel({
 
 function FirstPersonMiniMap({
   currentZone,
+  flyCameraMode,
   manualRoute,
   navigationData,
+  navigationMode,
+  onAddRoutePoint,
   onSelectZone,
   pose,
+  routePlanning,
 }: {
   currentZone: ZoneNode | null
+  flyCameraMode: FirstPersonFlyCameraMode
   manualRoute: FirstPersonPose[]
   navigationData: FirstPersonNavigationData
+  navigationMode: FirstPersonNavigationMode
+  onAddRoutePoint: (point: Partial<FirstPersonPose> & Pick<FirstPersonPose, 'x' | 'z'>) => void
   onSelectZone: (zoneId: string) => void
   pose: FirstPersonPose | null
+  routePlanning: boolean
 }) {
-  const bounds = useMemo(() => getNavigationBounds(navigationData), [navigationData])
-  const levelDisplayName = getLevelDisplayName(navigationData.level)
+  const gridId = useId()
+  const [viewRange, setViewRange] = useState(MINIMAP_VIEW_RANGE_DEFAULT)
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 })
+  const bounds = useMemo(() => {
+    const baseBounds = getNavigationBounds(navigationData)
+    if (!baseBounds || manualRoute.length === 0) return baseBounds
 
-  if (!bounds) {
+    let minX = baseBounds.minX
+    let maxX = baseBounds.maxX
+    let minY = baseBounds.minY
+    let maxY = baseBounds.maxY
+
+    for (const point of manualRoute) {
+      const routePoint = toMiniMapPlanPoint(point.x, point.z, navigationData.buildingRotation)
+      minX = Math.min(minX, routePoint.x - MINIMAP_WORLD_MARGIN)
+      maxX = Math.max(maxX, routePoint.x + MINIMAP_WORLD_MARGIN)
+      minY = Math.min(minY, routePoint.y - MINIMAP_WORLD_MARGIN)
+      maxY = Math.max(maxY, routePoint.y + MINIMAP_WORLD_MARGIN)
+    }
+
+    return { minX, maxX, minY, maxY }
+  }, [manualRoute, navigationData])
+  const levelDisplayName = getLevelDisplayName(navigationData.level)
+  const svgRef = useRef<SVGSVGElement>(null)
+  const pointerIdRef = useRef<number | null>(null)
+  const pointerModeRef = useRef<'draw' | 'pan' | null>(null)
+  const panDragRef = useRef<{
+    clientX: number
+    clientY: number
+    originX: number
+    originY: number
+  } | null>(null)
+  const lastRoutePointRef = useRef<{ x: number; z: number } | null>(null)
+  const suppressZoneClickRef = useRef(false)
+  const [isPanning, setIsPanning] = useState(false)
+
+  const displayBounds = useMemo(() => {
+    if (!bounds) return null
+
+    const centerX = (bounds.minX + bounds.maxX) / 2 + panOffset.x
+    const centerY = (bounds.minY + bounds.maxY) / 2 + panOffset.y
+    const halfWidth = ((bounds.maxX - bounds.minX) / 2) * viewRange
+    const halfHeight = ((bounds.maxY - bounds.minY) / 2) * viewRange
+
+    return {
+      minX: centerX - halfWidth,
+      maxX: centerX + halfWidth,
+      minY: centerY - halfHeight,
+      maxY: centerY + halfHeight,
+    }
+  }, [bounds, panOffset.x, panOffset.y, viewRange])
+
+  const projection = useMemo(() => {
+    if (!displayBounds) return null
+
+    const worldWidth = displayBounds.maxX - displayBounds.minX
+    const worldHeight = displayBounds.maxY - displayBounds.minY
+    const scale = Math.min(
+      (MINIMAP_WIDTH - MINIMAP_PADDING * 2) / worldWidth,
+      (MINIMAP_HEIGHT - MINIMAP_PADDING * 2) / worldHeight,
+    )
+    const offsetX = (MINIMAP_WIDTH - worldWidth * scale) / 2
+    const offsetY = (MINIMAP_HEIGHT - worldHeight * scale) / 2
+
+    return {
+      scale,
+      project: (x: number, z: number) => {
+        const point = toMiniMapPlanPoint(x, z, navigationData.buildingRotation)
+
+        return {
+          x: offsetX + (point.x - displayBounds.minX) * scale,
+          y: offsetY + (point.y - displayBounds.minY) * scale,
+        }
+      },
+      projectPlan: (x: number, y: number) => ({
+        x: offsetX + (x - displayBounds.minX) * scale,
+        y: offsetY + (y - displayBounds.minY) * scale,
+      }),
+      unproject: (x: number, y: number) => {
+        const point = {
+          x: (x - offsetX) / scale + displayBounds.minX,
+          y: (y - offsetY) / scale + displayBounds.minY,
+        }
+        const local = rotateMiniMapPoint(point, -navigationData.buildingRotation)
+        return { x: -local.x, z: -local.y }
+      },
+    }
+  }, [displayBounds, navigationData.buildingRotation])
+
+  const gridSteps = useMemo(
+    () =>
+      displayBounds
+        ? getMiniMapGridSteps(displayBounds.maxX - displayBounds.minX, MINIMAP_WIDTH)
+        : null,
+    [displayBounds],
+  )
+
+  const minorGridPath = useMemo(
+    () =>
+      displayBounds && projection && gridSteps
+        ? buildMiniMapGridPath(
+            displayBounds.minX,
+            displayBounds.maxX,
+            displayBounds.minY,
+            displayBounds.maxY,
+            gridSteps.minorStep,
+            projection.projectPlan,
+            { excludeStep: gridSteps.majorStep },
+          )
+        : '',
+    [displayBounds, gridSteps, projection],
+  )
+
+  const majorGridPath = useMemo(
+    () =>
+      displayBounds && projection && gridSteps
+        ? buildMiniMapGridPath(
+            displayBounds.minX,
+            displayBounds.maxX,
+            displayBounds.minY,
+            displayBounds.maxY,
+            gridSteps.majorStep,
+            projection.projectPlan,
+          )
+        : '',
+    [displayBounds, gridSteps, projection],
+  )
+
+  useEffect(() => {
+    if (routePlanning) return
+    if (pointerModeRef.current === 'draw') {
+      pointerIdRef.current = null
+      pointerModeRef.current = null
+    }
+    lastRoutePointRef.current = null
+  }, [routePlanning])
+
+  if (!(displayBounds && projection)) {
     return (
-      <div className="flex h-[170px] items-center justify-center rounded-md bg-white/[0.06] text-[11px] text-white/45">
+      <div className="flex h-[220px] items-center justify-center rounded-lg bg-slate-100 text-[11px] text-slate-500">
         No map data
       </div>
     )
   }
 
-  const worldWidth = bounds.maxX - bounds.minX
-  const worldHeight = bounds.maxY - bounds.minY
-  const scale = Math.min(
-    (MINIMAP_WIDTH - MINIMAP_PADDING * 2) / worldWidth,
-    (MINIMAP_HEIGHT - MINIMAP_PADDING * 2) / worldHeight,
-  )
-  const offsetX = (MINIMAP_WIDTH - worldWidth * scale) / 2
-  const offsetY = (MINIMAP_HEIGHT - worldHeight * scale) / 2
-  const project = (x: number, z: number) => {
-    const point = toMiniMapPlanPoint(x, z, navigationData.buildingRotation)
-
-    return {
-      x: offsetX + (point.x - bounds.minX) * scale,
-      y: offsetY + (point.y - bounds.minY) * scale,
-    }
+  const resetViewport = () => {
+    setViewRange(MINIMAP_VIEW_RANGE_DEFAULT)
+    setPanOffset({ x: 0, y: 0 })
   }
+
+  const updateViewRange = (delta: number) => {
+    setViewRange((current) =>
+      Math.max(MINIMAP_VIEW_RANGE_MIN, Math.min(MINIMAP_VIEW_RANGE_MAX, current + delta)),
+    )
+  }
+
   const clampProjectedPoint = (point: { x: number; y: number }) => ({
     x: Math.max(6, Math.min(MINIMAP_WIDTH - 6, point.x)),
     y: Math.max(6, Math.min(MINIMAP_HEIGHT - 6, point.y)),
   })
-  const cameraPoint = pose ? clampProjectedPoint(project(pose.x, pose.z)) : null
+  const cameraPoint = pose ? clampProjectedPoint(projection.project(pose.x, pose.z)) : null
+  const cameraForwardTarget =
+    pose && navigationMode === 'fly' && flyCameraMode === 'focus-building'
+      ? navigationData.buildingFocusTarget
+      : null
   const cameraForward = pose
     ? clampProjectedPoint(
-        project(pose.x - Math.sin(pose.yaw) * 0.85, pose.z - Math.cos(pose.yaw) * 0.85),
+        cameraForwardTarget
+          ? projection.project(cameraForwardTarget.x, cameraForwardTarget.z)
+          : projection.project(
+              pose.x - Math.sin(pose.yaw) * 0.85,
+              pose.z - Math.cos(pose.yaw) * 0.85,
+            ),
       )
     : null
-  const manualRoutePoints = manualRoute.map((point) => project(point.x, point.z))
+  const manualRoutePoints = manualRoute.map((point) => projection.project(point.x, point.z))
+  const compassCenterX = 32
+  const compassCenterY = MINIMAP_HEIGHT - 30
+  const compassRadius = 13
+  const compassDirections = [
+    { label: '北', vector: { x: 0, y: -1 }, primary: true },
+    { label: '东', vector: { x: 1, y: 0 }, primary: false },
+    { label: '南', vector: { x: 0, y: 1 }, primary: false },
+    { label: '西', vector: { x: -1, y: 0 }, primary: false },
+  ].map((direction) => {
+    const rotated = rotateMiniMapPoint(direction.vector, -navigationData.buildingRotation)
+    const length = Math.hypot(rotated.x, rotated.y) || 1
+    const unitX = rotated.x / length
+    const unitY = rotated.y / length
+
+    return {
+      ...direction,
+      innerX: compassCenterX + unitX * 4,
+      innerY: compassCenterY + unitY * 4,
+      outerX: compassCenterX + unitX * (compassRadius - 2),
+      outerY: compassCenterY + unitY * (compassRadius - 2),
+      labelX: compassCenterX + unitX * (compassRadius + 9),
+      labelY: compassCenterY + unitY * (compassRadius + 9),
+    }
+  })
+
+  const appendRoutePointFromEvent = useCallback(
+    (event: ReactPointerEvent<SVGSVGElement>, sampled: boolean) => {
+      if (!(routePlanning && svgRef.current)) return
+
+      const rect = svgRef.current.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return
+
+      const svgX = ((event.clientX - rect.left) / rect.width) * MINIMAP_WIDTH
+      const svgY = ((event.clientY - rect.top) / rect.height) * MINIMAP_HEIGHT
+      const nextPoint = projection.unproject(svgX, svgY)
+
+      if (
+        sampled &&
+        !shouldAppendRouteSample(
+          lastRoutePointRef.current,
+          nextPoint,
+          MINIMAP_ROUTE_SAMPLE_DISTANCE,
+        )
+      ) {
+        return
+      }
+
+      lastRoutePointRef.current = nextPoint
+      onAddRoutePoint({ ...nextPoint, mode: navigationMode })
+    },
+    [navigationMode, onAddRoutePoint, projection, routePlanning],
+  )
+
+  const startPointerInteraction = useCallback(
+    (event: ReactPointerEvent<SVGSVGElement>, mode: 'draw' | 'pan') => {
+      pointerIdRef.current = event.pointerId
+      pointerModeRef.current = mode
+      suppressZoneClickRef.current = false
+
+      if (mode === 'draw') {
+        lastRoutePointRef.current = null
+        panDragRef.current = null
+      } else {
+        panDragRef.current = {
+          clientX: event.clientX,
+          clientY: event.clientY,
+          originX: panOffset.x,
+          originY: panOffset.y,
+        }
+        setIsPanning(true)
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+      event.currentTarget.setPointerCapture(event.pointerId)
+    },
+    [panOffset.x, panOffset.y],
+  )
+
+  const endPointerInteraction = useCallback(
+    (event: ReactPointerEvent<SVGSVGElement>) => {
+      if (pointerIdRef.current !== event.pointerId) return
+
+      pointerIdRef.current = null
+      pointerModeRef.current = null
+      panDragRef.current = null
+      lastRoutePointRef.current = null
+      setIsPanning(false)
+
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+    },
+    [],
+  )
 
   return (
-    <svg
-      aria-label={`Map ${levelDisplayName}`}
-      className="block rounded-md border border-white/10 bg-white/[0.06]"
-      height={MINIMAP_HEIGHT}
-      role="img"
-      viewBox={`0 0 ${MINIMAP_WIDTH} ${MINIMAP_HEIGHT}`}
-      width={MINIMAP_WIDTH}
-    >
-      {navigationData.slabs.map((slab) => {
-        const polygon = getPlanPolygon(slab.polygon)
-        if (polygon.length < 3) return null
+    <div className="relative overflow-hidden rounded-lg border border-white/12 bg-slate-100 shadow-inner">
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between bg-gradient-to-b from-slate-950/20 via-slate-950/8 to-transparent px-3 py-2">
+        <div className="pointer-events-auto rounded-md bg-white/88 px-2 py-1 text-[10px] font-medium text-slate-600 shadow-sm">
+          2D 导航 · {levelDisplayName}
+        </div>
+        <div className="pointer-events-auto flex items-center gap-1 rounded-md border border-slate-200/90 bg-white/92 px-1.5 py-1 text-[10px] text-slate-600 shadow-sm">
+          <button
+            className="rounded px-1.5 py-0.5 transition-colors hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-35"
+            disabled={viewRange <= MINIMAP_VIEW_RANGE_MIN}
+            onClick={() => updateViewRange(-MINIMAP_VIEW_RANGE_STEP)}
+            type="button"
+          >
+            +
+          </button>
+          <div className="px-1 text-[9px] font-medium text-slate-500">{viewRange.toFixed(1)}x</div>
+          <button
+            className="rounded px-1.5 py-0.5 transition-colors hover:bg-slate-100 hover:text-slate-900"
+            onClick={resetViewport}
+            type="button"
+          >
+            适配
+          </button>
+          <button
+            className="rounded px-1.5 py-0.5 transition-colors hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-35"
+            disabled={viewRange >= MINIMAP_VIEW_RANGE_MAX}
+            onClick={() => updateViewRange(MINIMAP_VIEW_RANGE_STEP)}
+            type="button"
+          >
+            -
+          </button>
+        </div>
+      </div>
 
-        const points = polygon.map(([x, z]) => {
-          const point = project(x, z)
-          return `${point.x},${point.y}`
-        })
+      <svg
+        aria-label={`Map ${levelDisplayName}`}
+        className={cn(
+          'block rounded-lg bg-slate-100',
+          isPanning ? 'cursor-grabbing' : routePlanning ? 'cursor-crosshair' : 'cursor-grab',
+        )}
+        height={MINIMAP_HEIGHT}
+        onWheel={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          updateViewRange(event.deltaY < 0 ? -MINIMAP_VIEW_RANGE_STEP : MINIMAP_VIEW_RANGE_STEP)
+        }}
+        onPointerCancel={(event) => {
+          if (pointerIdRef.current !== event.pointerId) return
+          pointerIdRef.current = null
+          pointerModeRef.current = null
+          panDragRef.current = null
+          lastRoutePointRef.current = null
+          setIsPanning(false)
+        }}
+        onPointerDown={(event) => {
+          const panRequested = event.button === 1 || (!routePlanning && event.button === 0)
+          const drawRequested = routePlanning && event.button === 0
 
-        return (
-          <polygon
-            fill="rgba(226,232,240,0.16)"
-            key={slab.id}
-            points={points.join(' ')}
-            stroke="rgba(255,255,255,0.22)"
-            strokeWidth={1}
-          />
-        )
-      })}
+          if (panRequested) {
+            startPointerInteraction(event, 'pan')
+            return
+          }
 
-      {navigationData.zones.map((zone) => {
-        const polygon = getPlanPolygon(zone.polygon)
-        if (polygon.length < 3) return null
+          if (!drawRequested) return
 
-        const active = zone.id === currentZone?.id
-        const zoneName = getDisplayName(zone.name, 'Room')
-        const zoneColor = getDisplayName(zone.color, '#64748b')
-        const projectedPoints = polygon.map(([x, z]) => {
-          const point = project(x, z)
-          return point
-        })
-        const pointString = projectedPoints.map((point) => `${point.x},${point.y}`).join(' ')
-        const centroid = polygonCentroid(polygon)
-        const labelPoint = centroid ? project(centroid.x, centroid.z) : null
-        const labelBounds = getMiniMapPointBounds(projectedPoints)
-        const shouldShowLabel =
-          labelPoint !== null && labelBounds.width >= 28 && labelBounds.height >= 11
-        const label = shouldShowLabel
-          ? truncateMiniMapLabel(zoneName, Math.max(5, Math.floor(labelBounds.width / 4.3)))
-          : null
+          startPointerInteraction(event, 'draw')
+          appendRoutePointFromEvent(event, false)
+        }}
+        onPointerMove={(event) => {
+          if (pointerIdRef.current !== event.pointerId) return
 
-        return (
-          <g key={zone.id}>
-            <title>{`${levelDisplayName}: ${zoneName}`}</title>
-            <polygon
-              fill={zoneColor}
-              fillOpacity={active ? 0.42 : 0.2}
-              onClick={() => onSelectZone(zone.id)}
-              points={pointString}
-              stroke={active ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.34)'}
-              strokeWidth={active ? 1.8 : 1}
-              style={{ cursor: 'pointer' }}
+          const pointerMode = pointerModeRef.current
+          if (pointerMode === 'draw') {
+            appendRoutePointFromEvent(event, true)
+            return
+          }
+
+          if (!(pointerMode === 'pan' && panDragRef.current && svgRef.current)) return
+
+          const rect = svgRef.current.getBoundingClientRect()
+          if (rect.width <= 0 || rect.height <= 0) return
+
+          const deltaX = ((event.clientX - panDragRef.current.clientX) / rect.width) * MINIMAP_WIDTH
+          const deltaY =
+            ((event.clientY - panDragRef.current.clientY) / rect.height) * MINIMAP_HEIGHT
+
+          if (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1) {
+            suppressZoneClickRef.current = true
+          }
+
+          setPanOffset({
+            x: panDragRef.current.originX - deltaX / projection.scale,
+            y: panDragRef.current.originY - deltaY / projection.scale,
+          })
+        }}
+        onPointerUp={endPointerInteraction}
+        ref={svgRef}
+        role="img"
+        viewBox={`0 0 ${MINIMAP_WIDTH} ${MINIMAP_HEIGHT}`}
+        width={MINIMAP_WIDTH}
+      >
+        <defs>
+          <clipPath id={`${gridId}-clip`}>
+            <rect height={MINIMAP_HEIGHT} rx={12} ry={12} width={MINIMAP_WIDTH} />
+          </clipPath>
+        </defs>
+
+        <rect fill="#f8fafc" height={MINIMAP_HEIGHT} width={MINIMAP_WIDTH} />
+        <g clipPath={`url(#${gridId}-clip)`}>
+          {minorGridPath ? (
+            <path
+              d={minorGridPath}
+              fill="none"
+              stroke="rgba(148,163,184,0.24)"
+              strokeWidth={1}
             />
-            {label && labelPoint ? (
-              <text
-                fill="rgba(255,255,255,0.9)"
-                fontSize={6.4}
-                fontWeight={700}
-                paintOrder="stroke"
-                pointerEvents="none"
-                stroke="rgba(15,23,42,0.72)"
-                strokeLinejoin="round"
-                strokeWidth={2.2}
-                textAnchor="middle"
-                x={labelPoint.x}
-                y={labelPoint.y + 2.2}
-              >
-                {label}
-              </text>
-            ) : null}
-          </g>
-        )
-      })}
+          ) : null}
+          {majorGridPath ? (
+            <path
+              d={majorGridPath}
+              fill="none"
+              stroke="rgba(148,163,184,0.4)"
+              strokeWidth={1}
+            />
+          ) : null}
 
-      {navigationData.walls.map((wall) => {
-        const start = project(wall.sx, wall.sz)
-        const end = project(wall.ex, wall.ez)
-        return (
-          <line
-            key={wall.id}
-            stroke="rgba(255,255,255,0.5)"
-            strokeLinecap="round"
-            strokeWidth={1.5}
-            x1={start.x}
-            x2={end.x}
-            y1={start.y}
-            y2={end.y}
-          />
-        )
-      })}
+          {navigationData.slabs.map((slab) => {
+            const polygon = getPlanPolygon(slab.polygon)
+            if (polygon.length < 3) return null
 
-      {manualRoutePoints.length > 0 ? (
-        <>
-          <polyline
-            fill="none"
-            points={manualRoutePoints.map((point) => `${point.x},${point.y}`).join(' ')}
-            stroke="rgba(255,255,255,0.92)"
-            strokeDasharray="4 3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-          />
-          {manualRoutePoints.map((point, index) => (
-            <g key={`${point.x}-${point.y}-${index}`}>
-              <circle
-                cx={point.x}
-                cy={point.y}
-                fill="#111827"
-                r={4.5}
-                stroke="white"
-                strokeWidth={1.6}
+            const points = polygon.map(([x, z]) => {
+              const point = projection.project(x, z)
+              return `${point.x},${point.y}`
+            })
+
+            return (
+              <polygon
+                fill="rgba(148,163,184,0.08)"
+                key={slab.id}
+                points={points.join(' ')}
+                stroke="rgba(148,163,184,0.28)"
+                strokeWidth={1}
               />
-              <text
-                fill="white"
-                fontSize={6}
-                fontWeight={700}
-                textAnchor="middle"
-                x={point.x}
-                y={point.y + 2}
-              >
-                {index + 1}
-              </text>
-            </g>
-          ))}
-        </>
-      ) : null}
+            )
+          })}
 
-      {cameraPoint && cameraForward ? (
-        <>
-          <line
-            stroke="white"
-            strokeLinecap="round"
-            strokeWidth={2}
-            x1={cameraPoint.x}
-            x2={cameraForward.x}
-            y1={cameraPoint.y}
-            y2={cameraForward.y}
-          />
-          <circle
-            cx={cameraPoint.x}
-            cy={cameraPoint.y}
-            fill="#0f172a"
-            r={4}
-            stroke="white"
-            strokeWidth={2}
-          />
-        </>
-      ) : null}
-    </svg>
+          {navigationData.zones.map((zone) => {
+            const polygon = getPlanPolygon(zone.polygon)
+            if (polygon.length < 3) return null
+
+            const active = zone.id === currentZone?.id
+            const zoneName = getDisplayName(zone.name, 'Room')
+            const zoneColor = getDisplayName(zone.color, '#94a3b8')
+            const projectedPoints = polygon.map(([x, z]) => projection.project(x, z))
+            const pointString = projectedPoints.map((point) => `${point.x},${point.y}`).join(' ')
+            const centroid = polygonCentroid(polygon)
+            const labelPoint = centroid ? projection.project(centroid.x, centroid.z) : null
+            const labelBounds = getMiniMapPointBounds(projectedPoints)
+            const shouldShowLabel =
+              labelPoint !== null && labelBounds.width >= 34 && labelBounds.height >= 14
+            const label = shouldShowLabel
+              ? truncateMiniMapLabel(zoneName, Math.max(6, Math.floor(labelBounds.width / 6.5)))
+              : null
+
+            return (
+              <g key={zone.id}>
+                <title>{`${levelDisplayName}: ${zoneName}`}</title>
+                <polygon
+                  fill={zoneColor}
+                  fillOpacity={active ? 0.28 : 0.16}
+                  onClick={() => {
+                    if (suppressZoneClickRef.current) {
+                      suppressZoneClickRef.current = false
+                      return
+                    }
+                    if (!routePlanning) onSelectZone(zone.id)
+                  }}
+                  points={pointString}
+                  stroke={active ? '#0f172a' : 'rgba(51,65,85,0.38)'}
+                  strokeWidth={active ? 1.8 : 1.1}
+                  style={{ cursor: routePlanning ? 'crosshair' : 'pointer' }}
+                />
+                {label && labelPoint ? (
+                  <text
+                    fill={active ? '#0f172a' : 'rgba(15,23,42,0.82)'}
+                    fontSize={9}
+                    fontWeight={700}
+                    paintOrder="stroke"
+                    pointerEvents="none"
+                    stroke="rgba(248,250,252,0.95)"
+                    strokeLinejoin="round"
+                    strokeWidth={3.4}
+                    textAnchor="middle"
+                    x={labelPoint.x}
+                    y={labelPoint.y + 3}
+                  >
+                    {label}
+                  </text>
+                ) : null}
+              </g>
+            )
+          })}
+
+          {navigationData.walls.map((wall) => {
+            const start = projection.project(wall.sx, wall.sz)
+            const end = projection.project(wall.ex, wall.ez)
+            return (
+              <line
+                key={wall.id}
+                stroke="#1f2937"
+                strokeLinecap="round"
+                strokeWidth={3.1}
+                x1={start.x}
+                x2={end.x}
+                y1={start.y}
+                y2={end.y}
+              />
+            )
+          })}
+
+          {manualRoutePoints.length > 0 ? (
+            <>
+              <polyline
+                fill="none"
+                points={manualRoutePoints.map((point) => `${point.x},${point.y}`).join(' ')}
+                stroke="#2563eb"
+                strokeDasharray="5 4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2.5}
+              />
+              {manualRoutePoints.map((point, index) => (
+                <g key={`${point.x}-${point.y}-${index}`}>
+                  <circle
+                    cx={point.x}
+                    cy={point.y}
+                    fill="white"
+                    r={5.5}
+                    stroke="#1d4ed8"
+                    strokeWidth={1.8}
+                  />
+                  <text
+                    fill="#1e3a8a"
+                    fontSize={6.5}
+                    fontWeight={700}
+                    textAnchor="middle"
+                    x={point.x}
+                    y={point.y + 2.2}
+                  >
+                    {index + 1}
+                  </text>
+                </g>
+              ))}
+            </>
+          ) : null}
+
+          {cameraPoint && cameraForward ? (
+            <>
+              <line
+                stroke={flyCameraMode === 'focus-building' ? '#ea580c' : '#0f172a'}
+                strokeLinecap="round"
+                strokeWidth={2.2}
+                x1={cameraPoint.x}
+                x2={cameraForward.x}
+                y1={cameraPoint.y}
+                y2={cameraForward.y}
+              />
+              <circle
+                cx={cameraPoint.x}
+                cy={cameraPoint.y}
+                fill="#0f172a"
+                r={4.4}
+                stroke="white"
+                strokeWidth={2}
+              />
+            </>
+          ) : null}
+
+          <g pointerEvents="none">
+            <circle
+              cx={compassCenterX}
+              cy={compassCenterY}
+              fill="rgba(255,255,255,0.92)"
+              r={19}
+              stroke="rgba(148,163,184,0.5)"
+              strokeWidth={1}
+            />
+            <circle cx={compassCenterX} cy={compassCenterY} fill="#475569" r={2.2} />
+            {compassDirections.map((direction) => (
+              <g key={direction.label}>
+                <line
+                  stroke={direction.primary ? '#0f172a' : 'rgba(71,85,105,0.72)'}
+                  strokeLinecap="round"
+                  strokeWidth={direction.primary ? 2.1 : 1.3}
+                  x1={direction.innerX}
+                  x2={direction.outerX}
+                  y1={direction.innerY}
+                  y2={direction.outerY}
+                />
+                <text
+                  fill={direction.primary ? '#0f172a' : 'rgba(30,41,59,0.8)'}
+                  fontSize={8.5}
+                  fontWeight={direction.primary ? 800 : 700}
+                  paintOrder="stroke"
+                  stroke="rgba(255,255,255,0.94)"
+                  strokeLinejoin="round"
+                  strokeWidth={2.8}
+                  textAnchor="middle"
+                  x={direction.labelX}
+                  y={direction.labelY + 3}
+                >
+                  {direction.label}
+                </text>
+              </g>
+            ))}
+          </g>
+        </g>
+      </svg>
+    </div>
+  )
+}
+
+function FirstPersonSpeedControl({
+  onChange,
+  value,
+}: {
+  onChange: (speed: number) => void
+  value: number
+}) {
+  const [draft, setDraft] = useState(() => formatFirstPersonSpeed(value))
+  const [isEditing, setIsEditing] = useState(false)
+
+  useEffect(() => {
+    if (isEditing) return
+    setDraft(formatFirstPersonSpeed(value))
+  }, [isEditing, value])
+
+  const commitDraft = useCallback(
+    (nextDraft: string) => {
+      const parsed = Number.parseFloat(nextDraft)
+      const normalized = Number.isFinite(parsed) ? normalizeFirstPersonSpeed(parsed) : value
+      onChange(normalized)
+      setDraft(formatFirstPersonSpeed(normalized))
+    },
+    [onChange, value],
+  )
+
+  return (
+    <div className="pointer-events-auto flex h-8 items-center gap-2 rounded-md border border-white/10 bg-white/[0.07] px-2">
+      <span className="text-[10px] font-medium text-white/55">速度</span>
+      <input
+        aria-label="速度"
+        className="h-6 w-20 rounded border border-white/10 bg-white/[0.08] px-2 text-center font-mono text-[11px] font-semibold text-white outline-none transition-colors [appearance:textfield] focus:border-white/25 focus:bg-white/[0.14] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        inputMode="decimal"
+        max={MAX_FIRST_PERSON_SPEED}
+        min={MIN_FIRST_PERSON_SPEED}
+        onBlur={() => {
+          setIsEditing(false)
+          commitDraft(draft)
+        }}
+        onChange={(event) => {
+          const nextDraft = event.target.value
+          setDraft(nextDraft)
+
+          if (!nextDraft.trim()) return
+
+          const parsed = Number.parseFloat(nextDraft)
+          if (Number.isFinite(parsed)) onChange(normalizeFirstPersonSpeed(parsed))
+        }}
+        onFocus={() => setIsEditing(true)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            commitDraft(draft)
+            setIsEditing(false)
+            event.currentTarget.blur()
+            return
+          }
+
+          if (event.key === 'Escape') {
+            setDraft(formatFirstPersonSpeed(value))
+            setIsEditing(false)
+            event.currentTarget.blur()
+          }
+        }}
+        step="any"
+        title="输入任意数字，控制行走和飞行速度"
+        type="number"
+        value={draft}
+      />
+    </div>
   )
 }
 

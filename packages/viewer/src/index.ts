@@ -17,8 +17,27 @@ export {
 } from './lib/materials'
 export { mergedOutline } from './lib/merged-outline-node'
 export {
+  getSolarPathForLocation,
+  getSolarPositionForLocation,
+  type SolarPathSample,
+  type SolarPosition,
+} from './lib/solar-position'
+export {
+  getBrowserTimeZone,
+  getSiteSolarLocation,
+  isValidTimeZone,
+  normalizeSiteSolarLocation,
+  resolveSiteSolarLocation,
+  withSiteSolarLocation,
+  type ResolvedSiteSolarLocation,
+  type SiteSolarLocation,
+} from './lib/site-solar'
+export {
+  clampSunMinutesOfDay,
   clampSunProgress,
   DEFAULT_SUN_STUDY_STATE,
+  formatSunMinutesOfDay,
+  getDefaultSunStudyDate,
   getNearestSunTimeOfDay,
   getSunAnglesForProgress,
   getSunPathPosition,
@@ -26,12 +45,17 @@ export {
   getSunPositionForProgress,
   getSunPositionFromAngles,
   getSunProgressForTimeOfDay,
+  resolveRealSunLighting,
   resolveSunLighting,
+  resolveSunMinutesOfDay,
   resolveSunPreset,
   resolveSunProgress,
+  resolveSunStudyDate,
+  resolveSunStudyState,
   SUN_TIME_OPTIONS,
   type SunPreset,
   type SunResolvedPreset,
+  type SunStudyMode,
   type SunStudyState,
   type SunTimeOfDay,
 } from './lib/sun-study'

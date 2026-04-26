@@ -27,6 +27,8 @@ type ViewerState = {
   setHoverHighlightMode: (mode: 'default' | 'delete') => void
   hoveredId: AnyNode['id'] | ZoneNode['id'] | null
   setHoveredId: (id: AnyNode['id'] | ZoneNode['id'] | null) => void
+  placementHoveredIds: AnyNode['id'][]
+  setPlacementHoveredIds: (ids: AnyNode['id'][]) => void
   cameraMode: 'perspective' | 'orthographic'
   setCameraMode: (mode: 'perspective' | 'orthographic') => void
   levelMode: 'stacked' | 'exploded' | 'solo' | 'manual'

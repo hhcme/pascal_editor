@@ -10,6 +10,8 @@ import {
 } from '@pascal-app/core'
 import {
   Editor,
+  FurnishPanel,
+  type FurnishPanelAiTab,
   type SaveStatus,
   type SceneGraph,
   type SidebarTab,
@@ -22,23 +24,35 @@ import {
 } from '@pascal-app/editor'
 import { useViewer } from '@pascal-app/viewer'
 import { type ComponentType, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { captureFloorplanDeliverable } from '../../../packages/editor/src/components/editor/delivery-export'
 import {
   exportFilters,
   saveCanvasAsPng,
   saveJsonExport,
 } from '../../../packages/editor/src/lib/export'
-import { AiBuildingPanel } from './ai-building-panel'
+import { useDeliveryStore } from '../../../packages/editor/src/store/use-delivery'
 import {
-  applyPlanToScene,
-  clampNumber,
-  createPlan,
-  getSceneContext,
-  MAX_DIMENSION,
-  MIN_DIMENSION,
   type AiBuildingFormState,
   type AiBuildingType,
   type AiBuildingVariant,
+  applyPlanToScene,
+  clampNumber,
+  createPlan,
+  getAiBuildingPlanSummary,
+  getSceneContext,
+  getSceneFootprintLimits,
+  MIN_DIMENSION,
+  type SceneContext,
+  snapDimensionToSceneGrid,
 } from '../lib/ai-building'
+import {
+  applyDeliveryPreset,
+  captureDeliveryPreset,
+  type DeliveryOverlayOptions,
+  type DeliveryPreset,
+  withTemporaryDeliveryState,
+} from '../lib/delivery-workflow'
+import { AiBuildingPanel } from './ai-building-panel'
 
 const RECOVERY_DEBOUNCE_MS = 1500
 
@@ -120,7 +134,11 @@ function isUploadedProjectAsset(value: unknown): value is UploadedProjectAsset {
 }
 
 function isViewMode(value: unknown): value is ViewMode {
-  return value === '3d' || value === '2d' || value === 'split'
+  return value === '3d' || value === '2d' || value === 'split' || value === 'tri-view'
+}
+
+function isLevelNodeId(value: unknown): value is LevelNode['id'] {
+  return typeof value === 'string' && value.startsWith('level_')
 }
 
 function getPayloadString(payload: unknown, key: string): string {
@@ -130,14 +148,38 @@ function getPayloadString(payload: unknown, key: string): string {
 }
 
 function normalizeRoomSearchValue(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[_-]+/g, ' ')
+  return value.trim().toLowerCase().replace(/[_-]+/g, ' ')
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isDeliveryPreset(value: unknown): value is DeliveryPreset {
+  if (!isRecord(value)) return false
+  if (value.kind !== 'floorplan' && value.kind !== 'camera') return false
+  return typeof value.id === 'string' && typeof value.name === 'string'
+}
+
+function readDeliveryOverlayOptions(value: unknown): Partial<DeliveryOverlayOptions> | undefined {
+  if (!isRecord(value)) return undefined
+
+  const next: Partial<DeliveryOverlayOptions> = {}
+
+  if (typeof value.showRoomName === 'boolean') {
+    next.showRoomName = value.showRoomName
+  }
+  if (typeof value.showRoomArea === 'boolean') {
+    next.showRoomArea = value.showRoomArea
+  }
+  if (typeof value.showWallLength === 'boolean') {
+    next.showWallLength = value.showWallLength
+  }
+  if (typeof value.showPerimeterGuides === 'boolean') {
+    next.showPerimeterGuides = value.showPerimeterGuides
+  }
+
+  return Object.keys(next).length ? next : undefined
 }
 
 function normalizePositiveNumber(value: unknown, fallback: number): number {
@@ -237,12 +279,12 @@ function getAiCreateRequestedSpaces(
 function convertAiCreateDraftToForm(
   payload: AiCreateApplyPayload,
   language: 'zh-CN' | 'en',
-  siteWidth: number | null,
-  siteDepth: number | null,
+  sceneContext: SceneContext,
 ): AiBuildingFormState | null {
   const draft = payload.draft
   if (!isRecord(draft)) return null
 
+  const buildingType = mapAiCreateBuildingType(draft.buildingType)
   const floorCount = Math.round(clampNumber(normalizePositiveNumber(draft.floorCount, 1), 1, 8))
   const area = normalizePositiveNumber(draft.area, 120)
   const areaSqm = draft.areaUnit === 'sqft' ? area * 0.092903 : area
@@ -253,8 +295,9 @@ function convertAiCreateDraftToForm(
       : draft.shape === 'courtyard' || draft.shape === 'u_shape'
         ? 1.12
         : 1.25
-  const maxWidth = Math.min(MAX_DIMENSION, Math.max(MIN_DIMENSION, (siteWidth ?? 30) - 2))
-  const maxDepth = Math.min(MAX_DIMENSION, Math.max(MIN_DIMENSION, (siteDepth ?? 30) - 2))
+  const footprintLimits = getSceneFootprintLimits(sceneContext, buildingType)
+  const maxWidth = footprintLimits.preferredMaxWidth
+  const maxDepth = footprintLimits.preferredMaxDepth
   const width =
     Math.round(clampNumber(Math.sqrt(footprintArea * aspect), MIN_DIMENSION, maxWidth) * 10) / 10
   const depth = Math.round(clampNumber(footprintArea / width, MIN_DIMENSION, maxDepth) * 10) / 10
@@ -276,12 +319,12 @@ function convertAiCreateDraftToForm(
         ]
 
   return {
-    buildingType: mapAiCreateBuildingType(draft.buildingType),
+    buildingType,
     style: 'modern',
     variant: mapAiCreateVariant(draft.shape),
     floors: floorCount,
-    width,
-    depth,
+    width: snapDimensionToSceneGrid(width, sceneContext, maxWidth),
+    depth: snapDimensionToSceneGrid(depth, sceneContext, maxDepth),
     prompt: promptParts.filter(Boolean).join(language === 'en' ? '. ' : '。'),
     requestedSpaces,
   }
@@ -324,6 +367,76 @@ async function uploadProjectAsset(
   }
 
   return payload
+}
+
+async function readFileAsBase64(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+
+    reader.onerror = () => {
+      reject(reader.error ?? new Error('Failed to read local file'))
+    }
+
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        reject(new Error('Failed to encode local file'))
+        return
+      }
+
+      const [, base64 = ''] = reader.result.split(',', 2)
+      resolve(base64)
+    }
+
+    reader.readAsDataURL(file)
+  })
+}
+
+function createFileFromBase64(data: string, fileName: string, mime: string): File {
+  const binary = window.atob(data)
+  const bytes = new Uint8Array(binary.length)
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+
+  return new File([bytes], fileName, { type: mime })
+}
+
+async function rasterizeGuidePdfFile(file: File): Promise<{
+  assetSource: { originalFileName: string; type: 'pdf-rasterized' }
+  file: File
+}> {
+  const editorApi = (
+    window as Window & {
+      editorAPI?: {
+        rasterizeGuidePdf?: (
+          data: string,
+          fileName?: string,
+        ) => Promise<{
+          data: string
+          height: number
+          mime: 'image/png'
+          width: number
+        }>
+      }
+    }
+  ).editorAPI
+
+  if (!editorApi?.rasterizeGuidePdf) {
+    throw new Error('PDF rasterization is unavailable in this host environment.')
+  }
+
+  const base64 = await readFileAsBase64(file)
+  const rasterized = await editorApi.rasterizeGuidePdf(base64, file.name)
+  const pngName = `${getFileDisplayName(file.name)}.png`
+
+  return {
+    assetSource: {
+      type: 'pdf-rasterized',
+      originalFileName: file.name,
+    },
+    file: createFileFromBase64(rasterized.data, pngName, rasterized.mime),
+  }
 }
 
 async function readCanvasAsPng(canvas: HTMLCanvasElement): Promise<{
@@ -424,6 +537,17 @@ export default function Home() {
       return <AiBuildingPanel language={language} />
     }
 
+    function FurnishSidebarPanel() {
+      return (
+        <FurnishPanel
+          language={language}
+          onOpenAiWorkspace={(tab: FurnishPanelAiTab) => {
+            postToHost('open-ai-workspace', { tab })
+          }}
+        />
+      )
+    }
+
     return [
       {
         id: 'site',
@@ -431,8 +555,13 @@ export default function Home() {
         component: () => null,
       },
       {
+        id: 'furnish',
+        label: language === 'zh-CN' ? '布置' : 'Furnish',
+        component: FurnishSidebarPanel,
+      },
+      {
         id: 'ai-building',
-        label: language === 'zh-CN' ? 'AI建房' : 'AI Build',
+        label: language === 'zh-CN' ? '方案评估' : 'Plan Analysis',
         component: AiBuildingSidebarPanel,
       },
     ]
@@ -584,8 +713,28 @@ export default function Home() {
       try {
         uploadStore.setStatus(levelId, 'uploading')
         uploadStore.setProgress(levelId, 20)
+        let uploadFile = file
+        let guideAssetSource:
+          | {
+              originalFileName: string
+              type: 'image' | 'pdf-rasterized'
+            }
+          | undefined
 
-        const asset = await uploadProjectAsset(projectId, file, type)
+        if (type === 'guide' && file.name.toLowerCase().endsWith('.pdf')) {
+          uploadStore.setProgress(levelId, 40)
+          const rasterized = await rasterizeGuidePdfFile(file)
+          uploadFile = rasterized.file
+          guideAssetSource = rasterized.assetSource
+          uploadStore.setProgress(levelId, 60)
+        } else if (type === 'guide') {
+          guideAssetSource = {
+            type: 'image',
+            originalFileName: file.name,
+          }
+        }
+
+        const asset = await uploadProjectAsset(projectId, uploadFile, type)
 
         uploadStore.setProgress(levelId, 85)
         uploadStore.setStatus(levelId, 'confirming')
@@ -597,19 +746,33 @@ export default function Home() {
                 url: asset.url,
               })
             : GuideNode.parse({
-                name: getFileDisplayName(asset.originalFileName),
+                name: getFileDisplayName(file.name),
                 url: asset.url,
+                assetSource: guideAssetSource,
               })
 
         useScene.getState().createNode(node, levelId as LevelNode['id'])
-        useViewer.getState().setSelection({
-          levelId: levelId as LevelNode['id'],
-          selectedIds: [node.id],
-        })
 
         if (asset.kind === 'scan') {
+          useEditor.getState().setSelectedReferenceId(null)
+          useViewer.getState().setSelection({
+            levelId: levelId as LevelNode['id'],
+            selectedIds: [node.id],
+          })
           useViewer.getState().setShowScans(true)
         } else {
+          const guideNode = node as GuideNode
+          const editorState = useEditor.getState()
+          const currentViewMode = editorState.viewMode
+
+          editorState.setSelectedReferenceId(guideNode.id)
+          useViewer.getState().setSelection({
+            levelId: levelId as LevelNode['id'],
+          })
+          if (!(currentViewMode === '2d' || currentViewMode === 'split')) {
+            editorState.setViewMode('split')
+          }
+          useDeliveryStore.getState().requestCalibrationPrompt(guideNode.id)
           useViewer.getState().setShowGuides(true)
         }
 
@@ -700,6 +863,58 @@ export default function Home() {
       return exportScene(options)
     }
 
+    async function exportDeliverableFromHost(payload: unknown) {
+      const options = isRecord(payload) ? payload : {}
+      const format =
+        options.format === 'png' || options.format === 'jpg' || options.format === 'pdf'
+          ? options.format
+          : null
+
+      if (!format) {
+        throw new Error('Invalid deliverable export format')
+      }
+
+      const preset = isDeliveryPreset(options.preset) ? options.preset : null
+      const overlays = readDeliveryOverlayOptions(options.overlays)
+      const requestedLevelId = isLevelNodeId(options.levelId) ? options.levelId : null
+      const presetId = typeof options.presetId === 'string' ? options.presetId : null
+
+      const artifact = await withTemporaryDeliveryState(
+        {
+          preset,
+          includeCamera: false,
+          levelId: requestedLevelId,
+          overlays,
+          viewMode: preset?.viewMode ?? '2d',
+        },
+        async () => {
+          const captured = await captureFloorplanDeliverable(format === 'pdf' ? 'jpg' : format)
+          const activeLevelId = useViewer.getState().selection.levelId ?? requestedLevelId
+          const levelNode = activeLevelId
+            ? (useScene.getState().nodes[activeLevelId] as LevelNode | undefined)
+            : undefined
+
+          return {
+            ...captured,
+            metadata: {
+              deliverableKind: 'floorplan' as const,
+              levelId: activeLevelId,
+              levelName: levelNode?.type === 'level' ? (levelNode.name ?? null) : null,
+              overlays: {
+                ...useDeliveryStore.getState().overlays,
+              },
+              presetId,
+            },
+          }
+        },
+      )
+
+      return {
+        artifact,
+        format,
+      }
+    }
+
     async function exportScreenshotFromHost() {
       const canvas = document.querySelector('canvas')
       if (!(canvas instanceof HTMLCanvasElement)) {
@@ -772,12 +987,7 @@ export default function Home() {
         const scene = useScene.getState()
         const selectedBuildingId = useViewer.getState().selection.buildingId
         const sceneContext = getSceneContext(scene.nodes, scene.rootNodeIds, selectedBuildingId)
-        const form = convertAiCreateDraftToForm(
-          commandPayload,
-          commandLanguage,
-          sceneContext.siteWidth,
-          sceneContext.siteDepth,
-        )
+        const form = convertAiCreateDraftToForm(commandPayload, commandLanguage, sceneContext)
 
         if (!form) {
           postToHost('ai-create-apply-result', {
@@ -787,8 +997,20 @@ export default function Home() {
           return
         }
 
-        const plan = createPlan(form, commandLanguage)
+        const plan = createPlan(form, commandLanguage, sceneContext)
         const result = applyPlanToScene(plan, sceneContext)
+        const analysisSummary = getAiBuildingPlanSummary(plan, commandLanguage)
+
+        if (result.blocked) {
+          postToHost('ai-create-apply-result', {
+            status: 'error',
+            planId: plan.id,
+            message: result.message ?? '方案未通过可建造性硬验收。',
+            analysisSummary,
+            constructability: result.constructability,
+          })
+          return
+        }
 
         postToHost('ai-create-apply-result', {
           status: 'success',
@@ -796,6 +1018,7 @@ export default function Home() {
           wallCount: result.wallCount,
           floorCount: result.floorCount,
           createdDefaultBuilding: result.createdDefaultBuilding,
+          analysisSummary,
         })
       } catch (error) {
         postToHost('ai-create-apply-result', {
@@ -803,6 +1026,58 @@ export default function Home() {
           message: error instanceof Error ? error.message : 'Failed to apply AI create draft',
         })
       }
+    }
+
+    function captureDeliveryPresetFromHost(payload: unknown) {
+      const options = isRecord(payload) ? payload : {}
+      const requestId = typeof options.requestId === 'string' ? options.requestId : ''
+      if (!requestId) return
+
+      const kind = options.kind === 'camera' ? 'camera' : 'floorplan'
+      const name =
+        typeof options.name === 'string' && options.name.trim()
+          ? options.name.trim()
+          : kind === 'camera'
+            ? 'Camera Preset'
+            : 'Floorplan Preset'
+
+      try {
+        const preset = captureDeliveryPreset({
+          createdAt: typeof options.createdAt === 'string' ? options.createdAt : undefined,
+          kind,
+          name,
+          exportFormat: typeof options.exportFormat === 'string' ? options.exportFormat : undefined,
+          presetId: typeof options.presetId === 'string' ? options.presetId : undefined,
+        })
+
+        postToHost('delivery-preset-captured', {
+          requestId,
+          status: 'success',
+          preset,
+        })
+      } catch (error) {
+        postToHost('delivery-preset-captured', {
+          requestId,
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Failed to capture delivery preset',
+        })
+      }
+    }
+
+    function applyDeliveryPresetFromHost(payload: unknown) {
+      const preset =
+        isRecord(payload) && isDeliveryPreset(payload.preset)
+          ? payload.preset
+          : isDeliveryPreset(payload)
+            ? payload
+            : null
+      if (!preset) return
+
+      void applyDeliveryPreset(preset).catch((error) => {
+        postToHost('error', {
+          message: error instanceof Error ? error.message : 'Failed to apply delivery preset',
+        })
+      })
     }
 
     function onMessage(event: MessageEvent<HostCommand>) {
@@ -839,6 +1114,7 @@ export default function Home() {
         })
           .then((filePath) => {
             postToHost('export-result', {
+              category: 'model',
               status: filePath ? 'success' : 'cancelled',
               format,
               filePath,
@@ -846,10 +1122,36 @@ export default function Home() {
           })
           .catch((error) => {
             postToHost('export-result', {
+              category: 'model',
               status: 'error',
               format,
               message:
                 error instanceof Error ? error.message : `Host-triggered ${format} export failed`,
+            })
+          })
+        return
+      }
+
+      if (event.data.type === 'export-deliverable') {
+        void exportDeliverableFromHost(event.data.payload)
+          .then((result) => {
+            postToHost('export-result', {
+              category: 'deliverable',
+              status: 'success',
+              format: result.format,
+              artifact: result.artifact,
+            })
+          })
+          .catch((error) => {
+            postToHost('export-result', {
+              category: 'deliverable',
+              status: 'error',
+              format:
+                isRecord(event.data.payload) && typeof event.data.payload.format === 'string'
+                  ? event.data.payload.format
+                  : undefined,
+              message:
+                error instanceof Error ? error.message : 'Host-triggered deliverable export failed',
             })
           })
         return
@@ -873,6 +1175,16 @@ export default function Home() {
         if (isViewMode(payload.viewMode)) {
           useEditor.getState().setViewMode(payload.viewMode)
         }
+        return
+      }
+
+      if (event.data.type === 'capture-delivery-preset') {
+        captureDeliveryPresetFromHost(event.data.payload)
+        return
+      }
+
+      if (event.data.type === 'apply-delivery-preset') {
+        applyDeliveryPresetFromHost(event.data.payload)
         return
       }
 

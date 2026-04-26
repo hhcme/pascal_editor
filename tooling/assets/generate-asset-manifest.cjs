@@ -263,6 +263,7 @@ function buildManifest(items, ledger, diagnostics) {
       modelSha256: modelStats.sha256,
       dimensions: item.dimensions,
       attachTo: item.attachTo,
+      grounding: item.grounding,
       offset: item.offset,
       rotation: item.rotation,
       scale: item.scale,

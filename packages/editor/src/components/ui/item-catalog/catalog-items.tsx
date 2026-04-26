@@ -2206,6 +2206,7 @@ export const CATALOG_ITEMS: AssetInput[] = [
     thumbnail: '/items/bird-on-perch/thumbnail.webp',
     src: '/items/bird-on-perch/model.glb',
     scale: [1, 1, 1],
+    grounding: 'none',
     offset: [0, 0, 0],
     rotation: [0, 0, 0],
     dimensions: [0.32, 0.55, 0.32],
@@ -2551,7 +2552,104 @@ export const CATALOG_ITEMS: AssetInput[] = [
   // End life atmosphere baseline pack.
 ]
 
+const CATEGORY_TAG_FILTERS = {
+  people: 'people',
+  plants: 'vegetation',
+  animals: 'animal',
+} as const
+
+const CATEGORY_HIDDEN_TAGS = {
+  people: ['people'],
+  plants: ['vegetation'],
+  animals: ['animal'],
+} as const
+
+const CATEGORY_PROMOTED_IDS = {
+  people: [
+    'person-standing-adult',
+    'person-standing-casual',
+    'person-walking',
+    'person-seated',
+    'person-child',
+    'person-wheelchair',
+    'person-service-staff',
+    'person-office-worker',
+    'people-pair',
+    'people-family',
+  ],
+  plants: [
+    'indoor-ficus',
+    'indoor-monstera',
+    'indoor-snake-plant',
+    'indoor-palm-tall',
+    'tabletop-succulent',
+    'tabletop-flower-vase',
+    'hanging-planter',
+    'wall-planter',
+    'planter-box',
+    'terrace-planter-set',
+    'round-shrub',
+    'flowering-bush',
+    'grass-clump',
+    'groundcover-patch',
+    'rectangular-flower-bed',
+    'hedge-row',
+    'hedge-corner',
+    'small-ornamental-tree',
+    'shade-tree',
+    'cypress-tree',
+    'bamboo-cluster',
+    'banana-plant',
+    'tall-garden-planter',
+    'entry-planter-pair',
+  ],
+  animals: [
+    'dog-standing',
+    'cat-sitting',
+    'rabbit-sitting',
+    'bird-on-perch',
+    'fish-tank',
+    'duck-standing',
+    'deer-garden',
+    'horse-standing',
+  ],
+} as const
+
+export function getCatalogItemsForCategory(category: string | null | undefined): AssetInput[] {
+  if (!category) return []
+
+  const tagFilter = CATEGORY_TAG_FILTERS[category as keyof typeof CATEGORY_TAG_FILTERS]
+  if (!tagFilter) {
+    return CATALOG_ITEMS.filter((item) => item.category === category)
+  }
+
+  const promotedIds = CATEGORY_PROMOTED_IDS[category as keyof typeof CATEGORY_PROMOTED_IDS] ?? []
+  const promotedIndex = new Map<string, number>(promotedIds.map((id, index) => [id, index]))
+
+  return CATALOG_ITEMS.filter((item) => item.tags?.includes(tagFilter)).sort((left, right) => {
+    const leftRank = promotedIndex.get(left.id)
+    const rightRank = promotedIndex.get(right.id)
+
+    if (leftRank !== undefined || rightRank !== undefined) {
+      if (leftRank === undefined) return 1
+      if (rightRank === undefined) return -1
+      if (leftRank !== rightRank) return leftRank - rightRank
+    }
+
+    return left.name.localeCompare(right.name)
+  })
+}
+
+export function getCatalogItemById(id: string | null | undefined): AssetInput | null {
+  if (!id) return null
+  return CATALOG_ITEMS.find((item) => item.id === id) ?? null
+}
+
+export function getCatalogHiddenTags(category: string | null | undefined): Set<string> {
+  const tags = CATEGORY_HIDDEN_TAGS[category as keyof typeof CATEGORY_HIDDEN_TAGS]
+  return new Set(tags ?? [])
+}
+
 export function getDefaultCatalogItem(category: string | null | undefined): AssetInput | null {
-  if (!category) return null
-  return CATALOG_ITEMS.find((item) => item.category === category) ?? null
+  return getCatalogItemsForCategory(category)[0] ?? null
 }

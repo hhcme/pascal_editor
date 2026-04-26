@@ -88,6 +88,7 @@ export function StairPanel() {
   const selectedCount = useViewer((s) => s.selection.selectedIds.length)
   const setSelection = useViewer((s) => s.setSelection)
   const updateNode = useScene((s) => s.updateNode)
+  const updateNodes = useScene((s) => s.updateNodes)
   const createNode = useScene((s) => s.createNode)
   const createNodes = useScene((s) => s.createNodes)
   const setMovingNode = useEditor((s) => s.setMovingNode)
@@ -120,6 +121,20 @@ export function StairPanel() {
       updateNode(selectedId as AnyNode['id'], updates)
     },
     [selectedId, updateNode],
+  )
+
+  const handleStraightStructureUpdate = useCallback(
+    (updates: Partial<Pick<StairSegmentNode, 'fillToFloor' | 'thickness'>>) => {
+      handleUpdate(updates)
+      if (node?.stairType !== 'straight' || segments.length === 0) return
+      updateNodes(
+        segments.map((segment) => ({
+          id: segment.id as AnyNodeId,
+          data: updates,
+        })),
+      )
+    },
+    [handleUpdate, node?.stairType, segments, updateNodes],
   )
 
   const materialTargetRole =
@@ -440,7 +455,7 @@ export function StairPanel() {
             <ToggleControl
               checked={node.fillToFloor ?? true}
               label="Fit To Floor"
-              onChange={(checked) => handleUpdate({ fillToFloor: checked })}
+              onChange={(checked) => handleStraightStructureUpdate({ fillToFloor: checked })}
             />
           )}
           {(node.stairType === 'spiral' || !(node.fillToFloor ?? true)) && (
@@ -448,7 +463,7 @@ export function StairPanel() {
               label="Thickness"
               max={1}
               min={0.02}
-              onChange={(value) => handleUpdate({ thickness: value })}
+              onChange={(value) => handleStraightStructureUpdate({ thickness: value })}
               precision={2}
               step={0.01}
               unit="m"

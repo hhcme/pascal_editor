@@ -82,6 +82,7 @@ const assetSchema = z.object({
   src: z.string(),
   dimensions: z.tuple([z.number(), z.number(), z.number()]).default([1, 1, 1]), // [w, h, d]
   attachTo: z.enum(['wall', 'wall-side', 'ceiling']).optional(),
+  grounding: z.enum(['auto', 'none']).default('auto'),
   tags: z.array(z.string()).optional(),
   // These are "Corrective" transforms to normalize the GLB
   offset: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
@@ -125,6 +126,7 @@ export const ItemNode = BaseNode.extend({
     - dimensions: size in level coordinate system
     - src: url of the model
     - attachTo: where to attach the item (wall, wall-side, ceiling)
+    - grounding: auto = rest on the current support plane, none = preserve raw model origin
     - offset: corrective position offset for the model
     - rotation: corrective rotation for the model
     - scale: corrective scale for the model

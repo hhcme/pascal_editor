@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'bun:test'
+import { getSketchCircleArcSweep, getSketchCirclePointAt } from '../../core/src/systems/sketch/sketch-circle-curve'
+import { SketchCircleNode as SketchCircleNodeSchema } from '../../core/src/schema/nodes/sketch-circle'
 import {
+  buildSketchLineFilletArc,
+  buildSetSketchLineTangentToCirclePlan,
+  buildTrimExtendSketchArcToCirclePlan,
+  buildTrimExtendSketchArcToLinePlan,
+  buildTrimExtendSketchLineToCirclePlan,
   buildOrientSketchLinePlan,
+  buildSetSketchLineAnglePlan,
   buildSetSketchLineLengthPlan,
   buildSketchRectangleSegments,
   detectClosedSketchProfiles,
@@ -18,7 +26,12 @@ type TestSketchLineNode = {
   curveOffset?: number
   construction: boolean
   relations: Array<'horizontal' | 'vertical' | 'fixed'>
-  dimensions: { length?: number }
+  dimensions: {
+    length?: number
+    lengthMode?: 'driven' | 'reference'
+    angle?: number
+    angleMode?: 'driven' | 'reference'
+  }
 }
 
 function makeSketchLine(
@@ -40,6 +53,19 @@ function makeSketchLine(
     dimensions: {},
     ...extra,
   } as TestSketchLineNode
+}
+
+function makeSketchCircle(
+  center: [number, number],
+  radius: number,
+  extra: Record<string, unknown> = {},
+) {
+  return SketchCircleNodeSchema.parse({
+    name: 'Circle',
+    center,
+    radius,
+    ...extra,
+  })
 }
 
 function expectPoint(point: [number, number], expected: [number, number]) {
@@ -96,6 +122,25 @@ describe('sketch geometry', () => {
     expect(result.updates).toHaveLength(1)
     expectPoint(result.updates[0]!.data.end!, [6, 1])
     expect(result.updates[0]!.data.dimensions?.length).toBe(5)
+    expect(result.updates[0]!.data.dimensions?.lengthMode).toBe('driven')
+  })
+
+  test('can persist a reference length dimension when requested explicitly', () => {
+    const line = makeSketchLine([0, 0], [3, 0], {
+      dimensions: { length: 3, lengthMode: 'reference' },
+    })
+    const result = buildSetSketchLineLengthPlan({
+      line: line as any,
+      length: 4,
+      dimensionMode: 'reference',
+    })
+
+    if (!result.ok) {
+      throw new Error(result.reason)
+    }
+
+    expect(result.updates[0]!.data.dimensions?.length).toBe(4)
+    expect(result.updates[0]!.data.dimensions?.lengthMode).toBe('reference')
   })
 
   test('preserves horizontal and vertical relations when setting length', () => {
@@ -144,6 +189,237 @@ describe('sketch geometry', () => {
     expect(horizontal.updates[0]!.data.relations).toContain('horizontal')
     expect(vertical.updates[0]!.data.end!, [0, 5])
     expect(vertical.updates[0]!.data.relations).toContain('vertical')
+  })
+
+  test('sets a line angle as a driven dimension and keeps the line length', () => {
+    const line = makeSketchLine([0, 0], [4, 0])
+    const result = buildSetSketchLineAnglePlan({
+      line: line as any,
+      angle: Math.PI / 2,
+    })
+
+    if (!result.ok) {
+      throw new Error(result.reason)
+    }
+
+    expectPoint(result.updates[0]!.data.end!, [0, 4])
+    expect(result.updates[0]!.data.dimensions?.angle).toBeCloseTo(Math.PI / 2, 6)
+    expect(result.updates[0]!.data.dimensions?.angleMode).toBe('driven')
+    expect(result.updates[0]!.data.relations).toContain('vertical')
+  })
+
+  test('can persist a reference angle dimension when requested explicitly', () => {
+    const line = makeSketchLine([0, 0], [4, 0], {
+      dimensions: { angle: 0, angleMode: 'reference' },
+    })
+    const result = buildSetSketchLineAnglePlan({
+      line: line as any,
+      angle: Math.PI / 4,
+      dimensionMode: 'reference',
+    })
+
+    if (!result.ok) {
+      throw new Error(result.reason)
+    }
+
+    expect(result.updates[0]!.data.dimensions?.angle).toBeCloseTo(Math.PI / 4, 6)
+    expect(result.updates[0]!.data.dimensions?.angleMode).toBe('reference')
+  })
+
+  test('builds a true fillet arc between two sketch lines', () => {
+    const firstLine = makeSketchLine([0, 0], [4, 0], { id: 'sketch_line_corner_a' })
+    const secondLine = makeSketchLine([0, 0], [0, 4], { id: 'sketch_line_corner_b' })
+    const result = buildSketchLineFilletArc({
+      firstLine: firstLine as any,
+      secondLine: secondLine as any,
+      trimDistance: 1,
+    })
+
+    if (!result.ok) {
+      throw new Error(result.reason)
+    }
+
+    expect(result.firstEndpoint).toBe('start')
+    expect(result.secondEndpoint).toBe('start')
+    expectPoint(result.firstTrimPoint, [1, 0])
+    expectPoint(result.secondTrimPoint, [0, 1])
+    expectPoint(result.center, [1, 1])
+    expect(result.radius).toBeCloseTo(1, 6)
+
+    const arc = SketchCircleNodeSchema.parse({
+      name: 'Fillet Arc',
+      kind: 'arc',
+      center: result.center,
+      radius: result.radius,
+      startAngle: result.startAngle,
+      endAngle: result.endAngle,
+    })
+
+    expect(getSketchCircleArcSweep(arc)).toBeCloseTo(Math.PI / 2, 6)
+    const arcStart = getSketchCirclePointAt(arc, 0)
+    const arcEnd = getSketchCirclePointAt(arc, 1)
+    const matchesForward =
+      Math.abs(arcStart.x - result.firstTrimPoint[0]) < 1e-6 &&
+      Math.abs(arcStart.y - result.firstTrimPoint[1]) < 1e-6 &&
+      Math.abs(arcEnd.x - result.secondTrimPoint[0]) < 1e-6 &&
+      Math.abs(arcEnd.y - result.secondTrimPoint[1]) < 1e-6
+    const matchesReverse =
+      Math.abs(arcStart.x - result.secondTrimPoint[0]) < 1e-6 &&
+      Math.abs(arcStart.y - result.secondTrimPoint[1]) < 1e-6 &&
+      Math.abs(arcEnd.x - result.firstTrimPoint[0]) < 1e-6 &&
+      Math.abs(arcEnd.y - result.firstTrimPoint[1]) < 1e-6
+
+    expect(matchesForward || matchesReverse).toBe(true)
+  })
+
+  test('trims or extends a sketch line to the nearest circle intersection', () => {
+    const line = makeSketchLine([0, 0], [10, 0], { id: 'sketch_line_trim_circle' })
+    const circle = makeSketchCircle([8, 0], 1, { id: 'sketch_circle_trim_circle' })
+    const result = buildTrimExtendSketchLineToCirclePlan({
+      line: line as any,
+      circle: circle as any,
+    })
+
+    if (!result.ok) {
+      throw new Error(result.reason)
+    }
+
+    expect(result.endpoint).toBe('end')
+    expectPoint(result.point, [9, 0])
+  })
+
+  test('filters trim/extend intersections against arc bounds', () => {
+    const line = makeSketchLine([0, 0], [10, 0], { id: 'sketch_line_trim_arc' })
+    const arc = makeSketchCircle([5, 0], 1, {
+      id: 'sketch_circle_trim_arc',
+      kind: 'arc',
+      startAngle: Math.PI / 2,
+      endAngle: (Math.PI * 3) / 2,
+    })
+    const result = buildTrimExtendSketchLineToCirclePlan({
+      line: line as any,
+      circle: arc as any,
+    })
+
+    if (!result.ok) {
+      throw new Error(result.reason)
+    }
+
+    expect(result.endpoint).toBe('start')
+    expectPoint(result.point, [4, 0])
+  })
+
+  test('sets a sketch line tangent to a circle by moving the nearest endpoint', () => {
+    const line = makeSketchLine([0, 0], [4, 0], { id: 'sketch_line_tangent_circle' })
+    const circle = makeSketchCircle([4, 2], 1, { id: 'sketch_circle_tangent_circle' })
+    const result = buildSetSketchLineTangentToCirclePlan({
+      line: line as any,
+      circle: circle as any,
+    })
+
+    if (!result.ok) {
+      throw new Error(result.reason)
+    }
+
+    expect(result.endpoint).toBe('end')
+    expect(Math.hypot(result.point[0] - circle.center[0], result.point[1] - circle.center[1])).toBeCloseTo(
+      circle.radius,
+      6,
+    )
+    const tangentVector = [result.point[0] - circle.center[0], result.point[1] - circle.center[1]]
+    const lineVector = [line.start[0] - result.point[0], line.start[1] - result.point[1]]
+    expect(tangentVector[0] * lineVector[0] + tangentVector[1] * lineVector[1]).toBeCloseTo(0, 6)
+    expect(result.point[1]).toBeLessThan(circle.center[1])
+  })
+
+  test('filters tangent candidates against arc bounds', () => {
+    const line = makeSketchLine([0, 0], [4, 0], { id: 'sketch_line_tangent_arc' })
+    const arc = makeSketchCircle([4, 2], 1, {
+      id: 'sketch_circle_tangent_arc',
+      kind: 'arc',
+      startAngle: Math.PI / 2,
+      endAngle: Math.PI,
+    })
+    const result = buildSetSketchLineTangentToCirclePlan({
+      line: line as any,
+      circle: arc as any,
+    })
+
+    if (!result.ok) {
+      throw new Error(result.reason)
+    }
+
+    expect(result.endpoint).toBe('end')
+    expect(result.point[1]).toBeGreaterThan(arc.center[1])
+    expect(result.point[0]).toBeLessThan(arc.center[0])
+  })
+
+  test('rejects curved sketch lines for tangent edits', () => {
+    const line = makeSketchLine([0, 0], [4, 0], {
+      id: 'sketch_line_tangent_curved',
+      curveOffset: 0.5,
+    })
+    const circle = makeSketchCircle([4, 2], 1, { id: 'sketch_circle_tangent_curved' })
+
+    expect(buildSetSketchLineTangentToCirclePlan({ line: line as any, circle: circle as any }).ok).toBe(
+      false,
+    )
+  })
+
+  test('trims or extends a sketch arc to a sketch line', () => {
+    const arc = makeSketchCircle([0, 0], 5, {
+      id: 'sketch_circle_arc_trim_line',
+      kind: 'arc',
+      startAngle: 0,
+      endAngle: Math.PI / 2,
+    })
+    const line = makeSketchLine([-10, 4], [10, 4], { id: 'sketch_line_arc_trim_line' })
+    const result = buildTrimExtendSketchArcToLinePlan({
+      circle: arc as any,
+      line: line as any,
+    })
+
+    if (!result.ok) {
+      throw new Error(result.reason)
+    }
+
+    expect(result.startAngle).toBeCloseTo(0, 6)
+    expect(result.endAngle).toBeCloseTo(Math.atan2(4, 3), 6)
+  })
+
+  test('filters arc trim/extend intersections against target arc bounds', () => {
+    const arc = makeSketchCircle([0, 0], 5, {
+      id: 'sketch_circle_arc_trim_arc',
+      kind: 'arc',
+      startAngle: 0,
+      endAngle: Math.PI / 2,
+    })
+    const targetArc = makeSketchCircle([4, 0], 3, {
+      id: 'sketch_circle_target_arc',
+      kind: 'arc',
+      startAngle: Math.PI,
+      endAngle: (Math.PI * 3) / 2,
+    })
+    const result = buildTrimExtendSketchArcToCirclePlan({
+      circle: arc as any,
+      targetCircle: targetArc as any,
+    })
+
+    if (!result.ok) {
+      throw new Error(result.reason)
+    }
+
+    expect(result.endAngle).toBeCloseTo(Math.PI / 2, 6)
+    expect(result.startAngle).toBeGreaterThan(5)
+  })
+
+  test('rejects full circles for arc trim/extend edits', () => {
+    const circle = makeSketchCircle([0, 0], 5, { id: 'sketch_circle_full_trim' })
+    const line = makeSketchLine([-10, 4], [10, 4], { id: 'sketch_line_full_trim' })
+
+    expect(buildTrimExtendSketchArcToLinePlan({ circle: circle as any, line: line as any }).ok).toBe(
+      false,
+    )
   })
 
   test('rejects fixed or zero-length sketch lines for driven edits', () => {

@@ -10,8 +10,16 @@ import {
   useScene,
   type ZoneNode,
 } from '@pascal-app/core'
-import { useViewer } from '@pascal-app/viewer'
 import {
+  getBrowserTimeZone,
+  getSiteSolarLocation,
+  isValidTimeZone,
+  resolveSiteSolarLocation,
+  useViewer,
+  withSiteSolarLocation,
+} from '@pascal-app/viewer'
+import {
+  ArrowLeftRight,
   Camera,
   ChevronDown,
   Compass,
@@ -22,6 +30,7 @@ import {
   Pencil,
   Pentagon,
   Plus,
+  SunMedium,
   Trash2,
   X,
 } from 'lucide-react'
@@ -30,6 +39,7 @@ import { memo, useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { MetricControl } from './../../../../../components/ui/controls/metric-control'
 import { ColorDot } from './../../../../../components/ui/primitives/color-dot'
+import { Input } from './../../../../../components/ui/primitives/input'
 import {
   Popover,
   PopoverContent,
@@ -51,6 +61,11 @@ import {
   radiansToDegrees,
   withSiteOrientationDegrees,
 } from '../../../../../lib/orientation'
+import {
+  getSiteSetbackRules,
+  type SiteSetbackRuleKey,
+  withSiteSetbackRule,
+} from '../../../../../lib/site-measurement-rules'
 import useEditor from './../../../../../store/use-editor'
 import { useUploadStore } from '../../../../../store/use-upload'
 import { InlineRenameInput } from './inline-rename-input'
@@ -504,12 +519,13 @@ const LevelReferences = memo(function LevelReferences({
     const isScan =
       file.name.toLowerCase().endsWith('.glb') || file.name.toLowerCase().endsWith('.gltf')
     const isImage = file.type.startsWith('image/')
+    const isPdf = file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf'
 
-    if (!(isScan || isImage)) {
+    if (!(isScan || isImage || isPdf)) {
       useUploadStore.getState().startUpload(levelId, 'scan', file.name)
       useUploadStore
         .getState()
-        .setError(levelId, 'Invalid file type. Please upload a .glb/.gltf scan or an image.')
+        .setError(levelId, 'Invalid file type. Please upload a .glb/.gltf scan, an image, or a PDF.')
       return
     }
 
@@ -582,7 +598,7 @@ const LevelReferences = memo(function LevelReferences({
               </button>
 
               <input
-                accept=".glb,.gltf,image/jpeg,image/png,image/webp,image/gif"
+                accept=".glb,.gltf,.pdf,image/jpeg,image/png,image/webp,image/gif"
                 className="hidden"
                 onChange={handleAddAsset}
                 ref={scanInputRef}
@@ -1056,6 +1072,261 @@ const SiteOrientationSection = memo(function SiteOrientationSection({ site }: { 
       onChange={handleOrientationChange}
       title="场地朝向"
     />
+  )
+})
+
+function formatOptionalNumber(value: number | undefined, precision: number) {
+  if (typeof value !== 'number') return ''
+
+  return value
+    .toFixed(precision)
+    .replace(/\.?0+$/, '')
+}
+
+function parseOptionalNumber(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+
+  const parsed = Number.parseFloat(trimmed)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+const SiteSolarLocationSection = memo(function SiteSolarLocationSection({ site }: { site: SiteNode }) {
+  const updateNode = useScene((state) => state.updateNode)
+  const solarLocation = getSiteSolarLocation(site)
+  const resolvedSolarLocation = resolveSiteSolarLocation(site)
+  const browserTimeZone = getBrowserTimeZone()
+
+  const [latitudeInput, setLatitudeInput] = useState(formatOptionalNumber(solarLocation.latitude, 6))
+  const [longitudeInput, setLongitudeInput] = useState(
+    formatOptionalNumber(solarLocation.longitude, 6),
+  )
+  const [timezoneInput, setTimezoneInput] = useState(solarLocation.timezone ?? '')
+  const [elevationInput, setElevationInput] = useState(
+    formatOptionalNumber(solarLocation.elevationMeters, 2),
+  )
+
+  useEffect(() => {
+    setLatitudeInput(formatOptionalNumber(solarLocation.latitude, 6))
+  }, [solarLocation.latitude])
+
+  useEffect(() => {
+    setLongitudeInput(formatOptionalNumber(solarLocation.longitude, 6))
+  }, [solarLocation.longitude])
+
+  useEffect(() => {
+    setTimezoneInput(solarLocation.timezone ?? '')
+  }, [solarLocation.timezone])
+
+  useEffect(() => {
+    setElevationInput(formatOptionalNumber(solarLocation.elevationMeters, 2))
+  }, [solarLocation.elevationMeters])
+
+  const parsedLatitude = parseOptionalNumber(latitudeInput)
+  const parsedLongitude = parseOptionalNumber(longitudeInput)
+  const parsedElevation = parseOptionalNumber(elevationInput)
+  const trimmedTimezone = timezoneInput.trim()
+
+  const latitudeError =
+    parsedLatitude === null || (typeof parsedLatitude === 'number' && (parsedLatitude < -90 || parsedLatitude > 90))
+  const longitudeError =
+    parsedLongitude === null ||
+    (typeof parsedLongitude === 'number' && (parsedLongitude < -180 || parsedLongitude > 180))
+  const elevationError = parsedElevation === null
+  const timezoneError = trimmedTimezone.length > 0 && !isValidTimeZone(trimmedTimezone)
+
+  const handleNumberCommit = (
+    key: 'latitude' | 'longitude' | 'elevationMeters',
+    rawValue: string,
+    isInvalid: boolean,
+  ) => {
+    if (isInvalid) return
+
+    const parsedValue = parseOptionalNumber(rawValue)
+    updateNode(site.id, {
+      metadata: withSiteSolarLocation(site, {
+        [key]: typeof parsedValue === 'number' ? parsedValue : undefined,
+      }),
+    })
+  }
+
+  const handleTimezoneCommit = () => {
+    if (timezoneError) return
+
+    updateNode(site.id, {
+      metadata: withSiteSolarLocation(site, {
+        timezone: trimmedTimezone || undefined,
+      }),
+    })
+  }
+
+  const handleFieldKeyDown = (
+    event: React.KeyboardEvent<HTMLInputElement>,
+    onCommit: () => void,
+  ) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      onCommit()
+      event.currentTarget.blur()
+    }
+  }
+
+  return (
+    <div className="relative border-border/50 border-b px-3 py-2.5">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
+          <SunMedium className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate font-medium text-xs">位置与日照</span>
+        </div>
+        <button
+          className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent/55 hover:text-foreground"
+          onClick={() => {
+            setTimezoneInput(browserTimeZone)
+            updateNode(site.id, {
+              metadata: withSiteSolarLocation(site, { timezone: browserTimeZone }),
+            })
+          }}
+          type="button"
+        >
+          当前时区
+        </button>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="space-y-1">
+          <span className="text-[11px] text-muted-foreground">纬度</span>
+          <Input
+            aria-invalid={latitudeError}
+            className="h-8 text-xs"
+            inputMode="decimal"
+            onBlur={() => handleNumberCommit('latitude', latitudeInput, latitudeError)}
+            onChange={(event) => setLatitudeInput(event.target.value)}
+            onKeyDown={(event) =>
+              handleFieldKeyDown(event, () =>
+                handleNumberCommit('latitude', latitudeInput, latitudeError),
+              )
+            }
+            placeholder="31.2304"
+            type="text"
+            value={latitudeInput}
+          />
+        </label>
+        <label className="space-y-1">
+          <span className="text-[11px] text-muted-foreground">经度</span>
+          <Input
+            aria-invalid={longitudeError}
+            className="h-8 text-xs"
+            inputMode="decimal"
+            onBlur={() => handleNumberCommit('longitude', longitudeInput, longitudeError)}
+            onChange={(event) => setLongitudeInput(event.target.value)}
+            onKeyDown={(event) =>
+              handleFieldKeyDown(event, () =>
+                handleNumberCommit('longitude', longitudeInput, longitudeError),
+              )
+            }
+            placeholder="121.4737"
+            type="text"
+            value={longitudeInput}
+          />
+        </label>
+      </div>
+      <div className="mt-2 grid grid-cols-[minmax(0,1fr)_96px] gap-2">
+        <label className="space-y-1">
+          <span className="text-[11px] text-muted-foreground">时区</span>
+          <Input
+            aria-invalid={timezoneError}
+            className="h-8 text-xs"
+            onBlur={handleTimezoneCommit}
+            onChange={(event) => setTimezoneInput(event.target.value)}
+            onKeyDown={(event) => handleFieldKeyDown(event, handleTimezoneCommit)}
+            placeholder={browserTimeZone}
+            type="text"
+            value={timezoneInput}
+          />
+        </label>
+        <label className="space-y-1">
+          <span className="text-[11px] text-muted-foreground">海拔(m)</span>
+          <Input
+            aria-invalid={elevationError}
+            className="h-8 text-xs"
+            inputMode="decimal"
+            onBlur={() => handleNumberCommit('elevationMeters', elevationInput, elevationError)}
+            onChange={(event) => setElevationInput(event.target.value)}
+            onKeyDown={(event) =>
+              handleFieldKeyDown(event, () =>
+                handleNumberCommit('elevationMeters', elevationInput, elevationError),
+              )
+            }
+            placeholder="4"
+            type="text"
+            value={elevationInput}
+          />
+        </label>
+      </div>
+      <div className="mt-2 space-y-1 text-[11px]">
+        {latitudeError ? <div className="text-destructive">纬度必须在 -90 到 90 之间。</div> : null}
+        {longitudeError ? <div className="text-destructive">经度必须在 -180 到 180 之间。</div> : null}
+        {timezoneError ? <div className="text-destructive">时区必须是有效的 IANA 时区，例如 `Asia/Shanghai`。</div> : null}
+        {resolvedSolarLocation ? (
+          <div className="text-muted-foreground">
+            真实日照已可用：{resolvedSolarLocation.latitude.toFixed(4)}°,{' '}
+            {resolvedSolarLocation.longitude.toFixed(4)}° · {resolvedSolarLocation.timezone}
+          </div>
+        ) : (
+          <div className="text-muted-foreground">真实日照需要纬度、经度和有效时区。</div>
+        )}
+      </div>
+    </div>
+  )
+})
+
+const SITE_SETBACK_FIELDS: Array<{
+  key: SiteSetbackRuleKey
+  label: string
+}> = [
+  { key: 'front', label: '前退距' },
+  { key: 'back', label: '后退距' },
+  { key: 'left', label: '左退距' },
+  { key: 'right', label: '右退距' },
+]
+
+const SiteSetbackRuleSection = memo(function SiteSetbackRuleSection({ site }: { site: SiteNode }) {
+  const updateNode = useScene((state) => state.updateNode)
+  const rules = getSiteSetbackRules(site)
+
+  const handleRuleChange = (key: SiteSetbackRuleKey, value: number) => {
+    updateNode(site.id, {
+      metadata: withSiteSetbackRule(site, key, value),
+    })
+  }
+
+  return (
+    <div className="relative border-border/50 border-b px-3 py-2.5">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
+          <ArrowLeftRight className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate font-medium text-xs">目标退距规则</span>
+        </div>
+        <span className="text-[10px] text-muted-foreground">0 表示不启用</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {SITE_SETBACK_FIELDS.map((field) => (
+          <MetricControl
+            className="h-9"
+            key={field.key}
+            label={field.label}
+            min={0}
+            onChange={(value) => handleRuleChange(field.key, value)}
+            precision={2}
+            step={0.1}
+            unit="m"
+            value={rules[field.key] ?? 0}
+          />
+        ))}
+      </div>
+      <div className="mt-2 text-[11px] text-muted-foreground">
+        3D 测量的周长模式会按场地朝向检查前后左右退距，低于目标值时直接给出规则告警。
+      </div>
+    </div>
   )
 })
 
@@ -1746,6 +2017,18 @@ export function SitePanel({ projectId, onUploadAsset, onDeleteAsset }: SitePanel
   const [siteOrientationOpen, setSiteOrientationOpen] = useState(false)
   const [buildingOrientationOpenId, setBuildingOrientationOpenId] = useState<string | null>(null)
 
+  useEffect(() => {
+    const handleOpenSolarSettings = () => {
+      setPhase('site')
+      setSiteOrientationOpen(true)
+    }
+
+    emitter.on('site:open-solar-settings' as any, handleOpenSolarSettings as any)
+    return () => {
+      emitter.off('site:open-solar-settings' as any, handleOpenSolarSettings as any)
+    }
+  }, [setPhase])
+
   const siteNode = useScene((s) =>
     rootNodeIds[0] ? ((s.nodes[rootNodeIds[0]] as SiteNode | undefined) ?? null) : null,
   )
@@ -1794,7 +2077,7 @@ export function SitePanel({ projectId, onUploadAsset, onDeleteAsset }: SitePanel
                   setPhase('site')
                   setSiteOrientationOpen((open) => (phase === 'site' ? !open : true))
                 }}
-                title="场地朝向"
+                title="场地规则"
               />
             </div>
             <CameraPopover
@@ -1835,6 +2118,8 @@ export function SitePanel({ projectId, onUploadAsset, onDeleteAsset }: SitePanel
                       transition={{ type: 'spring', bounce: 0, duration: 0.3 }}
                     >
                       <SiteOrientationSection site={siteNode} />
+                      <SiteSolarLocationSection site={siteNode} />
+                      <SiteSetbackRuleSection site={siteNode} />
                     </motion.div>
                   )}
                 </AnimatePresence>

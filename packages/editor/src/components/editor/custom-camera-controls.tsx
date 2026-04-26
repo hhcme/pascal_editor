@@ -23,7 +23,7 @@ const DEFAULT_MAX_POLAR_ANGLE = Math.PI / 2 - 0.1
 const DEBUG_MAX_POLAR_ANGLE = Math.PI - 0.05
 const SIDE_VIEW_POLAR_ANGLE = Math.PI / 2 - 0.12
 const LEFT_CAMERA_DRAG_THRESHOLD_PX = 4
-const TRI_VIEW_INTERACTIVE_AREA = { x: 0.5, y: 0.5, width: 0.5, height: 0.5 }
+const TRI_VIEW_INTERACTIVE_AREA = { x: 0.5, y: 0, width: 0.5, height: 0.5 }
 const FULL_INTERACTIVE_AREA = { x: 0, y: 0, width: 1, height: 1 }
 
 const EDITOR_INTERACTION_NODE_TYPES = [
@@ -174,11 +174,12 @@ export const CustomCameraControls = () => {
   const selection = useViewer((s) => s.selection)
   const currentLevelId = selection.levelId
   const firstLoad = useRef(true)
-  const lastSceneSignature = useRef<string | null>(null)
+  const lastSceneLoadSignature = useRef<string | null>(null)
   const maxPolarAngle =
     !isPreviewMode && allowUndergroundCamera ? DEBUG_MAX_POLAR_ANGLE : DEFAULT_MAX_POLAR_ANGLE
-  const sceneSignature = useScene(
-    (state) => `${state.rootNodeIds.join('|')}::${Object.keys(state.nodes).length}`,
+  const projectId = useViewer((state) => state.projectId)
+  const sceneLoadSignature = useScene(
+    (state) => `${projectId ?? 'local'}::${state.rootNodeIds.join('|')}`,
   )
 
   const camera = useThree((state) => state.camera)
@@ -225,8 +226,11 @@ export const CustomCameraControls = () => {
     if (isPreviewMode) return // Preview mode uses auto-navigate instead
     if (!controls.current) return
 
-    const isNewScene = lastSceneSignature.current !== sceneSignature
-    lastSceneSignature.current = sceneSignature
+    // Only treat project/root-scene changes as a "new scene". Regular editing operations
+    // like duplicate/move/create draft nodes also change the node count and should not
+    // yank the camera back to a default framing.
+    const isNewScene = lastSceneLoadSignature.current !== sceneLoadSignature
+    lastSceneLoadSignature.current = sceneLoadSignature
 
     if (firstLoad.current || isNewScene) {
       firstLoad.current = false
@@ -270,7 +274,7 @@ export const CustomCameraControls = () => {
 
     controls.current.getTarget(currentTarget)
     controls.current.moveTo(currentTarget.x, targetY, currentTarget.z, true)
-  }, [currentLevelId, focusSceneObject, isPreviewMode, sceneSignature, selection.buildingId])
+  }, [currentLevelId, focusSceneObject, isPreviewMode, sceneLoadSignature, selection.buildingId])
 
   useEffect(() => {
     if (!controls.current) return
@@ -363,7 +367,7 @@ export const CustomCameraControls = () => {
     (event: PointerEvent) => {
       const rect = gl.domElement.getBoundingClientRect()
       const viewportLeft = viewMode === 'tri-view' ? rect.left + rect.width * 0.5 : rect.left
-      const viewportTop = viewMode === 'tri-view' ? rect.top + rect.height * 0.5 : rect.top
+      const viewportTop = rect.top
       const viewportWidth = viewMode === 'tri-view' ? rect.width * 0.5 : rect.width
       const viewportHeight = viewMode === 'tri-view' ? rect.height * 0.5 : rect.height
 
@@ -392,7 +396,7 @@ export const CustomCameraControls = () => {
 
     const updateViewport = () => {
       const rect = canvas.getBoundingClientRect()
-      control.setViewport(rect.width * 0.5, 0, rect.width * 0.5, rect.height * 0.5)
+      control.setViewport(rect.width * 0.5, rect.height * 0.5, rect.width * 0.5, rect.height * 0.5)
       control.interactiveArea = TRI_VIEW_INTERACTIVE_AREA
     }
 

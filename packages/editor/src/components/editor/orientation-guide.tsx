@@ -2,9 +2,18 @@
 
 import { type SiteNode, sceneRegistry, useScene } from '@pascal-app/core'
 import {
+  formatSunMinutesOfDay,
+  getDefaultSunStudyDate,
+  getSolarPathForLocation,
+  getSolarPositionForLocation,
   getSunPathPosition,
+  getSunPositionFromAngles,
   getSunPositionForProgress,
+  resolveSiteSolarLocation,
+  resolveSunMinutesOfDay,
   resolveSunProgress,
+  resolveSunStudyDate,
+  type ResolvedSiteSolarLocation,
   useViewer,
 } from '@pascal-app/viewer'
 import { Html } from '@react-three/drei'
@@ -72,6 +81,12 @@ const COMPASS_OCCLUSION_SAMPLES = [
 ] as const
 const sunDragPoint = new Vector3()
 const htmlPosition = new Vector3()
+
+type RealSunPathPoint = {
+  isAboveHorizon: boolean
+  minutesOfDay: number
+  position: [number, number, number]
+}
 
 type HtmlCalculatePosition = (
   el: Object3D,
@@ -254,7 +269,7 @@ function calculateTriViewPerspectiveHtmlPosition(
 
   return [
     leftWidth + (htmlPosition.x * 0.5 + 0.5) * rightWidth,
-    topHeight + (-htmlPosition.y * 0.5 + 0.5) * bottomHeight,
+    (-htmlPosition.y * 0.5 + 0.5) * topHeight,
   ]
 }
 
@@ -286,16 +301,44 @@ function createCardinalLineGeometry(
 }
 
 function createSunPathGeometry(radius: number, orientationDegrees: number) {
-  const positions: number[] = []
+  const points: Array<[number, number, number]> = []
   const steps = 36
 
   for (let i = 0; i <= steps; i++) {
-    positions.push(...rotateLocalOffset(getSunPathPosition(i / steps, radius), orientationDegrees))
+    points.push(rotateLocalOffset(getSunPathPosition(i / steps, radius), orientationDegrees))
   }
 
+  return createPathGeometry(points)
+}
+
+function createPathGeometry(points: Array<[number, number, number]>) {
   const geometry = new BufferGeometry()
-  geometry.setAttribute('position', new Float32BufferAttribute(positions, 3))
+  geometry.setAttribute('position', new Float32BufferAttribute(points.flat(), 3))
   return geometry
+}
+
+function getClosestRealSunMinutes(
+  ray: Ray,
+  bounds: SiteBounds,
+  samples: RealSunPathPoint[],
+) {
+  if (samples.length === 0) return null
+
+  let closestMinutes = samples[0]?.minutesOfDay ?? null
+  let closestDistance = Number.POSITIVE_INFINITY
+
+  for (const sample of samples) {
+    const [x, y, z] = sample.position
+    sunDragPoint.set(bounds.centerX + x, y, bounds.centerZ + z)
+
+    const distance = ray.distanceSqToPoint(sunDragPoint)
+    if (distance < closestDistance) {
+      closestDistance = distance
+      closestMinutes = sample.minutesOfDay
+    }
+  }
+
+  return closestMinutes
 }
 
 function getCardinalPosition(
@@ -387,23 +430,71 @@ function SunPath({
   bounds,
   isDark,
   orientationDegrees,
+  solarLocation,
 }: {
   bounds: SiteBounds
   isDark: boolean
   orientationDegrees: number
+  solarLocation: ResolvedSiteSolarLocation | null
 }) {
   const sunStudy = useViewer((state) => state.sunStudy)
   const setSunProgress = useViewer((state) => state.setSunProgress)
+  const setSunMinutesOfDay = useViewer((state) => state.setSunMinutesOfDay)
   const radius = Math.max(bounds.radius * 1.75, 22)
-  const pathGeometry = useMemo(
-    () => createSunPathGeometry(radius, orientationDegrees),
-    [radius, orientationDegrees],
-  )
+  const isRealSun = sunStudy.mode === 'real' && solarLocation
+  const realSunDate = resolveSunStudyDate(sunStudy.date) ?? getDefaultSunStudyDate()
+  const realSunSamples = useMemo(() => {
+    if (!(sunStudy.mode === 'real' && solarLocation)) return []
+
+    return getSolarPathForLocation(solarLocation, realSunDate, 5)
+      .filter((sample) => sample.elevationDeg > 0)
+      .map(
+        (sample): RealSunPathPoint => ({
+          isAboveHorizon: sample.isAboveHorizon,
+          minutesOfDay: sample.minutesOfDay,
+          position: rotateLocalOffset(
+            getSunPositionFromAngles(sample.azimuthDeg, Math.max(sample.elevationDeg, 0), radius),
+            orientationDegrees,
+          ),
+        }),
+      )
+  }, [orientationDegrees, radius, realSunDate, solarLocation, sunStudy.mode])
+  const pathGeometry = useMemo(() => {
+    if (isRealSun) {
+      const points = realSunSamples.map((sample) => sample.position)
+      return points.length >= 2 ? createPathGeometry(points) : null
+    }
+
+    return createSunPathGeometry(radius, orientationDegrees)
+  }, [isRealSun, orientationDegrees, radius, realSunSamples])
   const sunProgress = resolveSunProgress(sunStudy.timeOfDay, sunStudy.progress)
-  const sunPosition = rotateLocalOffset(
-    getSunPositionForProgress(sunProgress, radius),
-    orientationDegrees,
-  )
+  const realSunState = useMemo(() => {
+    if (!(sunStudy.mode === 'real' && solarLocation)) return null
+
+    const solarPosition = getSolarPositionForLocation(
+      solarLocation,
+      realSunDate,
+      resolveSunMinutesOfDay(sunStudy.minutesOfDay),
+    )
+
+    if (!solarPosition) return null
+
+    return {
+      isAboveHorizon: solarPosition.isAboveHorizon,
+      position: rotateLocalOffset(
+        getSunPositionFromAngles(solarPosition.azimuthDeg, Math.max(solarPosition.elevationDeg, 0), radius),
+        orientationDegrees,
+      ),
+    }
+  }, [orientationDegrees, radius, realSunDate, solarLocation, sunStudy.minutesOfDay, sunStudy.mode])
+  const sunPosition =
+    realSunState?.position ??
+    rotateLocalOffset(getSunPositionForProgress(sunProgress, radius), orientationDegrees)
+  const isSunAboveHorizon = realSunState?.isAboveHorizon ?? true
+  const sunLabel =
+    isRealSun && solarLocation
+      ? `${formatSunMinutesOfDay(resolveSunMinutesOfDay(sunStudy.minutesOfDay))}${isSunAboveHorizon ? '' : ' · 夜间'}`
+      : '太阳'
   const draggingRef = useRef(false)
   const [isDragging, setIsDragging] = useState(false)
 
@@ -413,9 +504,17 @@ function SunPath({
 
   const updateSunProgressFromPointer = useCallback(
     (event: ThreeEvent<PointerEvent>) => {
+      if (isRealSun) {
+        const minutesOfDay = getClosestRealSunMinutes(event.ray, bounds, realSunSamples)
+        if (minutesOfDay !== null) {
+          setSunMinutesOfDay(minutesOfDay)
+        }
+        return
+      }
+
       setSunProgress(getClosestSunPathProgress(event.ray, bounds, radius, orientationDegrees))
     },
-    [bounds, orientationDegrees, radius, setSunProgress],
+    [bounds, isRealSun, orientationDegrees, radius, realSunSamples, setSunMinutesOfDay, setSunProgress],
   )
 
   const handleSunPointerDown = useCallback(
@@ -477,10 +576,12 @@ function SunPath({
 
   return (
     <group layers={EDITOR_LAYER} position={[bounds.centerX, 0, bounds.centerZ]}>
-      {/* @ts-ignore */}
-      <line geometry={pathGeometry} layers={EDITOR_LAYER} renderOrder={8}>
-        <lineBasicMaterial color={isDark ? '#fbbf24' : '#d97706'} opacity={0.72} transparent />
-      </line>
+      {pathGeometry ? (
+        /* @ts-ignore */
+        <line geometry={pathGeometry} layers={EDITOR_LAYER} renderOrder={8}>
+          <lineBasicMaterial color={isDark ? '#fbbf24' : '#d97706'} opacity={0.72} transparent />
+        </line>
+      ) : null}
       <mesh
         layers={EDITOR_LAYER}
         onPointerCancel={handleSunPointerEnd}
@@ -502,7 +603,12 @@ function SunPath({
         scale={isDragging ? 1.16 : 1}
       >
         <sphereGeometry args={[0.55, 24, 16]} />
-        <meshBasicMaterial color="#f59e0b" toneMapped={false} />
+        <meshBasicMaterial
+          color={isSunAboveHorizon ? '#f59e0b' : '#94a3b8'}
+          opacity={isSunAboveHorizon ? 1 : 0.7}
+          toneMapped={false}
+          transparent={!isSunAboveHorizon}
+        />
       </mesh>
       <Html center position={sunPosition} style={{ pointerEvents: 'none', userSelect: 'none' }}>
         <div
@@ -513,7 +619,7 @@ function SunPath({
             color: isDark ? '#fde68a' : '#92400e',
           }}
         >
-          太阳
+          {sunLabel}
         </div>
       </Html>
     </group>
@@ -532,6 +638,7 @@ export function OrientationGuide() {
   })
   const sitePoints = siteNode?.polygon.points ?? null
   const orientationDegrees = getSiteOrientationDegrees(siteNode)
+  const solarLocation = resolveSiteSolarLocation(siteNode)
 
   const bounds = useMemo(() => getSiteBounds(sitePoints ?? []), [sitePoints])
   const offset = bounds ? Math.max(bounds.radius * COMPASS_OFFSET_RATIO, COMPASS_MIN_OFFSET) : 3
@@ -566,7 +673,12 @@ export function OrientationGuide() {
         </>
       ) : null}
       {sunEnabled ? (
-        <SunPath bounds={bounds} isDark={isDark} orientationDegrees={orientationDegrees} />
+        <SunPath
+          bounds={bounds}
+          isDark={isDark}
+          orientationDegrees={orientationDegrees}
+          solarLocation={solarLocation}
+        />
       ) : null}
     </group>
   )

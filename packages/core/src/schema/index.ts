@@ -49,20 +49,17 @@ export { RoofSegmentNode, RoofType } from './nodes/roof-segment'
 export { ScanNode } from './nodes/scan'
 // Nodes
 export { SiteNode } from './nodes/site'
+export * from './nodes/sketch-dimension'
 export {
+  SketchCircleConstraint,
+  SketchCircleConstraintKind,
   SketchCircleDimensions,
   SketchCircleKind,
   SketchCircleNode,
   SketchCircleRelation,
+  SketchCircleTangentMode,
 } from './nodes/sketch-circle'
-export {
-  SketchLineCoincident,
-  SketchLineDimensions,
-  SketchLineEndpoint,
-  SketchLineEndpointReference,
-  SketchLineNode,
-  SketchLineRelation,
-} from './nodes/sketch-line'
+export * from './nodes/sketch-line'
 export { SlabNode } from './nodes/slab'
 export type { StairSurfaceMaterialRole, StairSurfaceMaterialSpec } from './nodes/stair'
 export {

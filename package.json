@@ -4,6 +4,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "set -a && . ./.env 2>/dev/null; set +a; turbo run dev --env-mode=loose",
+    "guide:debug": "bun ./scripts/guide-detection-debug.ts",
     "lint": "biome lint",
     "lint:fix": "biome lint --write",
     "format": "biome format --write",
@@ -29,7 +30,10 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.6",
+    "@types/pngjs": "^6.0.5",
     "dotenv-cli": "^11.0.0",
+    "jpeg-js": "^0.4.4",
+    "pngjs": "^7.0.0",
     "turbo": "^2.8.15",
     "typescript": "5.9.3",
     "ultracite": "^7.2.5"

@@ -234,14 +234,14 @@ export function CadMultiViewRenderer() {
     const topHeight = height - bottomHeight
 
     const topViewport = { x: 0, y: bottomHeight, width: leftWidth, height: topHeight }
-    const frontViewport = {
+    const perspectiveViewport = {
       x: leftWidth,
       y: bottomHeight,
       width: rightWidth,
       height: topHeight,
     }
-    const rightViewport = { x: 0, y: 0, width: leftWidth, height: bottomHeight }
-    const perspectiveViewport = {
+    const frontViewport = { x: 0, y: 0, width: leftWidth, height: bottomHeight }
+    const rightViewport = {
       x: leftWidth,
       y: 0,
       width: rightWidth,
@@ -259,9 +259,9 @@ export function CadMultiViewRenderer() {
     renderer.setScissorTest(true)
 
     renderViewport(renderer, scene, orthoCameras.top, topViewport)
+    renderViewport(renderer, scene, camera, perspectiveViewport)
     renderViewport(renderer, scene, orthoCameras.front, frontViewport)
     renderViewport(renderer, scene, orthoCameras.right, rightViewport)
-    renderViewport(renderer, scene, camera, perspectiveViewport)
 
     renderer.setScissorTest(false)
     renderer.setViewport(0, 0, width, height)

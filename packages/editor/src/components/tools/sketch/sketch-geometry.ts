@@ -1,4 +1,16 @@
-import type { AnyNodeId, SketchLineNode, SketchLineRelation } from '@pascal-app/core'
+import type {
+  AnyNodeId,
+  SketchCircleNode,
+  SketchLineNode,
+  SketchLineRelation,
+} from '@pascal-app/core'
+import {
+  buildSketchLineAngleDimensionData,
+  buildSketchLineGeometryDimensionData,
+  buildSketchLineLengthDimensionData,
+  getSketchLineAngleDimensionMode,
+  getSketchLineLengthDimensionMode,
+} from './sketch-dimensions'
 
 export type SketchPlanPoint = [number, number]
 export type SketchLineOrientation = 'horizontal' | 'vertical'
@@ -30,9 +42,49 @@ export type SketchLineEditResult =
       reason: string
     }
 
+export type SketchLineFilletArcResult =
+  | {
+      ok: true
+      center: SketchPlanPoint
+      radius: number
+      startAngle: number
+      endAngle: number
+      firstEndpoint: 'start' | 'end'
+      secondEndpoint: 'start' | 'end'
+      firstTrimPoint: SketchPlanPoint
+      secondTrimPoint: SketchPlanPoint
+    }
+  | {
+      ok: false
+      reason: string
+    }
+
+export type SketchLineTrimToCircleResult =
+  | {
+      ok: true
+      endpoint: 'start' | 'end'
+      point: SketchPlanPoint
+    }
+  | {
+      ok: false
+      reason: string
+    }
+
+export type SketchCircleTrimExtendResult =
+  | {
+      ok: true
+      startAngle: number
+      endAngle: number
+    }
+  | {
+      ok: false
+      reason: string
+    }
+
 const MIN_SKETCH_LINE_LENGTH = 1e-4
 const PROFILE_KEY_TOLERANCE = 1e-4
 const EPSILON = 1e-6
+const FULL_CIRCLE_RADIANS = Math.PI * 2
 
 type ProfileEdge = {
   id: SketchLineNode['id']
@@ -43,6 +95,14 @@ type ProfileEdge = {
 
 function pointDistance(a: SketchPlanPoint, b: SketchPlanPoint) {
   return Math.hypot(b[0] - a[0], b[1] - a[1])
+}
+
+function addPoint(a: SketchPlanPoint, b: SketchPlanPoint): SketchPlanPoint {
+  return [a[0] + b[0], a[1] + b[1]]
+}
+
+function scalePoint(point: SketchPlanPoint, scalar: number): SketchPlanPoint {
+  return [point[0] * scalar, point[1] * scalar]
 }
 
 function hasRelation(line: SketchLineNode, relation: SketchLineRelation) {
@@ -83,6 +143,10 @@ function getDirectionForLength(line: SketchLineNode): SketchPlanPoint | null {
 
 export function getSketchLineLength2D(line: Pick<SketchLineNode, 'start' | 'end'>) {
   return pointDistance(line.start, line.end)
+}
+
+export function getSketchLineAngle2D(line: Pick<SketchLineNode, 'start' | 'end'>) {
+  return normalizeAngle(Math.atan2(line.end[1] - line.start[1], line.end[0] - line.start[0]))
 }
 
 function getSketchLineStraightSnapOffset(line: Pick<SketchLineNode, 'start' | 'end'>) {
@@ -140,6 +204,191 @@ function subtract(a: SketchPlanPoint, b: SketchPlanPoint): SketchPlanPoint {
 
 function cross(a: SketchPlanPoint, b: SketchPlanPoint) {
   return a[0] * b[1] - a[1] * b[0]
+}
+
+function getNearestEndpoint(line: Pick<SketchLineNode, 'start' | 'end'>, point: SketchPlanPoint) {
+  return pointDistance(line.start, point) <= pointDistance(line.end, point) ? 'start' : 'end'
+}
+
+function normalizeAngle(angle: number) {
+  const normalized = angle % FULL_CIRCLE_RADIANS
+  return normalized < 0 ? normalized + FULL_CIRCLE_RADIANS : normalized
+}
+
+function isSketchCircleArcLocal(circle: Pick<SketchCircleNode, 'kind'>) {
+  return circle.kind === 'arc'
+}
+
+function getCounterClockwiseSweep(startAngle: number, endAngle: number) {
+  return ((endAngle - startAngle) % FULL_CIRCLE_RADIANS + FULL_CIRCLE_RADIANS) % FULL_CIRCLE_RADIANS
+}
+
+function getSketchCircleArcSweepLocal(
+  circle: Pick<SketchCircleNode, 'kind' | 'startAngle' | 'endAngle'>,
+) {
+  if (!isSketchCircleArcLocal(circle)) {
+    return FULL_CIRCLE_RADIANS
+  }
+
+  const sweep = getCounterClockwiseSweep(
+    normalizeAngle(circle.startAngle),
+    normalizeAngle(circle.endAngle),
+  )
+  return sweep <= EPSILON ? FULL_CIRCLE_RADIANS : Math.min(FULL_CIRCLE_RADIANS, sweep)
+}
+
+function getSketchLineIntersection(
+  first: Pick<SketchLineNode, 'start' | 'end'>,
+  second: Pick<SketchLineNode, 'start' | 'end'>,
+) {
+  const firstVector = subtract(first.end, first.start)
+  const secondVector = subtract(second.end, second.start)
+  const denominator = cross(firstVector, secondVector)
+  if (Math.abs(denominator) <= EPSILON) {
+    return null
+  }
+
+  const offset = subtract(second.start, first.start)
+  const t = cross(offset, secondVector) / denominator
+  return addPoint(first.start, scalePoint(firstVector, t))
+}
+
+function isPointOnSketchCircleArc(circle: Pick<SketchCircleNode, 'center' | 'kind' | 'startAngle' | 'endAngle'>, point: SketchPlanPoint) {
+  if (!isSketchCircleArcLocal(circle)) {
+    return true
+  }
+
+  const start = normalizeAngle(circle.startAngle)
+  const target = normalizeAngle(Math.atan2(point[1] - circle.center[1], point[0] - circle.center[0]))
+  const sweep = getSketchCircleArcSweepLocal(circle)
+  const offset = getCounterClockwiseSweep(start, target)
+  return offset <= sweep + EPSILON || Math.abs(offset - FULL_CIRCLE_RADIANS) <= EPSILON
+}
+
+function getSketchCirclePointAtAngle(
+  circle: Pick<SketchCircleNode, 'center' | 'radius'>,
+  angle: number,
+): SketchPlanPoint {
+  return [
+    circle.center[0] + Math.cos(angle) * circle.radius,
+    circle.center[1] + Math.sin(angle) * circle.radius,
+  ]
+}
+
+function getSketchCircleCircleIntersectionCandidates(
+  first: Pick<SketchCircleNode, 'center' | 'radius'>,
+  second: Pick<SketchCircleNode, 'center' | 'radius' | 'kind' | 'startAngle' | 'endAngle'>,
+) {
+  const dx = second.center[0] - first.center[0]
+  const dy = second.center[1] - first.center[1]
+  const distance = Math.hypot(dx, dy)
+  if (distance <= EPSILON) {
+    return [] as SketchPlanPoint[]
+  }
+
+  if (distance > first.radius + second.radius + EPSILON) {
+    return [] as SketchPlanPoint[]
+  }
+
+  if (distance < Math.abs(first.radius - second.radius) - EPSILON) {
+    return [] as SketchPlanPoint[]
+  }
+
+  const a =
+    (first.radius * first.radius -
+      second.radius * second.radius +
+      distance * distance) /
+    (2 * distance)
+  const hSquared = first.radius * first.radius - a * a
+  if (hSquared < -EPSILON) {
+    return [] as SketchPlanPoint[]
+  }
+
+  const midpoint: SketchPlanPoint = [
+    first.center[0] + (dx * a) / distance,
+    first.center[1] + (dy * a) / distance,
+  ]
+  const offsetScale = Math.sqrt(Math.max(0, hSquared)) / distance
+  const rawCandidates: SketchPlanPoint[] =
+    Math.abs(hSquared) <= EPSILON
+      ? [midpoint]
+      : [
+          [midpoint[0] - dy * offsetScale, midpoint[1] + dx * offsetScale],
+          [midpoint[0] + dy * offsetScale, midpoint[1] - dx * offsetScale],
+        ]
+
+  const candidates: SketchPlanPoint[] = []
+  for (const candidate of rawCandidates) {
+    if (!isPointOnSketchCircleArc(second, candidate)) {
+      continue
+    }
+
+    if (
+      candidates.some(
+        (existing) =>
+          Math.abs(existing[0] - candidate[0]) <= EPSILON &&
+          Math.abs(existing[1] - candidate[1]) <= EPSILON,
+      )
+    ) {
+      continue
+    }
+
+    candidates.push(candidate)
+  }
+
+  return candidates
+}
+
+function getSketchLineCircleIntersectionCandidates(
+  line: Pick<SketchLineNode, 'start' | 'end'>,
+  circle: Pick<SketchCircleNode, 'center' | 'radius' | 'kind' | 'startAngle' | 'endAngle'>,
+) {
+  const direction = subtract(line.end, line.start)
+  const offset = subtract(line.start, circle.center)
+  const a = direction[0] * direction[0] + direction[1] * direction[1]
+  if (a <= EPSILON) {
+    return [] as SketchPlanPoint[]
+  }
+
+  const b = 2 * (offset[0] * direction[0] + offset[1] * direction[1])
+  const c = offset[0] * offset[0] + offset[1] * offset[1] - circle.radius * circle.radius
+  const discriminant = b * b - 4 * a * c
+  if (discriminant < -EPSILON) {
+    return [] as SketchPlanPoint[]
+  }
+
+  const roots =
+    Math.abs(discriminant) <= EPSILON
+      ? [-b / (2 * a)]
+      : [
+          (-b - Math.sqrt(discriminant)) / (2 * a),
+          (-b + Math.sqrt(discriminant)) / (2 * a),
+        ]
+
+  const candidates: SketchPlanPoint[] = []
+  for (const t of roots) {
+    const candidate: SketchPlanPoint = [
+      line.start[0] + direction[0] * t,
+      line.start[1] + direction[1] * t,
+    ]
+    if (!isPointOnSketchCircleArc(circle, candidate)) {
+      continue
+    }
+
+    if (
+      candidates.some(
+        (existing) =>
+          Math.abs(existing[0] - candidate[0]) <= EPSILON &&
+          Math.abs(existing[1] - candidate[1]) <= EPSILON,
+      )
+    ) {
+      continue
+    }
+
+    candidates.push(candidate)
+  }
+
+  return candidates
 }
 
 function isPointOnSegment(point: SketchPlanPoint, start: SketchPlanPoint, end: SketchPlanPoint) {
@@ -420,12 +669,365 @@ export function detectClosedSketchProfiles(lines: SketchLineNode[]): SketchProfi
   return profiles
 }
 
+export function buildSketchLineFilletArc(args: {
+  firstLine: SketchLineNode
+  secondLine: SketchLineNode
+  trimDistance: number
+}): SketchLineFilletArcResult {
+  const { firstLine, secondLine, trimDistance } = args
+  if (!Number.isFinite(trimDistance) || trimDistance <= MIN_SKETCH_LINE_LENGTH) {
+    return { ok: false, reason: '圆角距离必须大于 0。' }
+  }
+
+  const intersection = getSketchLineIntersection(firstLine, secondLine)
+  if (!intersection) {
+    return { ok: false, reason: '平行草图线无法进行圆角。' }
+  }
+
+  const firstEndpoint = getNearestEndpoint(firstLine, intersection)
+  const secondEndpoint = getNearestEndpoint(secondLine, intersection)
+  const firstFarPoint = firstEndpoint === 'start' ? firstLine.end : firstLine.start
+  const secondFarPoint = secondEndpoint === 'start' ? secondLine.end : secondLine.start
+  const firstLength = pointDistance(intersection, firstFarPoint)
+  const secondLength = pointDistance(intersection, secondFarPoint)
+  const resolvedDistance = Math.min(trimDistance, firstLength * 0.45, secondLength * 0.45)
+
+  if (resolvedDistance <= MIN_SKETCH_LINE_LENGTH) {
+    return { ok: false, reason: '选中的转角太短，无法创建草图圆角。' }
+  }
+
+  const firstDirection = scalePoint(subtract(firstFarPoint, intersection), 1 / firstLength)
+  const secondDirection = scalePoint(subtract(secondFarPoint, intersection), 1 / secondLength)
+  const bisectorVector = addPoint(firstDirection, secondDirection)
+  const bisectorLength = pointDistance([0, 0], bisectorVector)
+  if (bisectorLength <= EPSILON) {
+    return { ok: false, reason: '相反方向的草图线无法创建圆角。' }
+  }
+
+  const angle = Math.acos(
+    Math.max(-1, Math.min(1, firstDirection[0] * secondDirection[0] + firstDirection[1] * secondDirection[1])),
+  )
+  if (angle <= EPSILON || angle >= Math.PI - EPSILON) {
+    return { ok: false, reason: '当前草图线夹角无法创建圆角。' }
+  }
+
+  const radius = resolvedDistance * Math.tan(angle / 2)
+  const centerDistance = resolvedDistance / Math.cos(angle / 2)
+  if (!(Number.isFinite(radius) && Number.isFinite(centerDistance) && radius > EPSILON)) {
+    return { ok: false, reason: '当前草图线夹角无法创建圆角。' }
+  }
+
+  const bisectorDirection = scalePoint(bisectorVector, 1 / bisectorLength)
+  const firstTrimPoint = addPoint(intersection, scalePoint(firstDirection, resolvedDistance))
+  const secondTrimPoint = addPoint(intersection, scalePoint(secondDirection, resolvedDistance))
+  const center = addPoint(intersection, scalePoint(bisectorDirection, centerDistance))
+  const firstAngle = Math.atan2(firstTrimPoint[1] - center[1], firstTrimPoint[0] - center[0])
+  const secondAngle = Math.atan2(secondTrimPoint[1] - center[1], secondTrimPoint[0] - center[0])
+  const firstSweep = getCounterClockwiseSweep(firstAngle, secondAngle)
+  const [startAngle, endAngle] =
+    firstSweep <= Math.PI ? [firstAngle, secondAngle] : [secondAngle, firstAngle]
+
+  if (getCounterClockwiseSweep(startAngle, endAngle) <= EPSILON) {
+    return { ok: false, reason: '当前草图线夹角无法创建圆角。' }
+  }
+
+  return {
+    ok: true,
+    center,
+    radius,
+    startAngle,
+    endAngle,
+    firstEndpoint,
+    secondEndpoint,
+    firstTrimPoint,
+    secondTrimPoint,
+  }
+}
+
+export function buildTrimExtendSketchLineToCirclePlan(args: {
+  line: SketchLineNode
+  circle: SketchCircleNode
+}): SketchLineTrimToCircleResult {
+  const { line, circle } = args
+  if (hasRelation(line, 'fixed')) {
+    return { ok: false, reason: '已固定的草图几何不能调整尺寸。' }
+  }
+
+  const candidates = getSketchLineCircleIntersectionCandidates(line, circle)
+  if (candidates.length === 0) {
+    return { ok: false, reason: '草图线与目标圆或圆弧没有可用交点。' }
+  }
+
+  let best:
+    | {
+        endpoint: 'start' | 'end'
+        point: SketchPlanPoint
+        movement: number
+      }
+    | null = null
+
+  for (const candidate of candidates) {
+    const endpoint = getNearestEndpoint(line, candidate)
+    const nextStart = endpoint === 'start' ? candidate : line.start
+    const nextEnd = endpoint === 'end' ? candidate : line.end
+    if (!isSketchLineLongEnough(nextStart, nextEnd)) {
+      continue
+    }
+
+    const movement = pointDistance(
+      endpoint === 'start' ? line.start : line.end,
+      candidate,
+    )
+    if (!best || movement < best.movement) {
+      best = { endpoint, point: candidate, movement }
+    }
+  }
+
+  if (!best) {
+    return { ok: false, reason: '修剪或延伸后的线段太短。' }
+  }
+
+  return {
+    ok: true,
+    endpoint: best.endpoint,
+    point: best.point,
+  }
+}
+
+function getSketchLineCircleTangentCandidates(
+  anchor: SketchPlanPoint,
+  circle: Pick<SketchCircleNode, 'center' | 'radius' | 'kind' | 'startAngle' | 'endAngle'>,
+) {
+  const distance = pointDistance(anchor, circle.center)
+  if (distance <= circle.radius + EPSILON) {
+    return [] as SketchPlanPoint[]
+  }
+
+  const baseAngle = Math.atan2(anchor[1] - circle.center[1], anchor[0] - circle.center[0])
+  const angleOffset = Math.acos(Math.min(1, circle.radius / distance))
+  const candidates: SketchPlanPoint[] = []
+
+  for (const angle of [baseAngle + angleOffset, baseAngle - angleOffset]) {
+    const candidate: SketchPlanPoint = [
+      circle.center[0] + Math.cos(angle) * circle.radius,
+      circle.center[1] + Math.sin(angle) * circle.radius,
+    ]
+    if (!isPointOnSketchCircleArc(circle, candidate)) {
+      continue
+    }
+
+    if (
+      candidates.some(
+        (existing) =>
+          Math.abs(existing[0] - candidate[0]) <= EPSILON &&
+          Math.abs(existing[1] - candidate[1]) <= EPSILON,
+      )
+    ) {
+      continue
+    }
+
+    candidates.push(candidate)
+  }
+
+  return candidates
+}
+
+export function buildSetSketchLineTangentToCirclePlan(args: {
+  line: SketchLineNode
+  circle: SketchCircleNode
+}): SketchLineTrimToCircleResult {
+  const { line, circle } = args
+  if (hasRelation(line, 'fixed')) {
+    return { ok: false, reason: '已固定的草图几何不能调整尺寸。' }
+  }
+
+  if (Math.abs(line.curveOffset ?? 0) > EPSILON) {
+    return { ok: false, reason: '当前仅支持直线草图与圆或圆弧设为相切。' }
+  }
+
+  let best:
+    | {
+        endpoint: 'start' | 'end'
+        point: SketchPlanPoint
+        movement: number
+      }
+    | null = null
+
+  for (const endpoint of ['start', 'end'] as const) {
+    const anchor = endpoint === 'start' ? line.end : line.start
+    const candidates = getSketchLineCircleTangentCandidates(anchor, circle)
+    for (const candidate of candidates) {
+      const nextStart = endpoint === 'start' ? candidate : line.start
+      const nextEnd = endpoint === 'end' ? candidate : line.end
+      if (!isSketchLineLongEnough(nextStart, nextEnd)) {
+        continue
+      }
+
+      const movement = pointDistance(endpoint === 'start' ? line.start : line.end, candidate)
+      if (!best || movement < best.movement) {
+        best = { endpoint, point: candidate, movement }
+      }
+    }
+  }
+
+  if (!best) {
+    return { ok: false, reason: '当前草图线与目标圆或圆弧无法建立有效相切。' }
+  }
+
+  return {
+    ok: true,
+    endpoint: best.endpoint,
+    point: best.point,
+  }
+}
+
+function buildTrimExtendSketchArcFromCandidates(args: {
+  circle: SketchCircleNode
+  candidates: SketchPlanPoint[]
+}): SketchCircleTrimExtendResult {
+  const { circle, candidates } = args
+  if (circle.kind !== 'arc') {
+    return { ok: false, reason: '当前仅支持草图圆弧修剪或延伸。' }
+  }
+
+  if (candidates.length === 0) {
+    return { ok: false, reason: '草图圆弧与目标几何没有可用交点。' }
+  }
+
+  const startPoint = getSketchCirclePointAtAngle(circle, circle.startAngle)
+  const endPoint = getSketchCirclePointAtAngle(circle, circle.endAngle)
+  let best:
+    | {
+        startAngle: number
+        endAngle: number
+        movement: number
+      }
+    | null = null
+
+  for (const candidate of candidates) {
+    const candidateAngle = normalizeAngle(
+      Math.atan2(candidate[1] - circle.center[1], candidate[0] - circle.center[0]),
+    )
+
+    for (const endpoint of ['start', 'end'] as const) {
+      const startAngle = endpoint === 'start' ? candidateAngle : normalizeAngle(circle.startAngle)
+      const endAngle = endpoint === 'end' ? candidateAngle : normalizeAngle(circle.endAngle)
+      const sweep = getCounterClockwiseSweep(startAngle, endAngle)
+      if (sweep <= EPSILON || sweep >= FULL_CIRCLE_RADIANS - EPSILON) {
+        continue
+      }
+
+      const movement = pointDistance(endpoint === 'start' ? startPoint : endPoint, candidate)
+      if (!best || movement < best.movement) {
+        best = { startAngle, endAngle, movement }
+      }
+    }
+  }
+
+  if (!best) {
+    return { ok: false, reason: '修剪或延伸后的草图圆弧无效。' }
+  }
+
+  return {
+    ok: true,
+    startAngle: best.startAngle,
+    endAngle: best.endAngle,
+  }
+}
+
+export function buildTrimExtendSketchArcToLinePlan(args: {
+  circle: SketchCircleNode
+  line: SketchLineNode
+}): SketchCircleTrimExtendResult {
+  const { circle, line } = args
+  const supportCircle = {
+    center: circle.center,
+    radius: circle.radius,
+    kind: 'circle' as const,
+    startAngle: 0,
+    endAngle: FULL_CIRCLE_RADIANS,
+  }
+  return buildTrimExtendSketchArcFromCandidates({
+    circle,
+    candidates: getSketchLineCircleIntersectionCandidates(line, supportCircle),
+  })
+}
+
+export function buildTrimExtendSketchArcToCirclePlan(args: {
+  circle: SketchCircleNode
+  targetCircle: SketchCircleNode
+}): SketchCircleTrimExtendResult {
+  const { circle, targetCircle } = args
+  const supportCircle = {
+    center: circle.center,
+    radius: circle.radius,
+  }
+  return buildTrimExtendSketchArcFromCandidates({
+    circle,
+    candidates: getSketchCircleCircleIntersectionCandidates(supportCircle, targetCircle),
+  })
+}
+
+export function buildSetSketchLineEndpointTangentToCirclePlan(args: {
+  line: SketchLineNode
+  circle: SketchCircleNode
+  endpoint: 'start' | 'end'
+  ignoreFixed?: boolean
+}): SketchLineTrimToCircleResult {
+  const { line, circle, endpoint, ignoreFixed = false } = args
+  if (!ignoreFixed && hasRelation(line, 'fixed')) {
+    return { ok: false, reason: '已固定的草图几何不能调整尺寸。' }
+  }
+
+  if (Math.abs(line.curveOffset ?? 0) > EPSILON) {
+    return { ok: false, reason: '当前仅支持直线草图与圆或圆弧设为相切。' }
+  }
+
+  const anchor = endpoint === 'start' ? line.end : line.start
+  const candidates = getSketchLineCircleTangentCandidates(anchor, circle)
+  if (candidates.length === 0) {
+    return { ok: false, reason: '当前草图线与目标圆或圆弧无法建立有效相切。' }
+  }
+
+  let best:
+    | {
+        point: SketchPlanPoint
+        movement: number
+      }
+    | null = null
+
+  for (const candidate of candidates) {
+    const nextStart = endpoint === 'start' ? candidate : line.start
+    const nextEnd = endpoint === 'end' ? candidate : line.end
+    if (!isSketchLineLongEnough(nextStart, nextEnd)) {
+      continue
+    }
+
+    const movement = pointDistance(endpoint === 'start' ? line.start : line.end, candidate)
+    if (!best || movement < best.movement) {
+      best = { point: candidate, movement }
+    }
+  }
+
+  if (!best) {
+    return { ok: false, reason: '当前草图线与目标圆或圆弧无法建立有效相切。' }
+  }
+
+  return {
+    ok: true,
+    endpoint,
+    point: best.point,
+  }
+}
+
 export function buildSetSketchLineLengthPlan({
   line,
   length,
+  dimensionMode,
 }: {
   line: SketchLineNode
   length: number
+  dimensionMode?: 'driven' | 'reference'
 }): SketchLineEditResult {
   if (!Number.isFinite(length) || length <= MIN_SKETCH_LINE_LENGTH) {
     return { ok: false, reason: '请输入有效的草图长度。' }
@@ -454,10 +1056,89 @@ export function buildSetSketchLineLengthPlan({
         data: {
           end,
           curveOffset,
-          dimensions: {
-            ...(line.dimensions ?? {}),
+          dimensions: buildSketchLineLengthDimensionData({
+            line,
             length,
-          },
+            mode: dimensionMode ?? getSketchLineLengthDimensionMode(line) ?? 'driven',
+          }),
+        },
+      },
+    ],
+    selectIds: [line.id as AnyNodeId],
+  }
+}
+
+function getRelationsForAngleEdit(
+  line: SketchLineNode,
+  angle: number,
+): SketchLineNode['relations'] {
+  const baseRelations = (line.relations ?? []).filter(
+    (relation) => relation !== 'horizontal' && relation !== 'vertical',
+  )
+  const normalized = normalizeAngle(angle)
+  const isHorizontal = Math.abs(Math.sin(normalized)) <= EPSILON
+  const isVertical = Math.abs(Math.cos(normalized)) <= EPSILON
+
+  if (isHorizontal) {
+    return [...baseRelations, 'horizontal']
+  }
+  if (isVertical) {
+    return [...baseRelations, 'vertical']
+  }
+  return baseRelations
+}
+
+export function buildSetSketchLineAnglePlan({
+  line,
+  angle,
+  dimensionMode,
+}: {
+  line: SketchLineNode
+  angle: number
+  dimensionMode?: 'driven' | 'reference'
+}): SketchLineEditResult {
+  if (!Number.isFinite(angle)) {
+    return { ok: false, reason: '请输入有效的草图角度。' }
+  }
+
+  if (hasRelation(line, 'fixed')) {
+    return { ok: false, reason: '已固定的草图几何不能调整角度。' }
+  }
+
+  const length = getSketchLineLength2D(line)
+  if (length <= MIN_SKETCH_LINE_LENGTH) {
+    return { ok: false, reason: '选中的草图线太短，无法调整角度。' }
+  }
+
+  const end: SketchPlanPoint = [
+    line.start[0] + Math.cos(angle) * length,
+    line.start[1] + Math.sin(angle) * length,
+  ]
+  const curveOffset = normalizeCurveOffset({ ...line, end }, line.curveOffset ?? 0)
+  const dimensions = buildSketchLineAngleDimensionData({
+    line: {
+      ...line,
+      dimensions:
+        buildSketchLineGeometryDimensionData({
+          line,
+          end,
+          preserveDriven: true,
+        }) ?? {},
+    },
+    angle,
+    mode: dimensionMode ?? getSketchLineAngleDimensionMode(line) ?? 'driven',
+  })
+
+  return {
+    ok: true,
+    updates: [
+      {
+        id: line.id,
+        data: {
+          end,
+          curveOffset,
+          relations: getRelationsForAngleEdit(line, angle),
+          dimensions,
         },
       },
     ],
@@ -500,12 +1181,11 @@ export function buildOrientSketchLinePlan({
             orientation,
             orientation === 'horizontal' ? 'vertical' : 'horizontal',
           ),
-          dimensions: line.dimensions?.length
-            ? {
-                ...line.dimensions,
-                length,
-              }
-            : line.dimensions,
+          dimensions: buildSketchLineGeometryDimensionData({
+            line,
+            end,
+            preserveDriven: true,
+          }),
         },
       },
     ],

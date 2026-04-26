@@ -6,6 +6,7 @@ import {
   getSketchLineChordFrame,
   getSketchLineMidpointHandlePoint,
   normalizeSketchLineCurveOffset,
+  type SketchCircleNode,
   type SketchLineEndpointReference,
   type SketchLineNode,
   useScene,
@@ -25,6 +26,9 @@ import {
   getCoincidentSketchEndpointRefs,
   type SketchEndpointSnapTarget,
 } from '../../tools/sketch/sketch-coincident'
+import { clearSketchLineTangentIfGeometryChanges } from '../../tools/sketch/sketch-line-tangent'
+import { buildResolvedSketchLineUpdateSet } from '../../tools/sketch/sketch-line-resolution'
+import { buildSketchLineGeometryDimensionData } from '../../tools/sketch/sketch-dimensions'
 import {
   getSketchLineLength2D,
   isSketchLineLongEnough,
@@ -62,6 +66,7 @@ type SketchLineDragState = {
 type UseFloorplanSketchEditArgs = {
   canEdit: boolean
   sketchLines: SketchLineNode[]
+  sketchCircles: SketchCircleNode[]
   getPlanPointFromClientPoint: (clientX: number, clientY: number) => WallPlanPoint | null
   setCursorPoint: Dispatch<SetStateAction<WallPlanPoint | null>>
   setSelection: (selection: any) => void
@@ -238,11 +243,13 @@ function getLineCoordinateCommitPatch(
     update.curveOffset ?? line.curveOffset ?? 0,
   )
 
-  if (line.dimensions?.length) {
-    patch.dimensions = {
-      ...line.dimensions,
-      length: getSketchLineLength2D(update),
-    }
+  if (line.dimensions?.length !== undefined) {
+    patch.dimensions = buildSketchLineGeometryDimensionData({
+      line,
+      start: update.start,
+      end: update.end,
+      preserveDriven: true,
+    })
   }
 
   if (Math.abs((line.curveOffset ?? 0) - curveOffset) > 1e-6) {
@@ -254,7 +261,7 @@ function getLineCoordinateCommitPatch(
     patch.relations = nextRelations
   }
 
-  return patch
+  return clearSketchLineTangentIfGeometryChanges(line, patch)
 }
 
 function lineMatchesUpdate(line: SketchLineNode, update: SketchLineEditUpdate) {
@@ -272,6 +279,7 @@ function lineMatchesUpdate(line: SketchLineNode, update: SketchLineEditUpdate) {
 export function useFloorplanSketchEdit({
   canEdit,
   sketchLines,
+  sketchCircles,
   getPlanPointFromClientPoint,
   setCursorPoint,
   setSelection,
@@ -419,6 +427,7 @@ export function useFloorplanSketchEdit({
 
       const draft = draftRef.current ?? dragState.draft
       const lineById = new Map(sketchLines.map((line) => [line.id, line] as const))
+      const circleById = new Map(sketchCircles.map((circle) => [circle.id, circle] as const))
       const lineUpdates = draft.lineUpdates ?? [
         {
           lineId: dragState.line.id,
@@ -472,8 +481,27 @@ export function useFloorplanSketchEdit({
               Boolean(update),
             )
 
-          scene.updateNodes(nodeUpdates)
-          for (const update of nodeUpdates) {
+          const resolvedUpdates = buildResolvedSketchLineUpdateSet({
+            linesById: lineById,
+            circlesById: circleById,
+            initialUpdates: nodeUpdates.map((update) => ({
+              id: update.id as SketchLineNode['id'],
+              data: update.data as Partial<SketchLineNode>,
+            })),
+          })
+          if (!resolvedUpdates.ok) {
+            showWallEditFeedback(resolvedUpdates.reason)
+            clearSketchLineEdit()
+            setCursorPoint(null)
+            return
+          }
+
+          const allUpdates = resolvedUpdates.updates.map((update) => ({
+            id: update.id as AnyNodeId,
+            data: update.data as Partial<AnyNode>,
+          }))
+          scene.updateNodes(allUpdates)
+          for (const update of allUpdates) {
             scene.dirtyNodes.add(update.id)
           }
           sfxEmitter.emit('sfx:structure-build')
@@ -506,6 +534,7 @@ export function useFloorplanSketchEdit({
   }, [
     clearSketchLineEdit,
     getPlanPointFromClientPoint,
+    sketchCircles,
     sketchLines,
     setCursorPoint,
     showWallEditFeedback,

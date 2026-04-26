@@ -35,12 +35,23 @@ const MAX_FLOORPLAN_PANE_RATIO = 0.85
 export const DEFAULT_FIRST_PERSON_FLY_CLEARANCE = 5.5
 export const MIN_FIRST_PERSON_FLY_CLEARANCE = 0.5
 export const MAX_FIRST_PERSON_FLY_CLEARANCE = 80
+export const DEFAULT_FIRST_PERSON_SPEED = 33
+export const MIN_FIRST_PERSON_SPEED = 1
+export const MAX_FIRST_PERSON_SPEED = 999
 
 export type ViewMode = '3d' | '2d' | 'split' | 'tri-view'
 export type SplitOrientation = 'horizontal' | 'vertical'
 export type FirstPersonNavigationMode = 'walk' | 'fly'
-export type FirstPersonSpeedPreset = 'inspect' | 'walk' | 'quick' | 'fly'
+export type FirstPersonFlyCameraMode = 'forward' | 'focus-building'
 export type FirstPersonEyeHeightPreset = 'adult' | 'child'
+export type MeasurementMode =
+  | 'distance'
+  | 'area'
+  | 'volume'
+  | 'clearance'
+  | 'angle'
+  | 'perimeter'
+  | 'grid'
 export type ViewpointEntrySource = '3d' | 'floorplan'
 export type ViewpointEntryTarget = {
   x: number
@@ -105,6 +116,9 @@ const SKETCH_STRUCTURE_TOOL_SET = new Set<StructureTool>(SKETCH_STRUCTURE_TOOLS)
 // Catalog categories for furnish mode items
 export type CatalogCategory =
   | 'furniture'
+  | 'people'
+  | 'plants'
+  | 'animals'
   | 'lighting'
   | 'appliance'
   | 'bathroom'
@@ -217,6 +231,8 @@ type EditorState = {
   setWallEditOperation: (operation: WallEditOperation | null) => void
   gridSnapStep: GridSnapStep
   setGridSnapStep: (step: GridSnapStep) => void
+  showSketchRelations: boolean
+  setShowSketchRelations: (show: boolean) => void
   isInspectorPinned: boolean
   setInspectorPinned: (pinned: boolean) => void
   // First-person walkthrough mode (street view)
@@ -225,12 +241,17 @@ type EditorState = {
   setFirstPersonMode: (enabled: boolean, restoreViewMode?: ViewMode | null) => void
   firstPersonNavigationMode: FirstPersonNavigationMode
   setFirstPersonNavigationMode: (mode: FirstPersonNavigationMode) => void
-  firstPersonSpeedPreset: FirstPersonSpeedPreset
-  setFirstPersonSpeedPreset: (preset: FirstPersonSpeedPreset) => void
+  firstPersonFlyCameraMode: FirstPersonFlyCameraMode
+  setFirstPersonFlyCameraMode: (mode: FirstPersonFlyCameraMode) => void
+  firstPersonSpeed: number
+  setFirstPersonSpeed: (speed: number) => void
   firstPersonEyeHeightPreset: FirstPersonEyeHeightPreset
   setFirstPersonEyeHeightPreset: (preset: FirstPersonEyeHeightPreset) => void
   firstPersonFlyClearance: number
   setFirstPersonFlyClearance: (height: number) => void
+  measurementMode: MeasurementMode | null
+  _viewModeBeforeMeasurement: ViewMode | null
+  setMeasurementMode: (mode: MeasurementMode | null) => void
   // Viewpoint camera placement mode: choose a standing point before entering first person.
   isViewpointPlacementMode: boolean
   _viewModeBeforeViewpointPlacement: ViewMode | null
@@ -260,8 +281,11 @@ type PersistedEditorLayoutState = Pick<
   | 'splitOrientation'
   | 'floorplanSelectionTool'
   | 'gridSnapStep'
+  | 'showSketchRelations'
   | 'isInspectorPinned'
   | 'firstPersonFlyClearance'
+  | 'firstPersonFlyCameraMode'
+  | 'firstPersonSpeed'
 >
 type PersistedEditorState = PersistedEditorUiState & PersistedEditorLayoutState
 
@@ -281,8 +305,11 @@ export const DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE: PersistedEditorLayoutState =
   splitOrientation: 'horizontal',
   floorplanSelectionTool: 'click',
   gridSnapStep: 0.5,
+  showSketchRelations: false,
   isInspectorPinned: false,
   firstPersonFlyClearance: DEFAULT_FIRST_PERSON_FLY_CLEARANCE,
+  firstPersonFlyCameraMode: 'forward',
+  firstPersonSpeed: DEFAULT_FIRST_PERSON_SPEED,
 }
 
 const GRID_SNAP_STEPS: GridSnapStep[] = [0.5, 0.25, 0.1, 0.05]
@@ -309,6 +336,39 @@ export function normalizeFirstPersonFlyClearance(value: unknown): number {
   }
 
   return Math.min(MAX_FIRST_PERSON_FLY_CLEARANCE, Math.max(MIN_FIRST_PERSON_FLY_CLEARANCE, value))
+}
+
+export function normalizeFirstPersonFlyCameraMode(value: unknown): FirstPersonFlyCameraMode {
+  return value === 'focus-building' ? 'focus-building' : 'forward'
+}
+
+export function normalizeFirstPersonSpeed(value: unknown): number {
+  const legacySpeedMap: Record<string, number> = {
+    speed1: 12,
+    speed2: 18,
+    speed3: 25.5,
+    speed4: 33,
+    speed5: 43.5,
+    speed6: 55.5,
+    speed7: 70.5,
+    speed8: 88.5,
+    speed9: 109.5,
+    speed10: 132,
+  }
+
+  if (typeof value === 'string') {
+    const legacyValue = legacySpeedMap[value]
+    if (typeof legacyValue === 'number') return legacyValue
+
+    const parsed = Number.parseFloat(value)
+    if (Number.isFinite(parsed)) value = parsed
+  }
+
+  if (!(typeof value === 'number' && Number.isFinite(value))) {
+    return DEFAULT_FIRST_PERSON_SPEED
+  }
+
+  return Math.min(MAX_FIRST_PERSON_SPEED, Math.max(MIN_FIRST_PERSON_SPEED, value))
 }
 
 export function normalizePersistedEditorUiState(
@@ -405,8 +465,14 @@ function normalizePersistedEditorLayoutState(
     gridSnapStep: GRID_SNAP_STEPS.includes(state?.gridSnapStep as GridSnapStep)
       ? (state?.gridSnapStep as GridSnapStep)
       : DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE.gridSnapStep,
+    showSketchRelations: state?.showSketchRelations === true,
     isInspectorPinned: state?.isInspectorPinned === true,
     firstPersonFlyClearance: normalizeFirstPersonFlyClearance(state?.firstPersonFlyClearance),
+    firstPersonFlyCameraMode: normalizeFirstPersonFlyCameraMode(state?.firstPersonFlyCameraMode),
+    firstPersonSpeed: normalizeFirstPersonSpeed(
+      state?.firstPersonSpeed ??
+        (state as { firstPersonSpeedPreset?: unknown } | null | undefined)?.firstPersonSpeedPreset,
+    ),
   }
 }
 
@@ -626,6 +692,8 @@ const useEditor = create<EditorState>()(
         set({
           viewMode: mode,
           isFloorplanOpen: mode === '2d' || mode === 'split',
+          measurementMode: null,
+          _viewModeBeforeMeasurement: null,
           isViewpointPlacementMode: false,
           _viewModeBeforeViewpointPlacement: null,
           viewpointEntryTarget: null,
@@ -647,6 +715,8 @@ const useEditor = create<EditorState>()(
       setWallEditOperation: (operation) => set({ wallEditOperation: operation }),
       gridSnapStep: DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE.gridSnapStep,
       setGridSnapStep: (step) => set({ gridSnapStep: step }),
+      showSketchRelations: DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE.showSketchRelations,
+      setShowSketchRelations: (show) => set({ showSketchRelations: show }),
       isInspectorPinned: DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE.isInspectorPinned,
       setInspectorPinned: (pinned) => set({ isInspectorPinned: pinned }),
       allowUndergroundCamera: false,
@@ -655,13 +725,51 @@ const useEditor = create<EditorState>()(
       _viewModeBeforeFirstPerson: null as ViewMode | null,
       firstPersonNavigationMode: 'walk',
       setFirstPersonNavigationMode: (mode) => set({ firstPersonNavigationMode: mode }),
-      firstPersonSpeedPreset: 'walk',
-      setFirstPersonSpeedPreset: (preset) => set({ firstPersonSpeedPreset: preset }),
+      firstPersonFlyCameraMode: DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE.firstPersonFlyCameraMode,
+      setFirstPersonFlyCameraMode: (mode) =>
+        set({ firstPersonFlyCameraMode: normalizeFirstPersonFlyCameraMode(mode) }),
+      firstPersonSpeed: DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE.firstPersonSpeed,
+      setFirstPersonSpeed: (speed) => set({ firstPersonSpeed: normalizeFirstPersonSpeed(speed) }),
       firstPersonEyeHeightPreset: 'adult',
       setFirstPersonEyeHeightPreset: (preset) => set({ firstPersonEyeHeightPreset: preset }),
       firstPersonFlyClearance: DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE.firstPersonFlyClearance,
       setFirstPersonFlyClearance: (height) =>
         set({ firstPersonFlyClearance: normalizeFirstPersonFlyClearance(height) }),
+      measurementMode: null as MeasurementMode | null,
+      _viewModeBeforeMeasurement: null as ViewMode | null,
+      setMeasurementMode: (mode) => {
+        if (mode) {
+          const currentViewMode = get()._viewModeBeforeMeasurement ?? get().viewMode
+
+          selectDefaultBuildingAndLevel()
+          useViewer.getState().setCameraMode('perspective')
+          set({
+            measurementMode: mode,
+            _viewModeBeforeMeasurement: currentViewMode,
+            isViewpointPlacementMode: false,
+            _viewModeBeforeViewpointPlacement: null,
+            viewpointEntryTarget: null,
+            viewMode: '3d',
+            isFloorplanOpen: false,
+            mode: 'select',
+            tool: null,
+            catalogCategory: null,
+          })
+          return
+        }
+
+        const previousViewMode = get()._viewModeBeforeMeasurement
+        set({
+          measurementMode: null,
+          _viewModeBeforeMeasurement: null,
+          ...(previousViewMode
+            ? {
+                viewMode: previousViewMode,
+                isFloorplanOpen: previousViewMode === '2d' || previousViewMode === 'split',
+              }
+            : {}),
+        })
+      },
       isViewpointPlacementMode: false,
       _viewModeBeforeViewpointPlacement: null as ViewMode | null,
       viewpointEntryTarget: null as ViewpointEntryTarget | null,
@@ -672,6 +780,8 @@ const useEditor = create<EditorState>()(
           selectDefaultBuildingAndLevel()
           useViewer.getState().setCameraMode('perspective')
           set({
+            measurementMode: null,
+            _viewModeBeforeMeasurement: null,
             isViewpointPlacementMode: true,
             _viewModeBeforeViewpointPlacement: currentViewMode,
             viewpointEntryTarget: null,
@@ -720,6 +830,8 @@ const useEditor = create<EditorState>()(
           viewer.outliner.hoveredObjects.length = 0
           set({
             isFirstPersonMode: true,
+            measurementMode: null,
+            _viewModeBeforeMeasurement: null,
             isViewpointPlacementMode: false,
             _viewModeBeforeViewpointPlacement: null,
             viewpointEntryTarget: null,
@@ -784,8 +896,11 @@ const useEditor = create<EditorState>()(
         splitOrientation: state.splitOrientation,
         floorplanSelectionTool: state.floorplanSelectionTool,
         gridSnapStep: state.gridSnapStep,
+        showSketchRelations: state.showSketchRelations,
         isInspectorPinned: state.isInspectorPinned,
         firstPersonFlyClearance: state.firstPersonFlyClearance,
+        firstPersonFlyCameraMode: state.firstPersonFlyCameraMode,
+        firstPersonSpeed: state.firstPersonSpeed,
       }),
     },
   ),

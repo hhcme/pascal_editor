@@ -53,6 +53,7 @@ const blobToBase64 = async (blob: Blob): Promise<string> => {
 
 export const exportFilters = {
   json: [{ name: 'JSON 场景文件', extensions: ['json'] }],
+  csv: [{ name: 'CSV 表格文件', extensions: ['csv'] }],
   png: [{ name: 'PNG 图片', extensions: ['png'] }],
   glb: [{ name: 'GLB 3D 模型', extensions: ['glb'] }],
   stl: [{ name: 'STL 3D 模型', extensions: ['stl'] }],

@@ -22,6 +22,24 @@ export const furnishTools: FurnishToolConfig[] = [
   },
   {
     id: 'item',
+    iconSrc: '/icons/people.svg',
+    label: 'People',
+    catalogCategory: 'people',
+  },
+  {
+    id: 'item',
+    iconSrc: '/icons/plants.svg',
+    label: 'Plants',
+    catalogCategory: 'plants',
+  },
+  {
+    id: 'item',
+    iconSrc: '/icons/animal.svg',
+    label: 'Animals',
+    catalogCategory: 'animals',
+  },
+  {
+    id: 'item',
     iconSrc: '/icons/environment.png',
     label: 'Lighting',
     catalogCategory: 'lighting',

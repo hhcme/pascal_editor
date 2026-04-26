@@ -3,6 +3,7 @@ import { useViewer } from '@pascal-app/viewer'
 import { useEffect } from 'react'
 import { sfxEmitter } from '../lib/sfx-bus'
 import useEditor from '../store/use-editor'
+import { setMeasurementDistanceMode } from '../store/use-measurement-mode'
 
 // Tools call this in their onCancel handler when they have an active mid-action to cancel,
 // so that the global Escape handler knows not to also switch to select mode.
@@ -22,6 +23,12 @@ export const useKeyboard = ({ isVersionPreviewMode = false } = {}) => {
       if (e.key === 'Escape') {
         // If in walkthrough mode, let WalkthroughControls handle ESC
         if (useViewer.getState().walkthroughMode) return
+
+        if (useEditor.getState().measurementMode) {
+          e.preventDefault()
+          useEditor.getState().setMeasurementMode(null)
+          return
+        }
 
         e.preventDefault()
         _toolCancelConsumed = false
@@ -50,29 +57,98 @@ export const useKeyboard = ({ isVersionPreviewMode = false } = {}) => {
           useViewer.getState().setSelection({ selectedIds: [], zoneId: null })
           useEditor.getState().setSelectedReferenceId(null)
         }
-      } else if (e.key === '1' && !e.metaKey && !e.ctrlKey) {
+      }
+
+      const measurementMode = useEditor.getState().measurementMode
+
+      if (measurementMode && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const measurementModeByKey = {
+          '1': 'distance',
+          '2': 'area',
+          '3': 'volume',
+          '4': 'clearance',
+          '5': 'angle',
+          '6': 'perimeter',
+          '7': 'grid',
+        } as const
+        const nextMeasurementMode =
+          measurementModeByKey[e.key as keyof typeof measurementModeByKey] ?? null
+
+        if (nextMeasurementMode) {
+          e.preventDefault()
+          useEditor.getState().setMeasurementMode(nextMeasurementMode)
+          return
+        }
+
+        if (measurementMode === 'distance') {
+          const distanceModeByKey = {
+            f: 'free',
+            F: 'free',
+            h: 'horizontal',
+            H: 'horizontal',
+            v: 'vertical',
+            V: 'vertical',
+            p: 'path',
+            P: 'path',
+          } as const
+          const nextDistanceMode =
+            distanceModeByKey[e.key as keyof typeof distanceModeByKey] ?? null
+
+          if (nextDistanceMode) {
+            e.preventDefault()
+            setMeasurementDistanceMode(nextDistanceMode)
+            return
+          }
+        }
+
+        if (
+          e.key === 'f' ||
+          e.key === 'F' ||
+          e.key === 'h' ||
+          e.key === 'H' ||
+          e.key === 'v' ||
+          e.key === 'V' ||
+          e.key === 'p' ||
+          e.key === 'P'
+        ) {
+          e.preventDefault()
+          return
+        }
+      }
+
+      if (e.key === '1' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault()
+        useEditor.getState().setActiveSidebarPanel('site')
         useEditor.getState().setPhase('site')
         useEditor.getState().setMode('select')
       } else if (e.key === '2' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault()
+        useEditor.getState().setActiveSidebarPanel('site')
         useEditor.getState().setPhase('structure')
         useEditor.getState().setMode('select')
       } else if (e.key === '3' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault()
+        useEditor.getState().setActiveSidebarPanel('furnish')
         useEditor.getState().setPhase('furnish')
         useEditor.getState().setMode('select')
       } else if (e.key === 'f' && !e.metaKey && !e.ctrlKey) {
         if (isVersionPreviewMode) return
         e.preventDefault()
+        useEditor.getState().setActiveSidebarPanel('furnish')
         useEditor.getState().setPhase('furnish')
         useEditor.getState().setMode('build')
       } else if (e.key === 'z' && !e.metaKey && !e.ctrlKey) {
         if (isVersionPreviewMode) return
         e.preventDefault()
+        useEditor.getState().setActiveSidebarPanel('site')
         useEditor.getState().setPhase('structure')
         useEditor.getState().setStructureLayer('zones')
         useEditor.getState().setMode('build')
+      } else if ((e.key === 'm' || e.key === 'M') && !e.metaKey && !e.ctrlKey) {
+        if (isVersionPreviewMode) return
+        e.preventDefault()
+        const currentMeasurementMode = useEditor.getState().measurementMode
+        useEditor.getState().setMeasurementMode(currentMeasurementMode ? null : 'distance')
       }
       if (e.key === 'v' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault()
@@ -81,6 +157,7 @@ export const useKeyboard = ({ isVersionPreviewMode = false } = {}) => {
       } else if (e.key === 'b' && !e.metaKey && !e.ctrlKey) {
         if (isVersionPreviewMode) return
         e.preventDefault()
+        useEditor.getState().setActiveSidebarPanel('site')
         useEditor.getState().setPhase('structure')
         useEditor.getState().setStructureLayer('elements')
         useEditor.getState().setMode('build')

@@ -100,6 +100,7 @@ export function ControlModes() {
   const setPhase = useEditor((state) => state.setPhase)
   const setStructureLayer = useEditor((state) => state.setStructureLayer)
   const setSelectionTool = useEditor((state) => state.setFloorplanSelectionTool)
+  const setActiveSidebarPanel = useEditor((state) => state.setActiveSidebarPanel)
   const setTool = useEditor((state) => state.setTool)
   const levelId = useViewer((s) => s.selection.levelId)
 
@@ -142,6 +143,7 @@ export function ControlModes() {
     if (id === 'site-edit') {
       if (isSiteEditing) {
         // Toggle off → back to structure/select
+        setActiveSidebarPanel('site')
         setPhase('structure')
         setMode('select')
         setStructureLayer('elements')
@@ -149,6 +151,7 @@ export function ControlModes() {
         // Enter site editing — set state directly to preserve level selection.
         // setPhase('site') calls viewer.resetSelection() which clears levelId,
         // breaking the 2D floorplan (it needs a level to render the SVG).
+        setActiveSidebarPanel('site')
         useEditor.setState({ phase: 'site', mode: 'select', tool: null, catalogCategory: null })
       }
       return
@@ -170,6 +173,7 @@ export function ControlModes() {
       if (getIsActive('sketch')) {
         setMode('select')
       } else {
+        setActiveSidebarPanel('site')
         setPhase('structure')
         setStructureLayer('elements')
         setMode('build')
@@ -180,6 +184,7 @@ export function ControlModes() {
       if (getIsActive('build')) {
         setMode('select')
       } else {
+        setActiveSidebarPanel('site')
         setPhase('structure')
         setStructureLayer('elements')
         setMode('build')
@@ -188,6 +193,7 @@ export function ControlModes() {
       if (getIsActive('furnish')) {
         setMode('select')
       } else {
+        setActiveSidebarPanel('furnish')
         setPhase('furnish')
         setMode('build')
       }
@@ -195,6 +201,7 @@ export function ControlModes() {
       if (getIsActive('zone')) {
         setMode('select')
       } else {
+        setActiveSidebarPanel('site')
         setPhase('structure')
         setStructureLayer('zones')
         setMode('build')

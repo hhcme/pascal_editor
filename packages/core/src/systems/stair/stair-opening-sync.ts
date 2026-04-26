@@ -1,4 +1,4 @@
-import type { AnyNode, AnyNodeId, CeilingNode, LevelNode, SlabNode, StairNode, StairSegmentNode } from '../../schema'
+import type { AnyNode, AnyNodeId, CeilingNode, SlabNode, StairNode, StairSegmentNode } from '../../schema'
 import { resolveLevelId } from '../../hooks/spatial-grid/spatial-grid-sync'
 import { DEFAULT_WALL_HEIGHT } from '../wall/wall-footprint'
 
@@ -27,9 +27,16 @@ type AxisAlignedRect = {
   maxZ: number
 }
 
+type StairOpeningSurface = {
+  targetElevation: number
+  clearanceElevation: number
+}
+
 const CURVED_STAIR_SLAB_OPENING_RATIO = 0.8
 const STRAIGHT_STAIR_TARGET_THRESHOLD_MIN = 0.35
 const STAIR_SLAB_OPENING_TIGHTENING = 0
+const STRAIGHT_STAIR_MIN_HEADROOM = 2
+const STRAIGHT_STAIR_HEADROOM_MARGIN = 0.05
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
@@ -245,9 +252,15 @@ function getStraightSegmentSlicePolygon(
   return getStraightSegmentLocalSlicePolygon(layout, startAlong, endAlong).map(([x, z]) => toWorldPlanPoint(stair, x, z))
 }
 
-function getStraightFlightOpeningDepth(stair: StairNode, segment: StairSegmentNode) {
-  const treadDepth = Math.max(0.2, segment.length / Math.max(segment.stepCount || stair.stepCount || 10, 1))
-  return Math.min(segment.length, Math.max(treadDepth * 6, segment.length * 0.62, 1.8))
+function getStraightFlightOpeningDepth(layout: StraightStairLayout, clearanceElevation: number) {
+  const { segment, transform } = layout
+  const segmentRise = Math.max(segment.height, 1e-4)
+  const requiredHeadroom = STRAIGHT_STAIR_MIN_HEADROOM + STRAIGHT_STAIR_HEADROOM_MARGIN
+  // Cut the top portion of the flight until the walking line gains enough vertical headroom.
+  const firstClearPointAlong =
+    ((clearanceElevation - requiredHeadroom - transform.position[1]) / segmentRise) * segment.length
+  const openingStartAlong = clamp(firstClearPointAlong, 0, segment.length)
+  return Math.max(0, segment.length - openingStartAlong)
 }
 
 function polygonArea(points: Point2D[]) {
@@ -418,11 +431,13 @@ function getSpiralOpeningPolygon(stair: StairNode): Point2D[] {
 function getStraightOpeningPolygonsForSurface(
   stair: StairNode,
   nodes: Record<string, AnyNode>,
-  targetElevation: number,
+  surface: StairOpeningSurface,
 ) {
   const layouts = getStraightStairLayouts(stair, nodes)
   if (layouts.length === 0) return []
 
+  const targetElevation = surface.targetElevation
+  const clearanceElevation = surface.clearanceElevation
   const riserHeight = (stair.totalRise ?? 2.5) / Math.max(stair.stepCount ?? 10, 1)
   const targetThreshold = Math.max(riserHeight * 2, STRAIGHT_STAIR_TARGET_THRESHOLD_MIN)
   const openingOffset = Math.max(stair.openingOffset ?? 0, 0)
@@ -438,11 +453,13 @@ function getStraightOpeningPolygonsForSurface(
 
     if (segment.segmentType === 'stair') {
       if (Math.abs(targetElevation - segmentTopElevation) <= targetThreshold) {
-        const openingDepth = getStraightFlightOpeningDepth(stair, segment)
-        const flightRect = getAxisAlignedRectFromPolygon(
-          getStraightSegmentLocalSlicePolygon(layout, Math.max(0, segment.length - openingDepth), segment.length),
-        )
-        if (flightRect) openingRects.push(expandRect(flightRect, openingOffset))
+        const openingDepth = getStraightFlightOpeningDepth(layout, clearanceElevation)
+        if (openingDepth > 1e-4) {
+          const flightRect = getAxisAlignedRectFromPolygon(
+            getStraightSegmentLocalSlicePolygon(layout, Math.max(0, segment.length - openingDepth), segment.length),
+          )
+          if (flightRect) openingRects.push(expandRect(flightRect, openingOffset))
+        }
       }
       continue
     }
@@ -458,15 +475,17 @@ function getStraightOpeningPolygonsForSurface(
     if (previous?.segment.segmentType === 'stair') {
       const previousTopElevation = previous.topElevation
       if (Math.abs(targetElevation - previousTopElevation) <= targetThreshold) {
-        const previousDepth = getStraightFlightOpeningDepth(stair, previous.segment)
-        const previousRect = getAxisAlignedRectFromPolygon(
-          getStraightSegmentLocalSlicePolygon(
-            previous,
-            Math.max(0, previous.segment.length - previousDepth),
-            previous.segment.length,
-          ),
-        )
-        if (previousRect) landingRects.push(expandRect(previousRect, openingOffset))
+        const previousDepth = getStraightFlightOpeningDepth(previous, clearanceElevation)
+        if (previousDepth > 1e-4) {
+          const previousRect = getAxisAlignedRectFromPolygon(
+            getStraightSegmentLocalSlicePolygon(
+              previous,
+              Math.max(0, previous.segment.length - previousDepth),
+              previous.segment.length,
+            ),
+          )
+          if (previousRect) landingRects.push(expandRect(previousRect, openingOffset))
+        }
       }
     }
 
@@ -496,7 +515,7 @@ function getStraightOpeningPolygonsForSurface(
 function getStairOpeningPolygons(
   stair: StairNode,
   nodes: Record<string, AnyNode>,
-  targetElevation?: number,
+  surface?: StairOpeningSurface,
 ) {
   if ((stair.slabOpeningMode ?? 'none') !== 'destination') {
     return []
@@ -510,53 +529,72 @@ function getStairOpeningPolygons(
     return [getSpiralOpeningPolygon(stair)]
   }
 
-  if (typeof targetElevation === 'number') {
-    return getStraightOpeningPolygonsForSurface(stair, nodes, targetElevation)
+  if (surface) {
+    return getStraightOpeningPolygonsForSurface(stair, nodes, surface)
   }
 
+  const fallbackElevation = Math.max(...getStraightStairLayouts(stair, nodes).map((layout) => layout.topElevation), 0)
   return getStraightOpeningPolygonsForSurface(
     stair,
     nodes,
-    Math.max(...getStraightStairLayouts(stair, nodes).map((layout) => layout.topElevation), 0),
+    {
+      targetElevation: fallbackElevation,
+      clearanceElevation: fallbackElevation,
+    },
   )
 }
 
-function getTargetSlabElevationForStair(
+function getTargetSlabOpeningSurfaceForStair(
   stair: StairNode,
   slab: SlabNode,
   slabLevelId: string,
   nodes: Record<string, AnyNode>,
-) {
+): StairOpeningSurface {
   const { fromLevelId } = getResolvedStairLevelIds(stair, nodes)
   const fromLevel = getLevelNumber(fromLevelId, nodes)
   const slabLevel = getLevelNumber(slabLevelId, nodes)
+  const slabThickness = Math.max(slab.elevation ?? 0.05, 0)
+  const stairBaseElevation = stair.position[1] ?? 0
 
   if (fromLevel === undefined || slabLevel === undefined) {
-    return slab.elevation ?? 0.05
+    return {
+      targetElevation: slabThickness,
+      clearanceElevation: 0,
+    }
   }
 
-  return (
-    (slabLevel - fromLevel) * DEFAULT_WALL_HEIGHT +
-    (slab.elevation ?? 0.05) -
-    (stair.position[1] ?? 0)
-  )
+  const slabUndersideElevation = (slabLevel - fromLevel) * DEFAULT_WALL_HEIGHT - stairBaseElevation
+  return {
+    targetElevation: slabUndersideElevation + slabThickness,
+    clearanceElevation: slabUndersideElevation,
+  }
 }
 
-function getTargetCeilingElevationForStair(
+function getTargetCeilingOpeningSurfaceForStair(
   stair: StairNode,
   ceiling: CeilingNode,
   ceilingLevelId: string,
   nodes: Record<string, AnyNode>,
-) {
+): StairOpeningSurface {
   const { fromLevelId } = getResolvedStairLevelIds(stair, nodes)
   const fromLevel = getLevelNumber(fromLevelId, nodes)
   const ceilingLevel = getLevelNumber(ceilingLevelId, nodes)
+  const stairBaseElevation = stair.position[1] ?? 0
 
   if (fromLevel === undefined || ceilingLevel === undefined) {
-    return ceiling.height ?? DEFAULT_WALL_HEIGHT
+    const ceilingElevation = ceiling.height ?? DEFAULT_WALL_HEIGHT
+    return {
+      targetElevation: ceilingElevation,
+      clearanceElevation: ceilingElevation,
+    }
   }
 
-  return (ceilingLevel - fromLevel) * DEFAULT_WALL_HEIGHT + (ceiling.height ?? DEFAULT_WALL_HEIGHT) - (stair.position[1] ?? 0)
+  const ceilingElevation =
+    (ceilingLevel - fromLevel) * DEFAULT_WALL_HEIGHT + (ceiling.height ?? DEFAULT_WALL_HEIGHT) - stairBaseElevation
+  return {
+    targetElevation: ceilingElevation,
+    clearanceElevation: ceilingElevation,
+  }
 }
 
 function shouldApplyStairToSlab(stair: StairNode, slabLevelId: string, nodes: Record<string, AnyNode>) {
@@ -618,7 +656,7 @@ export function syncAutoStairOpenings(nodes: Record<string, AnyNode>) {
         getStairOpeningPolygons(
           stair,
           nodes,
-          getTargetSlabElevationForStair(stair, slab, slabLevelId, nodes),
+          getTargetSlabOpeningSurfaceForStair(stair, slab, slabLevelId, nodes),
         ).map((polygon) => ({
           polygon:
             stair.stairType === 'straight'
@@ -663,7 +701,7 @@ export function syncAutoStairOpenings(nodes: Record<string, AnyNode>) {
         getStairOpeningPolygons(
           stair,
           nodes,
-          getTargetCeilingElevationForStair(stair, ceiling, ceilingLevelId, nodes),
+          getTargetCeilingOpeningSurfaceForStair(stair, ceiling, ceilingLevelId, nodes),
         ).map((polygon) => ({
           polygon:
             stair.stairType === 'straight'

@@ -7,6 +7,7 @@ import { GuideNode } from './guide'
 import { RoofNode } from './roof'
 import { ScanNode } from './scan'
 import { SketchCircleNode } from './sketch-circle'
+import { SketchDimensionNode } from './sketch-dimension'
 import { SketchLineNode } from './sketch-line'
 import { SlabNode } from './slab'
 import { StairNode } from './stair'
@@ -28,6 +29,7 @@ export const LevelNode = BaseNode.extend({
         StairNode.shape.id,
         ScanNode.shape.id,
         GuideNode.shape.id,
+        SketchDimensionNode.shape.id,
         SketchCircleNode.shape.id,
         SketchLineNode.shape.id,
       ]),

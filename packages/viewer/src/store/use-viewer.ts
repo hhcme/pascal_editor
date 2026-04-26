@@ -6,11 +6,17 @@ import type { Object3D } from 'three'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import {
+  clampSunMinutesOfDay,
   clampSunProgress,
   DEFAULT_SUN_STUDY_STATE,
+  getDefaultSunStudyDate,
   getNearestSunTimeOfDay,
   getSunProgressForTimeOfDay,
+  resolveSunMinutesOfDay,
   resolveSunProgress,
+  resolveSunStudyDate,
+  resolveSunStudyState,
+  type SunStudyMode,
   type SunStudyState,
   type SunTimeOfDay,
 } from '../lib/sun-study'
@@ -38,6 +44,13 @@ type Outliner = {
   hoveredObjects: Object3D[]
 }
 
+type ProjectViewerPreferences = {
+  showScans?: boolean
+  showGuides?: boolean
+  showGrid?: boolean
+  sunStudy?: SunStudyState
+}
+
 export type ExportSceneRequest =
   | 'glb'
   | 'stl'
@@ -56,6 +69,8 @@ type ViewerState = {
   setHoverHighlightMode: (mode: 'default' | 'delete') => void
   hoveredId: AnyNode['id'] | ZoneNode['id'] | null
   setHoveredId: (id: AnyNode['id'] | ZoneNode['id'] | null) => void
+  placementHoveredIds: AnyNode['id'][]
+  setPlacementHoveredIds: (ids: AnyNode['id'][]) => void
 
   cameraMode: 'perspective' | 'orthographic'
   setCameraMode: (mode: 'perspective' | 'orthographic') => void
@@ -87,8 +102,11 @@ type ViewerState = {
   sunStudy: SunStudyState
   setSunStudy: (updates: Partial<SunStudyState>) => void
   setSunStudyEnabled: (enabled: boolean) => void
+  setSunStudyMode: (mode: SunStudyMode) => void
   setSunTimeOfDay: (timeOfDay: SunTimeOfDay) => void
   setSunProgress: (progress: number) => void
+  setSunStudyDate: (date: string) => void
+  setSunMinutesOfDay: (minutesOfDay: number) => void
 
   weather: WeatherState
   setWeatherMode: (mode: WeatherMode) => void
@@ -100,10 +118,7 @@ type ViewerState = {
 
   projectId: string | null
   setProjectId: (id: string | null) => void
-  projectPreferences: Record<
-    string,
-    { showScans?: boolean; showGuides?: boolean; showGrid?: boolean }
-  >
+  projectPreferences: Record<string, ProjectViewerPreferences>
 
   // Smart selection update
   setSelection: (updates: Partial<SelectionPath>) => void
@@ -125,6 +140,46 @@ type ViewerState = {
   setCameraDragging: (dragging: boolean) => void
 }
 
+function updateProjectPreferences(
+  projectPreferences: Record<string, ProjectViewerPreferences>,
+  projectId: string | null,
+  updates: Partial<ProjectViewerPreferences>,
+) {
+  if (!projectId) return projectPreferences
+
+  return {
+    ...projectPreferences,
+    [projectId]: {
+      ...(projectPreferences[projectId] || {}),
+      ...updates,
+    },
+  }
+}
+
+function finalizeSunStudyState(sunStudy: Partial<SunStudyState> | SunStudyState | null | undefined) {
+  const normalized = resolveSunStudyState(sunStudy)
+
+  if (normalized.mode !== 'real') return normalized
+
+  return {
+    ...normalized,
+    date: normalized.date ?? getDefaultSunStudyDate(),
+    minutesOfDay: resolveSunMinutesOfDay(normalized.minutesOfDay),
+  }
+}
+
+function withProjectSunStudy(
+  state: Pick<ViewerState, 'projectId' | 'projectPreferences'>,
+  sunStudy: SunStudyState,
+) {
+  return {
+    sunStudy,
+    projectPreferences: updateProjectPreferences(state.projectPreferences, state.projectId, {
+      sunStudy,
+    }),
+  }
+}
+
 const useViewer = create<ViewerState>()(
   persist(
     (set) => ({
@@ -135,6 +190,8 @@ const useViewer = create<ViewerState>()(
       setHoverHighlightMode: (mode) => set({ hoverHighlightMode: mode }),
       hoveredId: null,
       setHoveredId: (id) => set({ hoveredId: id }),
+      placementHoveredIds: [],
+      setPlacementHoveredIds: (ids) => set({ placementHoveredIds: ids }),
 
       cameraMode: 'perspective',
       setCameraMode: (mode) => set({ cameraMode: mode }),
@@ -154,39 +211,33 @@ const useViewer = create<ViewerState>()(
       showScans: true,
       setShowScans: (show) =>
         set((state) => {
-          const projectPreferences = { ...(state.projectPreferences || {}) }
-          if (state.projectId) {
-            projectPreferences[state.projectId] = {
-              ...(projectPreferences[state.projectId] || {}),
-              showScans: show,
-            }
-          }
+          const projectPreferences = updateProjectPreferences(
+            state.projectPreferences,
+            state.projectId,
+            { showScans: show },
+          )
           return { showScans: show, projectPreferences }
         }),
 
       showGuides: true,
       setShowGuides: (show) =>
         set((state) => {
-          const projectPreferences = { ...(state.projectPreferences || {}) }
-          if (state.projectId) {
-            projectPreferences[state.projectId] = {
-              ...(projectPreferences[state.projectId] || {}),
-              showGuides: show,
-            }
-          }
+          const projectPreferences = updateProjectPreferences(
+            state.projectPreferences,
+            state.projectId,
+            { showGuides: show },
+          )
           return { showGuides: show, projectPreferences }
         }),
 
       showGrid: true,
       setShowGrid: (show) =>
         set((state) => {
-          const projectPreferences = { ...(state.projectPreferences || {}) }
-          if (state.projectId) {
-            projectPreferences[state.projectId] = {
-              ...(projectPreferences[state.projectId] || {}),
-              showGrid: show,
-            }
-          }
+          const projectPreferences = updateProjectPreferences(
+            state.projectPreferences,
+            state.projectId,
+            { showGrid: show },
+          )
           return { showGrid: show, projectPreferences }
         }),
 
@@ -195,46 +246,96 @@ const useViewer = create<ViewerState>()(
 
       sunStudy: DEFAULT_SUN_STUDY_STATE,
       setSunStudy: (updates) =>
-        set((state) => ({
-          sunStudy: {
-            ...state.sunStudy,
-            ...updates,
-            progress: resolveSunProgress(
-              updates.timeOfDay ?? state.sunStudy.timeOfDay,
-              updates.progress ?? state.sunStudy.progress,
-            ),
-          },
-        })),
+        set((state) =>
+          withProjectSunStudy(
+            state,
+            finalizeSunStudyState({
+              ...state.sunStudy,
+              ...updates,
+              progress: resolveSunProgress(
+                updates.timeOfDay ?? state.sunStudy.timeOfDay,
+                updates.progress ?? state.sunStudy.progress,
+              ),
+            }),
+          ),
+        ),
       setSunStudyEnabled: (enabled) =>
-        set((state) => ({
-          sunStudy: {
-            ...state.sunStudy,
-            enabled,
-            progress: resolveSunProgress(state.sunStudy.timeOfDay, state.sunStudy.progress),
-          },
-        })),
+        set((state) =>
+          withProjectSunStudy(
+            state,
+            finalizeSunStudyState({
+              ...state.sunStudy,
+              enabled,
+              progress: resolveSunProgress(state.sunStudy.timeOfDay, state.sunStudy.progress),
+            }),
+          ),
+        ),
+      setSunStudyMode: (mode) =>
+        set((state) =>
+          withProjectSunStudy(
+            state,
+            finalizeSunStudyState({
+              ...state.sunStudy,
+              enabled: true,
+              mode,
+              date:
+                mode === 'real'
+                  ? resolveSunStudyDate(state.sunStudy.date) ?? getDefaultSunStudyDate()
+                  : state.sunStudy.date,
+              minutesOfDay: resolveSunMinutesOfDay(state.sunStudy.minutesOfDay),
+            }),
+          ),
+        ),
       setSunTimeOfDay: (timeOfDay) =>
-        set((state) => ({
-          sunStudy: {
-            ...state.sunStudy,
-            enabled: true,
-            timeOfDay,
-            progress: getSunProgressForTimeOfDay(timeOfDay),
-          },
-        })),
+        set((state) =>
+          withProjectSunStudy(
+            state,
+            finalizeSunStudyState({
+              ...state.sunStudy,
+              enabled: true,
+              mode: 'preset',
+              timeOfDay,
+              progress: getSunProgressForTimeOfDay(timeOfDay),
+            }),
+          ),
+        ),
       setSunProgress: (progress) =>
         set((state) => {
           const sunProgress = clampSunProgress(progress)
 
-          return {
-            sunStudy: {
+          return withProjectSunStudy(state, finalizeSunStudyState({
+            ...state.sunStudy,
+            enabled: true,
+            mode: 'preset',
+            progress: sunProgress,
+            timeOfDay: getNearestSunTimeOfDay(sunProgress),
+          }))
+        }),
+      setSunStudyDate: (date) =>
+        set((state) =>
+          withProjectSunStudy(
+            state,
+            finalizeSunStudyState({
               ...state.sunStudy,
               enabled: true,
-              progress: sunProgress,
-              timeOfDay: getNearestSunTimeOfDay(sunProgress),
-            },
-          }
-        }),
+              mode: 'real',
+              date: resolveSunStudyDate(date) ?? getDefaultSunStudyDate(),
+            }),
+          ),
+        ),
+      setSunMinutesOfDay: (minutesOfDay) =>
+        set((state) =>
+          withProjectSunStudy(
+            state,
+            finalizeSunStudyState({
+              ...state.sunStudy,
+              enabled: true,
+              mode: 'real',
+              date: resolveSunStudyDate(state.sunStudy.date) ?? getDefaultSunStudyDate(),
+              minutesOfDay: clampSunMinutesOfDay(minutesOfDay),
+            }),
+          ),
+        ),
 
       weather: DEFAULT_WEATHER_STATE,
       setWeatherMode: (mode) =>
@@ -296,6 +397,7 @@ const useViewer = create<ViewerState>()(
             showScans: prefs.showScans ?? true,
             showGuides: prefs.showGuides ?? true,
             showGrid: prefs.showGrid ?? true,
+            sunStudy: finalizeSunStudyState(prefs.sunStudy ?? DEFAULT_SUN_STUDY_STATE),
           }
         }),
       projectPreferences: {},

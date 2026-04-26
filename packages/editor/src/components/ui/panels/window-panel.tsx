@@ -10,7 +10,7 @@ import {
 } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
 import { BookMarked, Copy, FlipHorizontal2, Move, Trash2 } from 'lucide-react'
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import { usePresetsAdapter } from '../../../contexts/presets-context'
 import { sfxEmitter } from '../../../lib/sfx-bus'
 import useEditor from '../../../store/use-editor'
@@ -21,8 +21,35 @@ import { MetricControl } from '../controls/metric-control'
 import { PanelSection } from '../controls/panel-section'
 import { SliderControl } from '../controls/slider-control'
 import { ToggleControl } from '../controls/toggle-control'
+import { ContextualItemRecommendations } from './contextual-item-recommendations'
+import { InspectorTabs } from './inspector-tabs'
 import { PanelWrapper } from './panel-wrapper'
 import { PresetsPopover } from './presets/presets-popover'
+
+type WindowInspectorTab = 'properties' | 'material' | 'pairings' | 'preset'
+
+const WINDOW_PAIRING_RECOMMENDATIONS = [
+  {
+    itemId: 'hanging-planter',
+    category: 'furniture' as const,
+    description: 'A hanging planter adds a soft foreground layer near the window.',
+  },
+  {
+    itemId: 'wall-planter',
+    category: 'furniture' as const,
+    description: 'Use the side wall for greenery without blocking daylight.',
+  },
+  {
+    itemId: 'indoor-snake-plant',
+    category: 'furniture' as const,
+    description: 'A tall plant helps anchor the window corner on the floor.',
+  },
+  {
+    itemId: 'floor-lamp',
+    category: 'lighting' as const,
+    description: 'Pair the window zone with a floor lamp for evening ambience.',
+  },
+] as const
 
 export function WindowPanel() {
   const selectedId = useViewer((s) => s.selection.selectedIds[0])
@@ -30,6 +57,7 @@ export function WindowPanel() {
   const updateNode = useScene((s) => s.updateNode)
   const deleteNode = useScene((s) => s.deleteNode)
   const setMovingNode = useEditor((s) => s.setMovingNode)
+  const [activeTab, setActiveTab] = useState<WindowInspectorTab>('properties')
 
   const adapter = usePresetsAdapter()
 
@@ -202,246 +230,277 @@ export function WindowPanel() {
         <InspectorStat label="Sill" value={node.sill ? 'on' : 'off'} />
       </InspectorSummary>
 
-      {/* Presets strip */}
-      <div className="border-border/30 border-b px-3 pt-2.5 pb-1.5">
-        <PresetsPopover
-          isAuthenticated={adapter.isAuthenticated}
-          onApply={handleApplyPreset}
-          onDelete={(id) => adapter.deletePreset(id)}
-          onFetchPresets={(tab) => adapter.fetchPresets('window', tab)}
-          onOverwrite={handleOverwritePreset}
-          onRename={(id, name) => adapter.renamePreset(id, name)}
-          onSave={handleSavePreset}
-          onToggleCommunity={adapter.togglePresetCommunity}
-          tabs={adapter.tabs}
-          type="window"
-        >
-          <button className="flex w-full items-center gap-2 rounded-md border border-border/55 bg-card px-3 py-2 font-medium text-muted-foreground text-xs transition-colors hover:bg-accent/55 hover:text-foreground">
-            <BookMarked className="h-3.5 w-3.5 shrink-0" />
-            <span>Presets</span>
-          </button>
-        </PresetsPopover>
-      </div>
+      <InspectorTabs
+        onChange={setActiveTab}
+        options={[
+          { label: 'Properties', value: 'properties' },
+          { label: 'Material', value: 'material' },
+          { label: 'Pairings', value: 'pairings' },
+          { label: 'Preset', value: 'preset' },
+        ]}
+        value={activeTab}
+      />
 
-      <PanelSection title="Position">
-        <SliderControl
-          label={
-            <>
-              X<sub className="ml-[1px] text-[11px] opacity-70">pos</sub>
-            </>
-          }
-          onChange={(v) => handleUpdate({ position: [v, node.position[1], node.position[2]] })}
-          precision={2}
-          step={0.1}
-          unit="m"
-          value={Math.round(node.position[0] * 100) / 100}
-        />
-        <SliderControl
-          label={
-            <>
-              Y<sub className="ml-[1px] text-[11px] opacity-70">pos</sub>
-            </>
-          }
-          onChange={(v) => handleUpdate({ position: [node.position[0], v, node.position[2]] })}
-          precision={2}
-          step={0.1}
-          unit="m"
-          value={Math.round(node.position[1] * 100) / 100}
-        />
-        <div className="px-1 pt-2 pb-1">
-          <ActionButton
-            className="w-full"
-            icon={<FlipHorizontal2 className="h-4 w-4" />}
-            label="Flip Side"
-            onClick={handleFlip}
-          />
-        </div>
-      </PanelSection>
-
-      <PanelSection title="Dimensions">
-        <SliderControl
-          label="Width"
-          min={0}
-          onChange={(v) => handleUpdate({ width: v })}
-          precision={2}
-          step={0.1}
-          unit="m"
-          value={Math.round(node.width * 100) / 100}
-        />
-        <SliderControl
-          label="Height"
-          min={0}
-          onChange={(v) => handleUpdate({ height: v })}
-          precision={2}
-          step={0.1}
-          unit="m"
-          value={Math.round(node.height * 100) / 100}
-        />
-      </PanelSection>
-
-      <PanelSection title="Frame">
-        <SliderControl
-          label="Thickness"
-          min={0}
-          onChange={(v) => handleUpdate({ frameThickness: v })}
-          precision={3}
-          step={0.01}
-          unit="m"
-          value={Math.round(node.frameThickness * 1000) / 1000}
-        />
-        <SliderControl
-          label="Depth"
-          min={0}
-          onChange={(v) => handleUpdate({ frameDepth: v })}
-          precision={3}
-          step={0.01}
-          unit="m"
-          value={Math.round(node.frameDepth * 1000) / 1000}
-        />
-      </PanelSection>
-
-      <PanelSection title="Grid">
-        <SliderControl
-          label="Columns"
-          max={8}
-          min={1}
-          onChange={(v) => {
-            const n = Math.max(1, Math.min(8, Math.round(v)))
-            handleUpdate({ columnRatios: Array(n).fill(1 / n) })
-          }}
-          precision={0}
-          step={1}
-          value={numCols}
-        />
-        <SliderControl
-          label="Rows"
-          max={8}
-          min={1}
-          onChange={(v) => {
-            const n = Math.max(1, Math.min(8, Math.round(v)))
-            handleUpdate({ rowRatios: Array(n).fill(1 / n) })
-          }}
-          precision={0}
-          step={1}
-          value={numRows}
-        />
-
-        {numCols > 1 && (
-          <div className="mt-2 flex flex-col gap-1">
-            <div className="mb-1 px-1 font-semibold text-[11px] text-muted-foreground">
-              Col Widths
-            </div>
-            {normCols.map((ratio, i) => (
-              <SliderControl
-                key={`c-${i}`}
-                label={`C${i + 1}`}
-                max={95}
-                min={5}
-                onChange={(v) => setColumnRatio(i, v / 100)}
-                precision={1}
-                step={1}
-                unit="%"
-                value={Math.round(ratio * 100 * 10) / 10}
-              />
-            ))}
-            <div className="mt-1 border-border/50 border-t pt-1">
-              <SliderControl
-                label="Divider"
-                max={0.1}
-                min={0.005}
-                onChange={(v) => handleUpdate({ columnDividerThickness: v })}
-                precision={3}
-                step={0.01}
-                unit="m"
-                value={Math.round((node.columnDividerThickness ?? 0.03) * 1000) / 1000}
-              />
-            </div>
-          </div>
-        )}
-
-        {numRows > 1 && (
-          <div className="mt-2 flex flex-col gap-1">
-            <div className="mb-1 px-1 font-semibold text-[11px] text-muted-foreground">
-              Row Heights
-            </div>
-            {normRows.map((ratio, i) => (
-              <SliderControl
-                key={`r-${i}`}
-                label={`R${i + 1}`}
-                max={95}
-                min={5}
-                onChange={(v) => setRowRatio(i, v / 100)}
-                precision={1}
-                step={1}
-                unit="%"
-                value={Math.round(ratio * 100 * 10) / 10}
-              />
-            ))}
-            <div className="mt-1 border-border/50 border-t pt-1">
-              <SliderControl
-                label="Divider"
-                max={0.1}
-                min={0.005}
-                onChange={(v) => handleUpdate({ rowDividerThickness: v })}
-                precision={3}
-                step={0.01}
-                unit="m"
-                value={Math.round((node.rowDividerThickness ?? 0.03) * 1000) / 1000}
-              />
-            </div>
-          </div>
-        )}
-      </PanelSection>
-
-      <PanelSection title="Sill">
-        <ToggleControl
-          checked={node.sill}
-          label="Enable Sill"
-          onChange={(checked) => handleUpdate({ sill: checked })}
-        />
-        {node.sill && (
-          <div className="mt-1 flex flex-col gap-1">
+      {activeTab === 'properties' ? (
+        <>
+          <PanelSection title="Position">
             <SliderControl
-              label="Depth"
-              min={0}
-              onChange={(v) => handleUpdate({ sillDepth: v })}
-              precision={3}
-              step={0.01}
+              label={
+                <>
+                  X<sub className="ml-[1px] text-[11px] opacity-70">pos</sub>
+                </>
+              }
+              onChange={(v) => handleUpdate({ position: [v, node.position[1], node.position[2]] })}
+              precision={2}
+              step={0.1}
               unit="m"
-              value={Math.round(node.sillDepth * 1000) / 1000}
+              value={Math.round(node.position[0] * 100) / 100}
             />
+            <SliderControl
+              label={
+                <>
+                  Y<sub className="ml-[1px] text-[11px] opacity-70">pos</sub>
+                </>
+              }
+              onChange={(v) => handleUpdate({ position: [node.position[0], v, node.position[2]] })}
+              precision={2}
+              step={0.1}
+              unit="m"
+              value={Math.round(node.position[1] * 100) / 100}
+            />
+            <div className="px-1 pt-2 pb-1">
+              <ActionButton
+                className="w-full"
+                icon={<FlipHorizontal2 className="h-4 w-4" />}
+                label="Flip Side"
+                onClick={handleFlip}
+              />
+            </div>
+          </PanelSection>
+
+          <PanelSection title="Dimensions">
+            <SliderControl
+              label="Width"
+              min={0}
+              onChange={(v) => handleUpdate({ width: v })}
+              precision={2}
+              step={0.1}
+              unit="m"
+              value={Math.round(node.width * 100) / 100}
+            />
+            <SliderControl
+              label="Height"
+              min={0}
+              onChange={(v) => handleUpdate({ height: v })}
+              precision={2}
+              step={0.1}
+              unit="m"
+              value={Math.round(node.height * 100) / 100}
+            />
+          </PanelSection>
+
+          <PanelSection title="Frame">
             <SliderControl
               label="Thickness"
               min={0}
-              onChange={(v) => handleUpdate({ sillThickness: v })}
+              onChange={(v) => handleUpdate({ frameThickness: v })}
               precision={3}
               step={0.01}
               unit="m"
-              value={Math.round(node.sillThickness * 1000) / 1000}
+              value={Math.round(node.frameThickness * 1000) / 1000}
             />
-          </div>
-        )}
-      </PanelSection>
+            <SliderControl
+              label="Depth"
+              min={0}
+              onChange={(v) => handleUpdate({ frameDepth: v })}
+              precision={3}
+              step={0.01}
+              unit="m"
+              value={Math.round(node.frameDepth * 1000) / 1000}
+            />
+          </PanelSection>
 
-      <PanelSection title="Actions">
-        <ActionGroup>
-          <ActionButton icon={<Move className="h-3.5 w-3.5" />} label="Move" onClick={handleMove} />
-          <ActionButton
-            icon={<Copy className="h-3.5 w-3.5" />}
-            label="Duplicate"
-            onClick={handleDuplicate}
+          <PanelSection title="Grid">
+            <SliderControl
+              label="Columns"
+              max={8}
+              min={1}
+              onChange={(v) => {
+                const n = Math.max(1, Math.min(8, Math.round(v)))
+                handleUpdate({ columnRatios: Array(n).fill(1 / n) })
+              }}
+              precision={0}
+              step={1}
+              value={numCols}
+            />
+            <SliderControl
+              label="Rows"
+              max={8}
+              min={1}
+              onChange={(v) => {
+                const n = Math.max(1, Math.min(8, Math.round(v)))
+                handleUpdate({ rowRatios: Array(n).fill(1 / n) })
+              }}
+              precision={0}
+              step={1}
+              value={numRows}
+            />
+
+            {numCols > 1 && (
+              <div className="mt-2 flex flex-col gap-1">
+                <div className="mb-1 px-1 font-semibold text-[11px] text-muted-foreground">
+                  Col Widths
+                </div>
+                {normCols.map((ratio, i) => (
+                  <SliderControl
+                    key={`c-${i}`}
+                    label={`C${i + 1}`}
+                    max={95}
+                    min={5}
+                    onChange={(v) => setColumnRatio(i, v / 100)}
+                    precision={1}
+                    step={1}
+                    unit="%"
+                    value={Math.round(ratio * 100 * 10) / 10}
+                  />
+                ))}
+                <div className="mt-1 border-border/50 border-t pt-1">
+                  <SliderControl
+                    label="Divider"
+                    max={0.1}
+                    min={0.005}
+                    onChange={(v) => handleUpdate({ columnDividerThickness: v })}
+                    precision={3}
+                    step={0.01}
+                    unit="m"
+                    value={Math.round((node.columnDividerThickness ?? 0.03) * 1000) / 1000}
+                  />
+                </div>
+              </div>
+            )}
+
+            {numRows > 1 && (
+              <div className="mt-2 flex flex-col gap-1">
+                <div className="mb-1 px-1 font-semibold text-[11px] text-muted-foreground">
+                  Row Heights
+                </div>
+                {normRows.map((ratio, i) => (
+                  <SliderControl
+                    key={`r-${i}`}
+                    label={`R${i + 1}`}
+                    max={95}
+                    min={5}
+                    onChange={(v) => setRowRatio(i, v / 100)}
+                    precision={1}
+                    step={1}
+                    unit="%"
+                    value={Math.round(ratio * 100 * 10) / 10}
+                  />
+                ))}
+                <div className="mt-1 border-border/50 border-t pt-1">
+                  <SliderControl
+                    label="Divider"
+                    max={0.1}
+                    min={0.005}
+                    onChange={(v) => handleUpdate({ rowDividerThickness: v })}
+                    precision={3}
+                    step={0.01}
+                    unit="m"
+                    value={Math.round((node.rowDividerThickness ?? 0.03) * 1000) / 1000}
+                  />
+                </div>
+              </div>
+            )}
+          </PanelSection>
+
+          <PanelSection title="Sill">
+            <ToggleControl
+              checked={node.sill}
+              label="Enable Sill"
+              onChange={(checked) => handleUpdate({ sill: checked })}
+            />
+            {node.sill && (
+              <div className="mt-1 flex flex-col gap-1">
+                <SliderControl
+                  label="Depth"
+                  min={0}
+                  onChange={(v) => handleUpdate({ sillDepth: v })}
+                  precision={3}
+                  step={0.01}
+                  unit="m"
+                  value={Math.round(node.sillDepth * 1000) / 1000}
+                />
+                <SliderControl
+                  label="Thickness"
+                  min={0}
+                  onChange={(v) => handleUpdate({ sillThickness: v })}
+                  precision={3}
+                  step={0.01}
+                  unit="m"
+                  value={Math.round(node.sillThickness * 1000) / 1000}
+                />
+              </div>
+            )}
+          </PanelSection>
+
+          <PanelSection title="Actions">
+            <ActionGroup>
+              <ActionButton
+                icon={<Move className="h-3.5 w-3.5" />}
+                label="Move"
+                onClick={handleMove}
+              />
+              <ActionButton
+                icon={<Copy className="h-3.5 w-3.5" />}
+                label="Duplicate"
+                onClick={handleDuplicate}
+              />
+              <ActionButton
+                icon={<Trash2 className="h-3.5 w-3.5" />}
+                label="Delete"
+                onClick={handleDelete}
+                tone="danger"
+              />
+            </ActionGroup>
+          </PanelSection>
+        </>
+      ) : activeTab === 'material' ? (
+        <PanelSection title="Material">
+          <MaterialPicker onChange={handleMaterialChange} value={node.material} />
+        </PanelSection>
+      ) : activeTab === 'pairings' ? (
+        <PanelSection title="Suggested Pairings">
+          <ContextualItemRecommendations
+            description="Choose a recommended companion item and we will switch to Furnish mode, open the matching catalog, and preselect it for placement."
+            recommendations={[...WINDOW_PAIRING_RECOMMENDATIONS]}
           />
-          <ActionButton
-            icon={<Trash2 className="h-3.5 w-3.5" />}
-            label="Delete"
-            onClick={handleDelete}
-            tone="danger"
-          />
-        </ActionGroup>
-      </PanelSection>
-      <PanelSection title="Material">
-        <MaterialPicker onChange={handleMaterialChange} value={node.material} />
-      </PanelSection>
+        </PanelSection>
+      ) : (
+        <PanelSection title="Presets">
+          <div className="flex flex-col gap-2 px-1 pb-1">
+            <div className="text-[11px] text-muted-foreground">
+              Save this window setup for reuse, or apply an existing preset.
+            </div>
+            <PresetsPopover
+              isAuthenticated={adapter.isAuthenticated}
+              onApply={handleApplyPreset}
+              onDelete={(id) => adapter.deletePreset(id)}
+              onFetchPresets={(tab) => adapter.fetchPresets('window', tab)}
+              onOverwrite={handleOverwritePreset}
+              onRename={(id, name) => adapter.renamePreset(id, name)}
+              onSave={handleSavePreset}
+              onToggleCommunity={adapter.togglePresetCommunity}
+              tabs={adapter.tabs}
+              type="window"
+            >
+              <button className="flex w-full items-center gap-2 rounded-md border border-border/55 bg-card px-3 py-2 font-medium text-muted-foreground text-xs transition-colors hover:bg-accent/55 hover:text-foreground">
+                <BookMarked className="h-3.5 w-3.5 shrink-0" />
+                <span>Open Window Presets</span>
+              </button>
+            </PresetsPopover>
+          </div>
+        </PanelSection>
+      )}
     </PanelWrapper>
   )
 }

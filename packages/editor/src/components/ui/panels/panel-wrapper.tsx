@@ -36,7 +36,7 @@ export function PanelSurfaceProvider({
 
 interface PanelWrapperProps {
   title: string
-  icon?: string
+  icon?: ReactNode | string
   onClose?: () => void
   onReset?: () => void
   onBack?: () => void
@@ -83,8 +83,10 @@ export function PanelWrapper({
               <ChevronLeft className="h-4 w-4" />
             </button>
           )}
-          {icon && (
+          {typeof icon === 'string' ? (
             <Image alt="" className="shrink-0 object-contain" height={16} src={icon} width={16} />
+          ) : (
+            icon
           )}
           <h2 className="truncate font-semibold text-foreground text-sm">{title}</h2>
         </div>

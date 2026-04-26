@@ -5,6 +5,8 @@ import { LevelNode, useScene } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
 import {
   AppWindow,
+  ArrowLeftRight,
+  ArrowUpDown,
   ArrowRight,
   Box,
   Building2,
@@ -15,6 +17,7 @@ import {
   Eye,
   EyeOff,
   FileJson,
+  DraftingCompass,
   Grid3X3,
   Hexagon,
   Layers,
@@ -27,6 +30,7 @@ import {
   PencilLine,
   Plus,
   Redo2,
+  Ruler,
   Square,
   SquareStack,
   Sun,
@@ -52,6 +56,8 @@ export function EditorCommands() {
   const setStructureLayer = useEditor((s) => s.setStructureLayer)
   const isPreviewMode = useEditor((s) => s.isPreviewMode)
   const setPreviewMode = useEditor((s) => s.setPreviewMode)
+  const measurementMode = useEditor((s) => s.measurementMode)
+  const setMeasurementMode = useEditor((s) => s.setMeasurementMode)
 
   const exportScene = useViewer((s) => s.exportScene)
 
@@ -353,6 +359,71 @@ export function EditorCommands() {
 
       // ── Viewer Controls ──────────────────────────────────────────────────
       {
+        id: 'editor.measure.distance',
+        label: '3D 测距',
+        group: 'Viewer Controls',
+        icon: <Ruler className="h-4 w-4" />,
+        keywords: ['measure', 'distance', 'length', '3d'],
+        execute: () => run(() => setMeasurementMode('distance')),
+      },
+      {
+        id: 'editor.measure.area',
+        label: '3D 测面积',
+        group: 'Viewer Controls',
+        icon: <Square className="h-4 w-4" />,
+        keywords: ['measure', 'area', 'surface', '3d'],
+        execute: () => run(() => setMeasurementMode('area')),
+      },
+      {
+        id: 'editor.measure.volume',
+        label: '3D 测体积',
+        group: 'Viewer Controls',
+        icon: <Box className="h-4 w-4" />,
+        keywords: ['measure', 'volume', 'space', '3d'],
+        execute: () => run(() => setMeasurementMode('volume')),
+      },
+      {
+        id: 'editor.measure.clearance',
+        label: '3D 净空',
+        group: 'Viewer Controls',
+        icon: <ArrowUpDown className="h-4 w-4" />,
+        keywords: ['measure', 'clearance', 'headroom', 'gap', '3d'],
+        execute: () => run(() => setMeasurementMode('clearance')),
+      },
+      {
+        id: 'editor.measure.angle',
+        label: '3D 角度/坡度',
+        group: 'Viewer Controls',
+        icon: <DraftingCompass className="h-4 w-4" />,
+        keywords: ['measure', 'angle', 'slope', 'pitch', 'rotation', '3d'],
+        execute: () => run(() => setMeasurementMode('angle')),
+      },
+      {
+        id: 'editor.measure.perimeter',
+        label: '3D 周长/面宽/退距',
+        group: 'Viewer Controls',
+        icon: <ArrowLeftRight className="h-4 w-4" />,
+        keywords: ['measure', 'perimeter', 'frontage', 'depth', 'setback', 'opening', 'footprint', '3d'],
+        execute: () => run(() => setMeasurementMode('perimeter')),
+      },
+      {
+        id: 'editor.measure.grid',
+        label: '3D 轴网/轴距',
+        group: 'Viewer Controls',
+        icon: <Grid3X3 className="h-4 w-4" />,
+        keywords: ['measure', 'grid', 'axis', 'bay', 'spacing', 'column', 'construction line', '3d'],
+        execute: () => run(() => setMeasurementMode('grid')),
+      },
+      {
+        id: 'editor.measure.close',
+        label: '关闭 3D 测量',
+        group: 'Viewer Controls',
+        icon: <Ruler className="h-4 w-4" />,
+        keywords: ['measure', 'close', 'exit', '3d'],
+        when: () => measurementMode !== null,
+        execute: () => run(() => setMeasurementMode(null)),
+      },
+      {
         id: 'editor.viewer.wall-mode',
         label: 'Wall Mode',
         group: 'Viewer Controls',
@@ -538,6 +609,8 @@ export function EditorCommands() {
     setStructureLayer,
     isPreviewMode,
     setPreviewMode,
+    measurementMode,
+    setMeasurementMode,
     exportScene,
   ])
 
