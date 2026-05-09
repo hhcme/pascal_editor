@@ -2,9 +2,19 @@
 
 import { useScene } from '@pascal-app/core'
 import { type ThreeEvent, useFrame, useThree } from '@react-three/fiber'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { type Group, type Object3D, Plane, Raycaster, Vector2, Vector3 } from 'three'
-import useViewer, { type CharacterMotion, type CharacterPersonState } from '../../store/use-viewer'
+import { type MutableRefObject, useEffect, useMemo, useRef, useState } from 'react'
+import { Matrix3, type Group, type Object3D, Plane, Raycaster, Vector2, Vector3 } from 'three'
+import {
+  buildCharacterCollisionMap,
+  getCharacterWaterAreaAt,
+  resolveCharacterWalkPosition,
+  type CharacterCollisionMap,
+} from '../../lib/character-collision'
+import useViewer, {
+  type CharacterKind,
+  type CharacterMotion,
+  type CharacterPersonState,
+} from '../../store/use-viewer'
 
 type CharacterKeys = {
   backward: boolean
@@ -36,6 +46,7 @@ type RigRefs = {
 
 type SceneNodeLike = {
   id: string
+  metadata?: Record<string, unknown>
   parentId?: string | null
   position?: [number, number, number]
   rotation?: [number, number, number]
@@ -46,45 +57,44 @@ type SceneNodeLike = {
   end?: [number, number]
 }
 
-type DoorOpening = {
-  leftT: number
-  rightT: number
-}
-
-type WallCollisionSegment = {
-  ex: number
-  ez: number
-  length: number
-  openings: DoorOpening[]
-  sx: number
-  sz: number
-}
-
 const characterMotionLabels: Record<CharacterMotion, string> = {
   idle: '站立',
   walk: '走',
   run: '跑',
-  crouch: '蹲',
   jump: '跳',
+  sit: '坐',
+  crouch: '蹲',
+  lie: '躺',
+  chat: '闲聊',
+  swim: '游泳',
+  drown: '挣扎求救',
+  dead: '漂浮',
 }
 
 const CHARACTER_WALK_SPEED = 1.4
 const CHARACTER_RUN_SPEED = 3.2
-const CHARACTER_COLLISION_RADIUS = 0.3
-const DOOR_OPENING_PADDING = 0.16
-const MIN_WALL_LENGTH = 0.001
 const _forward = new Vector3()
 const _right = new Vector3()
 const _direction = new Vector3()
 const _dragPlane = new Plane(new Vector3(0, 1, 0), 0)
 const _dragPoint = new Vector3()
+const _surfaceNormal = new Vector3()
 const _pointer = new Vector2()
+const _normalMatrix = new Matrix3()
 
 const CHARACTER_ROAM_EVENT = 'editor:character-roam-request'
 const CHARACTER_MENU_EVENT = 'editor:character-menu-request'
 const CHARACTER_COMMAND_EVENT = 'editor:character-command'
 const FIRST_PERSON_POSE_EVENT = 'editor:first-person-pose'
 const FIRST_PERSON_END_EVENT = 'editor:first-person-ended'
+
+const CHARACTER_KIND_NAMES: Record<CharacterKind, string> = {
+  adult: '成人',
+  dog: '小狗',
+  child: '小孩',
+  elder: '老人',
+  wheelchair: '轮椅',
+}
 
 type PointerCaptureTarget = {
   setPointerCapture?: (pointerId: number) => void
@@ -94,6 +104,36 @@ type PointerCaptureTarget = {
 type CharacterCommandDetail = {
   command?: unknown
   id?: unknown
+  motion?: unknown
+  roam?: unknown
+}
+
+type CharacterRoamTarget = {
+  x: number
+  z: number
+}
+
+type CharacterRoamActivityKind = 'walk' | 'run' | 'pause' | 'sit' | 'jump' | 'chat'
+
+type CharacterRoamActivity = {
+  kind: CharacterRoamActivityKind
+  partnerId?: string
+  target?: CharacterRoamTarget
+  until: number
+}
+
+type SeededCharacterActor = {
+  color?: unknown
+  enabled?: unknown
+  id?: unknown
+  kind?: unknown
+  motion?: unknown
+  name?: unknown
+  position?: unknown
+  roam?: unknown
+  route?: unknown
+  showBones?: unknown
+  speed?: unknown
 }
 
 type FirstPersonPoseDetail = {
@@ -103,155 +143,9 @@ type FirstPersonPoseDetail = {
   yaw?: unknown
 }
 
-function clamp01(value: number) {
-  return Math.max(0, Math.min(1, value))
-}
-
-function wallLength(wall: SceneNodeLike) {
-  if (!(wall.start && wall.end)) return 0
-  return Math.hypot(wall.end[0] - wall.start[0], wall.end[1] - wall.start[1])
-}
-
-function isWallOpening(wall: WallCollisionSegment, t: number) {
-  return wall.openings.some((opening) => t >= opening.leftT && t <= opening.rightT)
-}
-
-function pointToSegmentDistanceT(
-  px: number,
-  pz: number,
-  sx: number,
-  sz: number,
-  ex: number,
-  ez: number,
-) {
-  const dx = ex - sx
-  const dz = ez - sz
-  const lengthSq = dx * dx + dz * dz
-
-  if (lengthSq < 1e-9) {
-    return { distance: Math.hypot(px - sx, pz - sz), t: 0 }
-  }
-
-  const t = clamp01(((px - sx) * dx + (pz - sz) * dz) / lengthSq)
-  const closestX = sx + dx * t
-  const closestZ = sz + dz * t
-  return { distance: Math.hypot(px - closestX, pz - closestZ), t }
-}
-
-function wallIntersectionT(
-  ax: number,
-  az: number,
-  bx: number,
-  bz: number,
-  wall: WallCollisionSegment,
-) {
-  const rx = bx - ax
-  const rz = bz - az
-  const sx = wall.ex - wall.sx
-  const sz = wall.ez - wall.sz
-  const denominator = rx * sz - rz * sx
-
-  if (Math.abs(denominator) < 1e-9) return null
-
-  const qpx = wall.sx - ax
-  const qpz = wall.sz - az
-  const moveT = (qpx * sz - qpz * sx) / denominator
-  const wallT = (qpx * rz - qpz * rx) / denominator
-
-  if (moveT < 0 || moveT > 1 || wallT < 0 || wallT > 1) return null
-  return wallT
-}
-
-function isMovementBlocked(
-  fromX: number,
-  fromZ: number,
-  toX: number,
-  toZ: number,
-  walls: WallCollisionSegment[],
-) {
-  if (Math.hypot(toX - fromX, toZ - fromZ) < 1e-6) return false
-
-  for (const wall of walls) {
-    const intersectionT = wallIntersectionT(fromX, fromZ, toX, toZ, wall)
-    if (intersectionT !== null && !isWallOpening(wall, intersectionT)) {
-      return true
-    }
-
-    const next = pointToSegmentDistanceT(toX, toZ, wall.sx, wall.sz, wall.ex, wall.ez)
-    const previous = pointToSegmentDistanceT(fromX, fromZ, wall.sx, wall.sz, wall.ex, wall.ez)
-    if (
-      next.distance < CHARACTER_COLLISION_RADIUS &&
-      !isWallOpening(wall, next.t) &&
-      (previous.distance >= CHARACTER_COLLISION_RADIUS || next.distance < previous.distance - 0.01)
-    ) {
-      return true
-    }
-  }
-
-  return false
-}
-
-function resolveWalkPosition(
-  fromX: number,
-  fromZ: number,
-  toX: number,
-  toZ: number,
-  walls: WallCollisionSegment[],
-) {
-  if (!isMovementBlocked(fromX, fromZ, toX, toZ, walls)) {
-    return { x: toX, z: toZ }
-  }
-
-  if (!isMovementBlocked(fromX, fromZ, toX, fromZ, walls)) {
-    return { x: toX, z: fromZ }
-  }
-
-  if (!isMovementBlocked(fromX, fromZ, fromX, toZ, walls)) {
-    return { x: fromX, z: toZ }
-  }
-
-  return { x: fromX, z: fromZ }
-}
-
-function buildCharacterCollisionWalls(rawNodes: Record<string, unknown>): WallCollisionSegment[] {
-  const nodes = rawNodes as Record<string, SceneNodeLike>
-  const doorsByWallId = new Map<string, SceneNodeLike[]>()
-
-  for (const node of Object.values(nodes)) {
-    if (node?.type !== 'door') continue
-    const wallId = node.wallId ?? node.parentId
-    if (!wallId) continue
-    const doors = doorsByWallId.get(wallId) ?? []
-    doors.push(node)
-    doorsByWallId.set(wallId, doors)
-  }
-
-  const walls: WallCollisionSegment[] = []
-  for (const node of Object.values(nodes)) {
-    if (node?.type !== 'wall') continue
-    const length = wallLength(node)
-    if (!(node.start && node.end) || length < MIN_WALL_LENGTH) continue
-
-    const openings = (doorsByWallId.get(node.id) ?? []).map((door) => {
-      const doorX = door.position?.[0] ?? 0
-      const doorWidth = door.width ?? 0.9
-      return {
-        leftT: clamp01((doorX - doorWidth / 2 - DOOR_OPENING_PADDING) / length),
-        rightT: clamp01((doorX + doorWidth / 2 + DOOR_OPENING_PADDING) / length),
-      }
-    })
-
-    walls.push({
-      sx: node.start[0],
-      sz: node.start[1],
-      ex: node.end[0],
-      ez: node.end[1],
-      length,
-      openings,
-    })
-  }
-
-  return walls
+type CharacterWaterRuntime = {
+  enteredAt: number
+  motion: CharacterMotion
 }
 
 function isEditableTarget(target: EventTarget | null) {
@@ -281,7 +175,11 @@ function updateCharacterPerson(
 }
 
 function getCharacterEyeHeight(person: CharacterPersonState) {
-  return person.id.includes('child') ? 1.2 : 1.65
+  if (person.kind === 'dog') return 0.55
+  if (person.kind === 'child') return 1.2
+  if (person.kind === 'wheelchair') return 1.25
+  if (person.kind === 'elder') return 1.55
+  return 1.65
 }
 
 function getCharacterYaw(actor: Group | null | undefined) {
@@ -308,6 +206,8 @@ function getCharacterInteractionDetail(person: CharacterPersonState, actor: Grou
     anchor: [position[0], position[1] + 2.1, position[2]] as [number, number, number],
     yaw: getCharacterForwardYaw(actor),
     eyeHeight: getCharacterEyeHeight(person),
+    motion: person.motion,
+    roam: person.roam,
   }
 }
 
@@ -331,6 +231,22 @@ function detailIsCharacterCommand(value: unknown): value is CharacterCommandDeta
   return Boolean(value && typeof value === 'object')
 }
 
+function isCharacterMotion(value: unknown): value is CharacterMotion {
+  return (
+    value === 'idle' ||
+    value === 'walk' ||
+    value === 'run' ||
+    value === 'jump' ||
+    value === 'sit' ||
+    value === 'crouch' ||
+    value === 'lie' ||
+    value === 'chat' ||
+    value === 'swim' ||
+    value === 'drown' ||
+    value === 'dead'
+  )
+}
+
 function detailIsFirstPersonPose(value: unknown): value is FirstPersonPoseDetail {
   return Boolean(value && typeof value === 'object')
 }
@@ -345,6 +261,10 @@ function getCharacterIdFromObject(object: Object3D | null): string | null {
   }
 
   return null
+}
+
+function isCharacterObject(object: Object3D | null) {
+  return Boolean(getCharacterIdFromObject(object) || object?.name?.startsWith('character-'))
 }
 
 function resetRig(refs: RigRefs) {
@@ -370,6 +290,91 @@ function poseRig(refs: RigRefs, motion: CharacterMotion, elapsedSeconds: number,
     if (refs.root) refs.root.position.y = Math.sin(t * 1.6) * 0.018
     if (refs.spine) refs.spine.rotation.x = Math.sin(t * 1.4) * 0.025
     if (refs.head) refs.head.rotation.y = Math.sin(t * 0.8) * 0.08
+    return
+  }
+
+  if (motion === 'chat') {
+    if (refs.root) refs.root.position.y = Math.sin(t * 1.4) * 0.014
+    if (refs.spine) refs.spine.rotation.x = Math.sin(t * 1.1) * 0.035
+    if (refs.head) {
+      refs.head.rotation.y = Math.sin(t * 1.7) * 0.16
+      refs.head.rotation.x = Math.sin(t * 0.9) * 0.04
+    }
+    if (refs.leftUpperArm) {
+      refs.leftUpperArm.rotation.x = -0.34 + Math.sin(t * 2.1) * 0.12
+      refs.leftUpperArm.rotation.z = 0.34
+    }
+    if (refs.rightUpperArm) {
+      refs.rightUpperArm.rotation.x = -0.48 + Math.sin(t * 1.8 + Math.PI) * 0.14
+      refs.rightUpperArm.rotation.z = -0.34
+    }
+    if (refs.leftLowerArm) refs.leftLowerArm.rotation.x = -0.36 + Math.sin(t * 2.1) * 0.1
+    if (refs.rightLowerArm) refs.rightLowerArm.rotation.x = -0.42 + Math.sin(t * 1.8) * 0.12
+    return
+  }
+
+  if (motion === 'swim') {
+    const stroke = Math.sin(t * 4.2)
+    if (refs.root) {
+      refs.root.position.y = -0.54 + Math.sin(t * 2.2) * 0.035
+      refs.root.rotation.x = Math.PI / 2 + Math.sin(t * 1.8) * 0.08
+      refs.root.rotation.y = 0
+    }
+    if (refs.spine) refs.spine.rotation.x = Math.sin(t * 2.4) * 0.06
+    if (refs.head) refs.head.rotation.x = -0.42 + Math.sin(t * 1.5) * 0.08
+    if (refs.leftUpperArm) {
+      refs.leftUpperArm.rotation.x = -1.35 + stroke * 0.62
+      refs.leftUpperArm.rotation.z = 0.58
+    }
+    if (refs.rightUpperArm) {
+      refs.rightUpperArm.rotation.x = -1.35 - stroke * 0.62
+      refs.rightUpperArm.rotation.z = -0.58
+    }
+    if (refs.leftLowerArm) refs.leftLowerArm.rotation.x = -0.52 + Math.max(0, stroke) * 0.36
+    if (refs.rightLowerArm) refs.rightLowerArm.rotation.x = -0.52 + Math.max(0, -stroke) * 0.36
+    if (refs.leftUpperLeg) refs.leftUpperLeg.rotation.x = Math.sin(t * 5.2) * 0.38
+    if (refs.rightUpperLeg) refs.rightUpperLeg.rotation.x = Math.sin(t * 5.2 + Math.PI) * 0.38
+    if (refs.leftLowerLeg) refs.leftLowerLeg.rotation.x = Math.max(0, -Math.sin(t * 5.2)) * 0.45
+    if (refs.rightLowerLeg) refs.rightLowerLeg.rotation.x = Math.max(0, Math.sin(t * 5.2)) * 0.45
+    return
+  }
+
+  if (motion === 'drown') {
+    const thrash = Math.sin(t * 8.4)
+    if (refs.root) {
+      refs.root.position.y = -0.66 + Math.abs(thrash) * 0.1
+      refs.root.rotation.x = 0.34 + Math.sin(t * 3.1) * 0.22
+      refs.root.rotation.z = Math.sin(t * 5.4) * 0.12
+    }
+    if (refs.spine) refs.spine.rotation.x = -0.18 + Math.sin(t * 4.3) * 0.18
+    if (refs.head) refs.head.rotation.x = -0.22 + Math.sin(t * 5.1) * 0.18
+    if (refs.leftUpperArm) {
+      refs.leftUpperArm.rotation.x = -2.2 + thrash * 0.5
+      refs.leftUpperArm.rotation.z = 0.62
+    }
+    if (refs.rightUpperArm) {
+      refs.rightUpperArm.rotation.x = -2.2 - thrash * 0.5
+      refs.rightUpperArm.rotation.z = -0.62
+    }
+    if (refs.leftLowerArm) refs.leftLowerArm.rotation.x = -0.32 + Math.sin(t * 7.2) * 0.28
+    if (refs.rightLowerArm) refs.rightLowerArm.rotation.x = -0.32 - Math.sin(t * 7.2) * 0.28
+    if (refs.leftUpperLeg) refs.leftUpperLeg.rotation.x = Math.sin(t * 6.4) * 0.58
+    if (refs.rightUpperLeg) refs.rightUpperLeg.rotation.x = -Math.sin(t * 6.4) * 0.58
+    return
+  }
+
+  if (motion === 'dead') {
+    if (refs.root) {
+      refs.root.position.y = -0.72 + Math.sin(t * 0.9) * 0.018
+      refs.root.rotation.x = Math.PI / 2
+      refs.root.rotation.y = Math.sin(t * 0.35) * 0.05
+      refs.root.rotation.z = 0.18
+    }
+    if (refs.head) refs.head.rotation.x = -0.08
+    if (refs.leftUpperArm) refs.leftUpperArm.rotation.z = 0.72
+    if (refs.rightUpperArm) refs.rightUpperArm.rotation.z = -0.72
+    if (refs.leftUpperLeg) refs.leftUpperLeg.rotation.x = 0.08
+    if (refs.rightUpperLeg) refs.rightUpperLeg.rotation.x = -0.06
     return
   }
 
@@ -404,6 +409,45 @@ function poseRig(refs: RigRefs, motion: CharacterMotion, elapsedSeconds: number,
       refs.rightUpperArm.rotation.x = -1.25 * airtime
       refs.rightUpperArm.rotation.z = -0.45
     }
+    return
+  }
+
+  if (motion === 'sit') {
+    if (refs.root) refs.root.position.y = -0.5 + Math.sin(t * 1.2) * 0.01
+    if (refs.spine) refs.spine.rotation.x = -0.08
+    if (refs.leftUpperLeg) refs.leftUpperLeg.rotation.x = -1.35
+    if (refs.rightUpperLeg) refs.rightUpperLeg.rotation.x = -1.35
+    if (refs.leftLowerLeg) refs.leftLowerLeg.rotation.x = 1.5
+    if (refs.rightLowerLeg) refs.rightLowerLeg.rotation.x = 1.5
+    if (refs.leftUpperArm) refs.leftUpperArm.rotation.x = -0.18
+    if (refs.rightUpperArm) refs.rightUpperArm.rotation.x = -0.18
+    if (refs.leftLowerArm) refs.leftLowerArm.rotation.x = -0.28
+    if (refs.rightLowerArm) refs.rightLowerArm.rotation.x = -0.28
+    if (refs.leftFoot) refs.leftFoot.rotation.x = -0.28
+    if (refs.rightFoot) refs.rightFoot.rotation.x = -0.28
+    return
+  }
+
+  if (motion === 'lie') {
+    if (refs.root) {
+      refs.root.position.y = -0.42
+      refs.root.rotation.x = Math.PI / 2
+      refs.root.rotation.y = 0
+    }
+    if (refs.spine) refs.spine.rotation.x = 0.06
+    if (refs.head) refs.head.rotation.x = -0.16
+    if (refs.leftUpperArm) {
+      refs.leftUpperArm.rotation.x = -0.18
+      refs.leftUpperArm.rotation.z = 0.46
+    }
+    if (refs.rightUpperArm) {
+      refs.rightUpperArm.rotation.x = -0.18
+      refs.rightUpperArm.rotation.z = -0.46
+    }
+    if (refs.leftUpperLeg) refs.leftUpperLeg.rotation.x = 0.08
+    if (refs.rightUpperLeg) refs.rightUpperLeg.rotation.x = 0.08
+    if (refs.leftLowerLeg) refs.leftLowerLeg.rotation.x = 0.08
+    if (refs.rightLowerLeg) refs.rightLowerLeg.rotation.x = 0.08
     return
   }
 
@@ -462,6 +506,86 @@ function BoneGuide({ length, visible }: { length: number; visible: boolean }) {
   )
 }
 
+function normalizeCharacterKind(value: unknown): CharacterKind {
+  if (
+    value === 'adult' ||
+    value === 'child' ||
+    value === 'elder' ||
+    value === 'wheelchair' ||
+    value === 'dog'
+  ) {
+    return value
+  }
+
+  return 'adult'
+}
+
+function isFinitePoint3D(value: unknown): value is [number, number, number] {
+  return (
+    Array.isArray(value) &&
+    value.length === 3 &&
+    value.every((entry) => typeof entry === 'number' && Number.isFinite(entry))
+  )
+}
+
+function normalizeCharacterMotion(value: unknown): CharacterMotion {
+  return isCharacterMotion(value) ? value : 'walk'
+}
+
+function normalizeCharacterRoute(value: unknown): [number, number, number][] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const route = value.filter(isFinitePoint3D)
+  return route.length > 0 ? route : undefined
+}
+
+function getSceneCharacterSeeds(rawNodes: Record<string, unknown>): CharacterPersonState[] {
+  const nodes = rawNodes as Record<string, SceneNodeLike>
+  const seeds: SeededCharacterActor[] = []
+
+  for (const node of Object.values(nodes)) {
+    const actors = node.metadata?.characterActors
+    if (Array.isArray(actors)) {
+      seeds.push(...(actors as SeededCharacterActor[]))
+    }
+  }
+
+  return seeds
+    .map((seed, index): CharacterPersonState | null => {
+      const position = isFinitePoint3D(seed.position) ? seed.position : null
+      if (!position) return null
+
+      const kind = normalizeCharacterKind(seed.kind)
+      const route = normalizeCharacterRoute(seed.route)
+      const id = typeof seed.id === 'string' && seed.id.trim() ? seed.id : `scene-character-${index + 1}`
+
+      return {
+        id,
+        name: typeof seed.name === 'string' && seed.name.trim() ? seed.name : `${CHARACTER_KIND_NAMES[kind]} ${index + 1}`,
+        kind,
+        enabled: seed.enabled !== false,
+        motion: normalizeCharacterMotion(seed.motion),
+        roam: seed.roam !== false,
+        speed: typeof seed.speed === 'number' && Number.isFinite(seed.speed) ? seed.speed : kind === 'dog' ? 1.2 : 1,
+        showBones: typeof seed.showBones === 'boolean' ? seed.showBones : kind !== 'dog',
+        position,
+        route,
+        color:
+          typeof seed.color === 'string' && seed.color.trim()
+            ? seed.color
+            : ['#4c6fff', '#22c55e', '#f59e0b', '#ec4899', '#14b8a6', '#8b5cf6'][index % 6] ?? '#4c6fff',
+      }
+    })
+    .filter((person): person is CharacterPersonState => Boolean(person))
+}
+
+function normalizeCharacterPerson(person: CharacterPersonState): CharacterPersonState {
+  return {
+    ...person,
+    kind: normalizeCharacterKind((person as CharacterPersonState & { kind?: unknown }).kind),
+    roam: (person as CharacterPersonState & { roam?: unknown }).roam === true,
+  }
+}
+
 function getCharacterPeopleFromState(character: {
   motion: CharacterMotion
   people?: CharacterPersonState[]
@@ -469,15 +593,19 @@ function getCharacterPeopleFromState(character: {
   selectedPersonId?: string
   showBones: boolean
   speed: number
-}) {
-  if (character.people?.length) return character.people
+}): CharacterPersonState[] {
+  if (character.people?.length) {
+    return character.people.map(normalizeCharacterPerson)
+  }
 
   return [
     {
       id: character.selectedPersonId || 'character-1',
       name: '角色 1',
+      kind: 'adult',
       enabled: true,
       motion: character.motion,
+      roam: false,
       speed: character.speed,
       showBones: character.showBones,
       position: character.position,
@@ -486,18 +614,303 @@ function getCharacterPeopleFromState(character: {
   ]
 }
 
+function createPlacedCharacterPerson(
+  kind: CharacterKind,
+  index: number,
+  position: [number, number, number],
+): CharacterPersonState {
+  const suffix = index + 1
+  return {
+    id: `character-${kind}-${Date.now()}-${suffix}`,
+    name: `${CHARACTER_KIND_NAMES[kind]} ${suffix}`,
+    kind,
+    enabled: true,
+    motion: 'idle',
+    roam: false,
+    speed: kind === 'dog' ? 1.2 : 1,
+    showBones: kind !== 'dog',
+    position,
+    color: ['#4c6fff', '#22c55e', '#f59e0b', '#ec4899', '#14b8a6', '#8b5cf6'][
+      index % 6
+    ] ?? '#4c6fff',
+  }
+}
+
+function pickCharacterRoamTarget(
+  person: CharacterPersonState,
+  actor: Group,
+  collision: CharacterCollisionMap,
+  canPenetrate: boolean,
+): CharacterRoamTarget {
+  const fromX = actor.position.x
+  const fromZ = actor.position.z
+
+  if (person.route && person.route.length > 0) {
+    const nearestIndex = person.route.reduce((bestIndex, point, index, route) => {
+      const best = route[bestIndex]
+      if (!best) return index
+      const bestDistance = Math.hypot(best[0] - fromX, best[2] - fromZ)
+      const currentDistance = Math.hypot(point[0] - fromX, point[2] - fromZ)
+      return currentDistance < bestDistance ? index : bestIndex
+    }, 0)
+    const direction = Math.random() > 0.34 ? 1 : -1
+    const nextPoint = person.route[(nearestIndex + direction + person.route.length) % person.route.length]
+    if (nextPoint) {
+      const next = resolveCharacterWalkPosition(
+        fromX,
+        fromZ,
+        nextPoint[0],
+        nextPoint[2],
+        collision,
+        canPenetrate,
+      )
+      if (Math.hypot(next.x - fromX, next.z - fromZ) > 0.25) {
+        return next
+      }
+    }
+  }
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const angle = Math.random() * Math.PI * 2
+    const radius = 1.8 + Math.random() * 4.2
+    const targetX = fromX + Math.sin(angle) * radius
+    const targetZ = fromZ + Math.cos(angle) * radius
+    const next = resolveCharacterWalkPosition(fromX, fromZ, targetX, targetZ, collision, canPenetrate)
+    if (Math.hypot(next.x - fromX, next.z - fromZ) > 0.85) {
+      return next
+    }
+  }
+
+  return { x: fromX, z: fromZ }
+}
+
+function pickCharacterRoamActivity(
+  person: CharacterPersonState,
+  actor: Group,
+  collision: CharacterCollisionMap,
+  canPenetrate: boolean,
+  now: number,
+): CharacterRoamActivity {
+  const roll = Math.random()
+  const dog = person.kind === 'dog'
+
+  if (roll < (dog ? 0.12 : 0.16)) {
+    return { kind: 'pause', until: now + 1.4 + Math.random() * 3.6 }
+  }
+
+  if (!dog && roll < 0.3) {
+    return { kind: 'sit', until: now + 2.4 + Math.random() * 5.2 }
+  }
+
+  if (roll < (dog ? 0.38 : 0.36)) {
+    return { kind: 'jump', until: now + 0.9 + Math.random() * 0.7 }
+  }
+
+  const run = roll > 0.82
+  return {
+    kind: run ? 'run' : 'walk',
+    target: pickCharacterRoamTarget(person, actor, collision, canPenetrate),
+    until: now + (run ? 1.2 + Math.random() * 2.1 : 2.5 + Math.random() * 4.5),
+  }
+}
+
+function getRoamMotion(activity: CharacterRoamActivity): CharacterMotion {
+  if (activity.kind === 'pause') return 'idle'
+  if (activity.kind === 'chat') return 'chat'
+  return activity.kind
+}
+
+function getWaterMotion(
+  person: CharacterPersonState,
+  now: number,
+  waterRuntimeRef: MutableRefObject<Record<string, CharacterWaterRuntime | undefined>>,
+): CharacterMotion | null {
+  const runtime = waterRuntimeRef.current[person.id]
+  if (!runtime) {
+    waterRuntimeRef.current[person.id] = { enteredAt: now, motion: 'swim' }
+    return 'swim'
+  }
+
+  if (runtime.motion === 'dead') return 'dead'
+
+  const elapsed = now - runtime.enteredAt
+  const swimSeconds = person.kind === 'dog' ? 7 : 10
+  const drownSeconds = person.kind === 'dog' ? 6 : 8
+  const motion: CharacterMotion =
+    elapsed > swimSeconds + drownSeconds ? 'dead' : elapsed > swimSeconds ? 'drown' : 'swim'
+
+  runtime.motion = motion
+  return motion
+}
+
+function DogLeg({
+  legRef,
+  x,
+  z,
+}: {
+  legRef: { current: Group | null }
+  x: number
+  z: number
+}) {
+  return (
+    <group position={[x, 0.34, z]} ref={legRef}>
+      <mesh castShadow position={[0, -0.14, 0]}>
+        <cylinderGeometry args={[0.045, 0.055, 0.28, 10]} />
+        <meshStandardMaterial color="#8a5a36" roughness={0.7} />
+      </mesh>
+      <mesh castShadow position={[0, -0.31, 0.035]} scale={[1.15, 0.55, 1.45]}>
+        <sphereGeometry args={[0.055, 10, 8]} />
+        <meshStandardMaterial color="#6f4428" roughness={0.72} />
+      </mesh>
+    </group>
+  )
+}
+
+function DogCharacterMesh({
+  isSelected,
+  motion,
+  startedAt,
+}: {
+  isSelected: boolean
+  motion: CharacterMotion
+  startedAt: number
+}) {
+  const rootRef = useRef<Group | null>(null)
+  const tailRef = useRef<Group | null>(null)
+  const frontLeftLegRef = useRef<Group | null>(null)
+  const frontRightLegRef = useRef<Group | null>(null)
+  const backLeftLegRef = useRef<Group | null>(null)
+  const backRightLegRef = useRef<Group | null>(null)
+
+  useFrame(() => {
+    const elapsed = (performance.now() - startedAt) / 1000
+    const moving = motion === 'walk' || motion === 'run'
+    const speed = motion === 'run' ? 9.5 : motion === 'walk' ? 6.2 : 2.2
+    const stride = moving ? Math.sin(elapsed * speed) * (motion === 'run' ? 0.52 : 0.36) : 0
+    const counterStride = -stride
+
+    if (rootRef.current) {
+      rootRef.current.rotation.set(0, 0, moving ? Math.sin(elapsed * speed) * 0.025 : 0)
+      rootRef.current.position.y = moving
+        ? Math.abs(Math.sin(elapsed * speed)) * 0.035
+        : Math.sin(elapsed * 1.6) * 0.012
+
+      if (motion === 'jump') {
+        rootRef.current.position.y = Math.max(0, Math.sin((elapsed * 2.2) % Math.PI)) * 0.38
+      } else if (motion === 'swim') {
+        rootRef.current.position.y = -0.22 + Math.sin(elapsed * 3.2) * 0.035
+        rootRef.current.rotation.x = 0.12 + Math.sin(elapsed * 2.4) * 0.08
+      } else if (motion === 'drown') {
+        rootRef.current.position.y = -0.3 + Math.abs(Math.sin(elapsed * 7.2)) * 0.08
+        rootRef.current.rotation.x = 0.22 + Math.sin(elapsed * 5.6) * 0.18
+        rootRef.current.rotation.z = Math.sin(elapsed * 6.1) * 0.16
+      } else if (motion === 'dead') {
+        rootRef.current.position.y = -0.34 + Math.sin(elapsed * 0.8) * 0.012
+        rootRef.current.rotation.x = Math.PI / 2
+        rootRef.current.rotation.z = 0.22
+      } else if (motion === 'sit') {
+        rootRef.current.position.y = -0.12
+        rootRef.current.rotation.x = -0.28
+      } else if (motion === 'crouch') {
+        rootRef.current.position.y = -0.16
+        rootRef.current.rotation.x = -0.18
+      } else if (motion === 'lie') {
+        rootRef.current.position.y = -0.3
+        rootRef.current.rotation.x = 0.04
+      }
+    }
+
+    if (tailRef.current) {
+      tailRef.current.rotation.y = Math.sin(elapsed * (moving ? 9 : 3.5)) * 0.38
+      tailRef.current.rotation.x =
+        motion === 'sit' || motion === 'lie' ? 0.18 : 0.48 + Math.sin(elapsed * 2.4) * 0.08
+    }
+
+    const legPose =
+      motion === 'sit'
+        ? { front: 0.18, back: -1.05 }
+        : motion === 'crouch'
+          ? { front: 0.62, back: 0.48 }
+          : motion === 'lie'
+            ? { front: 1.34, back: 1.18 }
+            : motion === 'dead'
+              ? { front: 1.22, back: 1.14 }
+            : null
+
+    if (frontLeftLegRef.current) frontLeftLegRef.current.rotation.x = legPose?.front ?? stride
+    if (frontRightLegRef.current) frontRightLegRef.current.rotation.x = legPose?.front ?? counterStride
+    if (backLeftLegRef.current) backLeftLegRef.current.rotation.x = legPose?.back ?? counterStride
+    if (backRightLegRef.current) backRightLegRef.current.rotation.x = legPose?.back ?? stride
+  })
+
+  return (
+    <group name={`character-dog-${motion}`} ref={rootRef}>
+      <mesh castShadow position={[0, 0.46, 0]} scale={[0.52, 0.68, 1.38]}>
+        <sphereGeometry args={[0.34, 28, 18]} />
+        <meshStandardMaterial color="#c58b54" roughness={0.68} />
+      </mesh>
+      <mesh castShadow position={[0, 0.68, 0.68]} scale={[0.7, 0.66, 0.78]}>
+        <sphereGeometry args={[0.25, 24, 16]} />
+        <meshStandardMaterial color="#b77946" roughness={0.68} />
+      </mesh>
+      <mesh castShadow position={[0, 0.58, 0.92]} scale={[0.74, 0.5, 0.92]}>
+        <sphereGeometry args={[0.13, 18, 12]} />
+        <meshStandardMaterial color="#8a5a36" roughness={0.72} />
+      </mesh>
+      <mesh castShadow position={[-0.09, 0.77, 0.9]}>
+        <sphereGeometry args={[0.035, 10, 8]} />
+        <meshStandardMaterial color="#111827" roughness={0.5} />
+      </mesh>
+      <mesh castShadow position={[0.09, 0.77, 0.9]}>
+        <sphereGeometry args={[0.035, 10, 8]} />
+        <meshStandardMaterial color="#111827" roughness={0.5} />
+      </mesh>
+      <mesh castShadow position={[0, 0.54, 1.05]} scale={[1.1, 0.72, 0.72]}>
+        <sphereGeometry args={[0.055, 12, 8]} />
+        <meshStandardMaterial color="#111827" roughness={0.55} />
+      </mesh>
+      <mesh castShadow position={[-0.19, 0.88, 0.58]} rotation={[0.18, 0.08, -0.52]}>
+        <coneGeometry args={[0.07, 0.28, 14]} />
+        <meshStandardMaterial color="#7a4b2e" roughness={0.74} />
+      </mesh>
+      <mesh castShadow position={[0.19, 0.88, 0.58]} rotation={[0.18, -0.08, 0.52]}>
+        <coneGeometry args={[0.07, 0.28, 14]} />
+        <meshStandardMaterial color="#7a4b2e" roughness={0.74} />
+      </mesh>
+      <group ref={tailRef} position={[0, 0.6, -0.62]} rotation={[0.48, 0, 0]}>
+        <mesh castShadow position={[0, 0.05, -0.28]} rotation={[1.22, 0, 0]}>
+          <cylinderGeometry args={[0.035, 0.055, 0.48, 12]} />
+          <meshStandardMaterial color="#b77946" roughness={0.7} />
+        </mesh>
+      </group>
+      <DogLeg legRef={frontLeftLegRef} x={-0.29} z={0.28} />
+      <DogLeg legRef={frontRightLegRef} x={0.29} z={0.28} />
+      <DogLeg legRef={backLeftLegRef} x={-0.29} z={-0.26} />
+      <DogLeg legRef={backRightLegRef} x={0.29} z={-0.26} />
+      {isSelected ? (
+        <mesh position={[0, 1.04, 0.68]}>
+          <sphereGeometry args={[0.04, 10, 8]} />
+          <meshBasicMaterial color="#f59e0b" depthTest={false} />
+        </mesh>
+      ) : null}
+    </group>
+  )
+}
+
 function CharacterPersonMesh({
+  canPenetrate,
+  collision,
   isSelected,
   onActorRef,
   person,
   startedAt,
-  walls,
 }: {
+  canPenetrate: boolean
+  collision: CharacterCollisionMap
   isSelected: boolean
   onActorRef: (id: string, group: Group | null) => void
   person: CharacterPersonState
   startedAt: number
-  walls: WallCollisionSegment[]
 }) {
   const refs = useRef<RigRefs>({
     actor: null,
@@ -523,6 +936,36 @@ function CharacterPersonMesh({
 
   useFrame(() => {
     poseRig(refs.current, person.motion, (performance.now() - startedAt) / 1000, person.speed)
+
+    if (person.kind === 'elder') {
+      if (refs.current.root) refs.current.root.rotation.x += 0.08
+      if (refs.current.hips) refs.current.hips.rotation.x += 0.18
+      if (refs.current.spine) refs.current.spine.rotation.x += 0.48
+      if (refs.current.head) refs.current.head.rotation.x -= 0.24
+      if (refs.current.leftUpperArm) {
+        refs.current.leftUpperArm.rotation.x -= 0.12
+        refs.current.leftUpperArm.rotation.z += 0.12
+      }
+      if (refs.current.leftLowerArm) refs.current.leftLowerArm.rotation.x -= 0.06
+      if (refs.current.rightUpperArm) {
+        refs.current.rightUpperArm.rotation.x -= 0.98
+        refs.current.rightUpperArm.rotation.z += 0.2
+      }
+      if (refs.current.rightLowerArm) refs.current.rightLowerArm.rotation.x += 0.38
+    }
+
+    if (person.kind === 'wheelchair') {
+      if (refs.current.root) refs.current.root.position.y -= 0.32
+      if (refs.current.spine) refs.current.spine.rotation.x -= 0.18
+      if (refs.current.leftUpperLeg) refs.current.leftUpperLeg.rotation.x = -1.18
+      if (refs.current.rightUpperLeg) refs.current.rightUpperLeg.rotation.x = -1.18
+      if (refs.current.leftLowerLeg) refs.current.leftLowerLeg.rotation.x = 1.58
+      if (refs.current.rightLowerLeg) refs.current.rightLowerLeg.rotation.x = 1.58
+      if (refs.current.leftFoot) refs.current.leftFoot.rotation.x = -0.3
+      if (refs.current.rightFoot) refs.current.rightFoot.rotation.x = -0.3
+      if (refs.current.leftUpperArm) refs.current.leftUpperArm.rotation.x = -0.28
+      if (refs.current.rightUpperArm) refs.current.rightUpperArm.rotation.x = -0.28
+    }
   })
 
   const selectPerson = () => {
@@ -556,7 +999,14 @@ function CharacterPersonMesh({
 
     const targetX = _dragPoint.x + drag.offsetX
     const targetZ = _dragPoint.z + drag.offsetZ
-    const next = resolveWalkPosition(person.position[0], person.position[2], targetX, targetZ, walls)
+    const next = resolveCharacterWalkPosition(
+      person.position[0],
+      person.position[2],
+      targetX,
+      targetZ,
+      collision,
+      canPenetrate,
+    )
 
     updateCharacterPerson(person.id, (currentPerson) => ({
       ...currentPerson,
@@ -580,6 +1030,13 @@ function CharacterPersonMesh({
     dispatchCharacterMenu(person, refs.current.actor)
   }
 
+  const kind = person.kind ?? 'adult'
+  const isDog = kind === 'dog'
+  const humanScale = kind === 'child' ? 0.68 : kind === 'wheelchair' ? 0.78 : kind === 'elder' ? 0.92 : 1
+  const hitboxArgs: [number, number, number] = isDog ? [1.05, 0.72, 1.35] : [0.78, 1.9 * humanScale, 0.78]
+  const hitboxY = isDog ? 0.36 : 0.95 * humanScale
+  const labelY = isDog ? 1.05 : 2.25 * humanScale
+
   return (
     <group
       name={`character-actor-${person.id}`}
@@ -596,22 +1053,26 @@ function CharacterPersonMesh({
     >
       <mesh
         name={`character-hitbox-${person.id}`}
-        position={[0, 0.95, 0]}
+        position={[0, hitboxY, 0]}
       >
-        <boxGeometry args={[0.78, 1.9, 0.78]} />
+        <boxGeometry args={hitboxArgs} />
         <meshBasicMaterial depthWrite={false} opacity={0} transparent />
       </mesh>
       {isSelected && (
         <mesh name={`character-selection-ring-${person.id}`} position={[0, 0.025, 0]} rotation={[Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[0.46, 0.025, 8, 48]} />
+          <torusGeometry args={[isDog ? 0.62 : 0.46, 0.025, 8, 48]} />
           <meshBasicMaterial color="#2563eb" depthTest={false} />
         </mesh>
       )}
+      {isDog ? (
+        <DogCharacterMesh isSelected={isSelected} motion={person.motion} startedAt={startedAt} />
+      ) : (
       <group
         name={`character-motion-${person.motion}`}
         ref={(group) => {
           refs.current.root = group
         }}
+        scale={[humanScale, humanScale, humanScale]}
       >
         <group
           name="hips"
@@ -628,9 +1089,17 @@ function CharacterPersonMesh({
               refs.current.spine = group
             }}
           >
-            <mesh castShadow position={[0, 0.22, 0]} scale={[1.15, 1, 0.72]}>
+            <mesh castShadow position={[0, 0.24, 0]} scale={[1.05, 1.18, 0.68]}>
               <sphereGeometry args={[0.28, 28, 18]} />
               <meshStandardMaterial color={person.color} roughness={0.6} />
+            </mesh>
+            <mesh castShadow position={[0, 0.43, 0.01]} scale={[1.42, 0.24, 0.46]}>
+              <sphereGeometry args={[0.18, 24, 12]} />
+              <meshStandardMaterial color={person.color} roughness={0.62} />
+            </mesh>
+            <mesh castShadow position={[0, -0.03, 0]} scale={[0.92, 0.36, 0.58]}>
+              <sphereGeometry args={[0.2, 24, 12]} />
+              <meshStandardMaterial color={person.kind === 'elder' ? '#3f3f46' : '#25304a'} roughness={0.66} />
             </mesh>
             <Joint visible={person.showBones || isSelected} />
             <group
@@ -640,9 +1109,29 @@ function CharacterPersonMesh({
                 refs.current.head = group
               }}
             >
-              <mesh castShadow position={[0, 0.18, 0]}>
-                <sphereGeometry args={[0.18, 24, 16]} />
+              <mesh castShadow position={[0, -0.04, 0]}>
+                <cylinderGeometry args={[0.07, 0.08, 0.16, 14]} />
+                <meshStandardMaterial color="#cfa981" roughness={0.58} />
+              </mesh>
+              <mesh castShadow position={[0, 0.2, 0]} scale={[0.92, 1.08, 0.86]}>
+                <sphereGeometry args={[0.18, 28, 18]} />
                 <meshStandardMaterial color="#d9b78f" roughness={0.55} />
+              </mesh>
+              <mesh castShadow position={[0, 0.25, 0.14]} scale={[0.8, 0.42, 0.34]}>
+                <sphereGeometry args={[0.06, 12, 8]} />
+                <meshStandardMaterial color="#c89f76" roughness={0.6} />
+              </mesh>
+              <mesh castShadow position={[-0.055, 0.25, 0.145]}>
+                <sphereGeometry args={[0.018, 8, 6]} />
+                <meshStandardMaterial color="#111827" roughness={0.5} />
+              </mesh>
+              <mesh castShadow position={[0.055, 0.25, 0.145]}>
+                <sphereGeometry args={[0.018, 8, 6]} />
+                <meshStandardMaterial color="#111827" roughness={0.5} />
+              </mesh>
+              <mesh castShadow position={[0, 0.34, -0.02]} scale={[1.02, 0.42, 0.9]}>
+                <sphereGeometry args={[0.16, 18, 10]} />
+                <meshStandardMaterial color={person.kind === 'elder' ? '#e5e7eb' : '#5b4636'} roughness={0.74} />
               </mesh>
               <Joint visible={person.showBones || isSelected} />
             </group>
@@ -664,10 +1153,14 @@ function CharacterPersonMesh({
                   refs.current.leftLowerArm = group
                 }}
               >
-                <Joint visible={person.showBones || isSelected} />
-                <LimbSegment color="#d9b78f" length={0.38} radius={0.048} />
-                <BoneGuide length={0.38} visible={person.showBones || isSelected} />
-              </group>
+	                <Joint visible={person.showBones || isSelected} />
+	                <LimbSegment color="#d9b78f" length={0.38} radius={0.048} />
+	                <BoneGuide length={0.38} visible={person.showBones || isSelected} />
+	                <mesh castShadow position={[0, -0.4, 0.02]} scale={[0.9, 0.7, 1.05]}>
+	                  <sphereGeometry args={[0.065, 12, 8]} />
+	                  <meshStandardMaterial color="#d9b78f" roughness={0.58} />
+	                </mesh>
+	              </group>
             </group>
 
             <group
@@ -687,10 +1180,14 @@ function CharacterPersonMesh({
                   refs.current.rightLowerArm = group
                 }}
               >
-                <Joint visible={person.showBones || isSelected} />
-                <LimbSegment color="#d9b78f" length={0.38} radius={0.048} />
-                <BoneGuide length={0.38} visible={person.showBones || isSelected} />
-              </group>
+	                <Joint visible={person.showBones || isSelected} />
+	                <LimbSegment color="#d9b78f" length={0.38} radius={0.048} />
+	                <BoneGuide length={0.38} visible={person.showBones || isSelected} />
+	                <mesh castShadow position={[0, -0.4, 0.02]} scale={[0.9, 0.7, 1.05]}>
+	                  <sphereGeometry args={[0.065, 12, 8]} />
+	                  <meshStandardMaterial color="#d9b78f" roughness={0.58} />
+	                </mesh>
+	              </group>
             </group>
           </group>
 
@@ -765,7 +1262,88 @@ function CharacterPersonMesh({
           </group>
         </group>
       </group>
-      <group name="character-label" position={[0, 2.25, 0]}>
+      )}
+      {kind === 'wheelchair' ? (
+        <group name="character-wheelchair" position={[0, 0.34, -0.08]} scale={[0.96, 0.96, 0.96]}>
+          <mesh castShadow position={[-0.42, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
+            <torusGeometry args={[0.34, 0.028, 14, 56]} />
+            <meshStandardMaterial color="#111827" metalness={0.05} roughness={0.48} />
+          </mesh>
+          <mesh position={[-0.42, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
+            <torusGeometry args={[0.24, 0.012, 10, 44]} />
+            <meshStandardMaterial color="#e2e8f0" metalness={0.45} roughness={0.32} />
+          </mesh>
+          <mesh castShadow position={[0.42, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
+            <torusGeometry args={[0.34, 0.028, 14, 56]} />
+            <meshStandardMaterial color="#111827" metalness={0.05} roughness={0.48} />
+          </mesh>
+          <mesh position={[0.42, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
+            <torusGeometry args={[0.24, 0.012, 10, 44]} />
+            <meshStandardMaterial color="#e2e8f0" metalness={0.45} roughness={0.32} />
+          </mesh>
+          <mesh castShadow position={[-0.28, -0.2, 0.45]} rotation={[0, Math.PI / 2, 0]}>
+            <torusGeometry args={[0.11, 0.018, 10, 28]} />
+            <meshStandardMaterial color="#111827" roughness={0.5} />
+          </mesh>
+          <mesh castShadow position={[0.28, -0.2, 0.45]} rotation={[0, Math.PI / 2, 0]}>
+            <torusGeometry args={[0.11, 0.018, 10, 28]} />
+            <meshStandardMaterial color="#111827" roughness={0.5} />
+          </mesh>
+          <mesh castShadow position={[0, 0.28, 0.02]} rotation={[0.02, 0, 0]}>
+            <boxGeometry args={[0.74, 0.1, 0.58]} />
+            <meshStandardMaterial color="#2563eb" roughness={0.56} />
+          </mesh>
+          <mesh castShadow position={[0, 0.62, -0.36]} rotation={[-0.18, 0, 0]}>
+            <boxGeometry args={[0.74, 0.64, 0.08]} />
+            <meshStandardMaterial color="#1d4ed8" roughness={0.58} />
+          </mesh>
+          <mesh castShadow position={[0, 0.25, 0.26]}>
+            <boxGeometry args={[0.8, 0.045, 0.05]} />
+            <meshStandardMaterial color="#94a3b8" metalness={0.35} roughness={0.36} />
+          </mesh>
+          <mesh castShadow position={[-0.34, 0.24, -0.1]} rotation={[0, 0, -0.28]}>
+            <cylinderGeometry args={[0.018, 0.018, 0.82, 10]} />
+            <meshStandardMaterial color="#94a3b8" metalness={0.35} roughness={0.36} />
+          </mesh>
+          <mesh castShadow position={[0.34, 0.24, -0.1]} rotation={[0, 0, 0.28]}>
+            <cylinderGeometry args={[0.018, 0.018, 0.82, 10]} />
+            <meshStandardMaterial color="#94a3b8" metalness={0.35} roughness={0.36} />
+          </mesh>
+          <mesh castShadow position={[-0.28, 0.5, -0.56]} rotation={[Math.PI / 2, 0, 0]}>
+            <cylinderGeometry args={[0.025, 0.025, 0.24, 10]} />
+            <meshStandardMaterial color="#111827" roughness={0.42} />
+          </mesh>
+          <mesh castShadow position={[0.28, 0.5, -0.56]} rotation={[Math.PI / 2, 0, 0]}>
+            <cylinderGeometry args={[0.025, 0.025, 0.24, 10]} />
+            <meshStandardMaterial color="#111827" roughness={0.42} />
+          </mesh>
+          <mesh castShadow position={[-0.2, 0.08, 0.56]} rotation={[0.18, 0, 0]}>
+            <boxGeometry args={[0.28, 0.035, 0.22]} />
+            <meshStandardMaterial color="#475569" roughness={0.5} />
+          </mesh>
+          <mesh castShadow position={[0.2, 0.08, 0.56]} rotation={[0.18, 0, 0]}>
+            <boxGeometry args={[0.28, 0.035, 0.22]} />
+            <meshStandardMaterial color="#475569" roughness={0.5} />
+          </mesh>
+        </group>
+      ) : null}
+      {kind === 'elder' ? (
+        <group name="character-cane" position={[0.38, 0.55, 0.88]} rotation={[0.32, 0, -0.16]}>
+          <mesh castShadow>
+            <cylinderGeometry args={[0.022, 0.022, 1.04, 10]} />
+            <meshStandardMaterial color="#7c4a2d" roughness={0.6} />
+          </mesh>
+          <mesh castShadow position={[0.08, 0.52, 0.02]} rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.022, 0.022, 0.22, 10]} />
+            <meshStandardMaterial color="#5b341f" roughness={0.62} />
+          </mesh>
+          <mesh castShadow position={[-0.01, -0.54, -0.02]}>
+            <sphereGeometry args={[0.035, 10, 8]} />
+            <meshStandardMaterial color="#1f2937" roughness={0.7} />
+          </mesh>
+        </group>
+      ) : null}
+      <group name="character-label" position={[0, labelY, 0]}>
         <mesh>
           <sphereGeometry args={[isSelected ? 0.07 : 0.045, 12, 8]} />
           <meshBasicMaterial color={isSelected ? '#f59e0b' : person.motion === 'idle' ? '#22c55e' : '#38bdf8'} />
@@ -778,9 +1356,10 @@ function CharacterPersonMesh({
 export function CharacterActorSystem() {
   const camera = useThree((state) => state.camera)
   const gl = useThree((state) => state.gl)
+  const scene = useThree((state) => state.scene)
   const character = useViewer((state) => state.characterActor)
   const nodes = useScene((state) => state.nodes)
-  const walls = useMemo(() => buildCharacterCollisionWalls(nodes), [nodes])
+  const collision = useMemo(() => buildCharacterCollisionMap(nodes), [nodes])
   const actorRefs = useRef(new Map<string, Group>())
   const pointerRaycaster = useRef(new Raycaster())
   const pointerDragRef = useRef<{
@@ -803,6 +1382,43 @@ export function CharacterActorSystem() {
   })
   const jumpVelocityRef = useRef<Record<string, number>>({})
   const jumpOffsetRef = useRef<Record<string, number>>({})
+  const manualMotionRef = useRef<Record<string, CharacterMotion | undefined>>({})
+  const roamActivitiesRef = useRef<Record<string, CharacterRoamActivity | undefined>>({})
+  const waterRuntimeRef = useRef<Record<string, CharacterWaterRuntime | undefined>>({})
+  const sceneSeedSignatureRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    const seededPeople = getSceneCharacterSeeds(nodes)
+    if (seededPeople.length === 0) return
+
+    const signature = JSON.stringify(
+      seededPeople.map((person) => [person.id, person.kind, person.position, person.route]),
+    )
+    if (sceneSeedSignatureRef.current === signature) return
+
+    sceneSeedSignatureRef.current = signature
+    manualMotionRef.current = {}
+    roamActivitiesRef.current = {}
+    useViewer.getState().setCharacterActor({
+      enabled: true,
+      motion: 'walk',
+      count: seededPeople.length,
+      people: seededPeople,
+      selectedPersonId: seededPeople[0]?.id ?? 'scene-character-1',
+      position: seededPeople[0]?.position ?? [0, 0, 0],
+    })
+  }, [nodes])
+
+  useEffect(() => {
+    const canvas = gl.domElement
+    canvas.style.cursor = character.pendingPlacementKind ? 'crosshair' : ''
+
+    return () => {
+      if (character.pendingPlacementKind) {
+        canvas.style.cursor = ''
+      }
+    }
+  }, [character.pendingPlacementKind, gl])
 
   useEffect(() => {
     const canvas = gl.domElement
@@ -852,6 +1468,30 @@ export function CharacterActorSystem() {
       event.stopImmediatePropagation()
     }
 
+    const getPointerSurfacePoint = (event: PointerEvent, fallbackY = 0) => {
+      if (!isPointerInsideCanvas(event)) return null
+
+      setRayFromPointer(event)
+      const hits = pointerRaycaster.current.intersectObjects(scene.children, true)
+      for (const hit of hits) {
+        if (isCharacterObject(hit.object)) continue
+        if (hit.object.visible === false) continue
+        if (hit.object.userData?.isGridHelper === true) continue
+        if (hit.face) {
+          _normalMatrix.getNormalMatrix(hit.object.matrixWorld)
+          _surfaceNormal.copy(hit.face.normal).applyMatrix3(_normalMatrix).normalize()
+          if (_surfaceNormal.y < 0.45) continue
+        }
+        return hit.point
+      }
+
+      _dragPlane.constant = -fallbackY
+      if (pointerRaycaster.current.ray.intersectPlane(_dragPlane, _dragPoint)) {
+        return _dragPoint.clone()
+      }
+      return null
+    }
+
     const movePersonToPointer = (event: PointerEvent, personId: string) => {
       if (!isPointerInsideCanvas(event)) return false
 
@@ -859,19 +1499,49 @@ export function CharacterActorSystem() {
       const person = getCharacterPeopleFromState(current).find((entry) => entry.id === personId)
       if (!person) return false
 
-      setRayFromPointer(event)
-      _dragPlane.constant = -person.position[1]
-      if (!pointerRaycaster.current.ray.intersectPlane(_dragPlane, _dragPoint)) return false
+      const point = getPointerSurfacePoint(event, person.position[1])
+      if (!point) return false
 
       updateCharacterPerson(person.id, (currentPerson) => ({
         ...currentPerson,
         motion: 'idle',
-        position: [_dragPoint.x, currentPerson.position[1], _dragPoint.z],
+        position: [point.x, point.y, point.z],
       }))
       return true
     }
 
+    const placeNewPersonAtPointer = (event: PointerEvent, kind: CharacterKind) => {
+      if (!isPointerInsideCanvas(event)) return false
+
+      const point = getPointerSurfacePoint(event, 0)
+      if (!point) return false
+
+      const current = useViewer.getState().characterActor
+      const currentPeople = current.enabled ? getCharacterPeopleFromState(current) : []
+      const position = [point.x, point.y, point.z] as [number, number, number]
+      const person = createPlacedCharacterPerson(kind, currentPeople.length, position)
+
+      useViewer.getState().setCharacterActor({
+        enabled: true,
+        pendingPlacementKind: null,
+        people: [...currentPeople, person],
+        count: currentPeople.length + 1,
+        selectedPersonId: person.id,
+        position,
+      })
+      useViewer.getState().setCameraDragging(false)
+      return true
+    }
+
     const handlePointerDown = (event: PointerEvent) => {
+      const pendingPlacementKind = useViewer.getState().characterActor.pendingPlacementKind
+      if (event.button === 0 && pendingPlacementKind) {
+        if (placeNewPersonAtPointer(event, pendingPlacementKind)) {
+          stopPointerEvent(event)
+        }
+        return
+      }
+
       if (event.button === 0 && pendingMovePersonIdRef.current) {
         const personId = pendingMovePersonIdRef.current
         stopPointerEvent(event)
@@ -922,18 +1592,24 @@ export function CharacterActorSystem() {
       const person = getCharacterPeopleFromState(current).find((entry) => entry.id === personId)
       if (!person) return
 
-      setRayFromPointer(event)
-      _dragPlane.constant = -person.position[1]
-      if (!pointerRaycaster.current.ray.intersectPlane(_dragPlane, _dragPoint)) return
+      const point = getPointerSurfacePoint(event, person.position[1])
+      if (!point) return
 
-      const targetX = drag ? _dragPoint.x + drag.offsetX : _dragPoint.x
-      const targetZ = drag ? _dragPoint.z + drag.offsetZ : _dragPoint.z
-      const next = resolveWalkPosition(person.position[0], person.position[2], targetX, targetZ, walls)
+      const targetX = drag ? point.x + drag.offsetX : point.x
+      const targetZ = drag ? point.z + drag.offsetZ : point.z
+      const next = resolveCharacterWalkPosition(
+        person.position[0],
+        person.position[2],
+        targetX,
+        targetZ,
+        collision,
+        current.canPenetrate,
+      )
 
       updateCharacterPerson(person.id, (currentPerson) => ({
         ...currentPerson,
         motion: 'idle',
-        position: [next.x, currentPerson.position[1], next.z],
+        position: [next.x, point.y, next.z],
       }))
     }
 
@@ -979,7 +1655,7 @@ export function CharacterActorSystem() {
         pendingMovePersonIdRef.current = null
       }
     }
-  }, [camera, gl, walls])
+  }, [camera, collision, gl, scene])
 
   useEffect(() => {
     const handleCharacterCommand = (event: Event) => {
@@ -1011,6 +1687,49 @@ export function CharacterActorSystem() {
         return
       }
 
+      if (command === 'set-motion') {
+        const motion = event.detail.motion
+        if (!isCharacterMotion(motion)) return
+        manualMotionRef.current[person.id] = motion
+        delete roamActivitiesRef.current[person.id]
+        delete waterRuntimeRef.current[person.id]
+        updateCharacterPerson(person.id, (entry) => ({
+          ...entry,
+          motion,
+          roam: false,
+        }))
+        return
+      }
+
+      if (command === 'set-roam') {
+        const roam = event.detail.roam === true
+        delete manualMotionRef.current[person.id]
+        delete roamActivitiesRef.current[person.id]
+        delete waterRuntimeRef.current[person.id]
+        updateCharacterPerson(person.id, (entry) => ({
+          ...entry,
+          motion: roam ? 'walk' : 'idle',
+          roam,
+        }))
+        return
+      }
+
+      if (command === 'set-all-roam') {
+        const roam = event.detail.roam === true
+        manualMotionRef.current = {}
+        roamActivitiesRef.current = {}
+        waterRuntimeRef.current = {}
+        useViewer.getState().setCharacterActor({
+          people: people.map((entry) => ({
+            ...entry,
+            motion: roam ? 'walk' : 'idle',
+            roam,
+          })),
+          motion: roam ? 'walk' : 'idle',
+        })
+        return
+      }
+
       if (command === 'duplicate') {
         const copyIndex = people.filter((entry) => entry.id.startsWith(`${person.id}-copy`)).length + 1
         const copy: CharacterPersonState = {
@@ -1029,6 +1748,9 @@ export function CharacterActorSystem() {
       }
 
       if (command === 'delete') {
+        delete manualMotionRef.current[person.id]
+        delete roamActivitiesRef.current[person.id]
+        delete waterRuntimeRef.current[person.id]
         if (pendingMovePersonIdRef.current === person.id) {
           pendingMovePersonIdRef.current = null
           useViewer.getState().setCameraDragging(false)
@@ -1142,8 +1864,132 @@ export function CharacterActorSystem() {
     const wantsMove = keys.forward || keys.backward || keys.left || keys.right
     const wantsCrouch = keys.crouch
     const wantsRun = keys.run && wantsMove && !wantsCrouch
-
     const selectedId = selectedPerson.id
+
+    const now = performance.now() / 1000
+    const selectedWaterArea = getCharacterWaterAreaAt(actor.position.x, actor.position.z, collision)
+    const selectedWaterMotion = selectedWaterArea
+      ? getWaterMotion(selectedPerson, now, waterRuntimeRef)
+      : null
+    if (!selectedWaterArea) {
+      delete waterRuntimeRef.current[selectedId]
+    }
+    const selectedIsImmobile = selectedWaterMotion === 'dead'
+    const selectedIsKeyboardControlled = (wantsMove || wantsCrouch || keys.jump) && !selectedIsImmobile
+    const roamUpdates = new Map<string, { motion: CharacterMotion; position: [number, number, number] }>()
+    const roamingPeople = people.filter((person) => person.roam && person.enabled)
+
+    for (let index = 0; index < roamingPeople.length; index += 1) {
+      const person = roamingPeople[index]
+      if (!person || roamActivitiesRef.current[person.id]?.kind === 'chat') continue
+      const actor = actorRefs.current.get(person.id)
+      if (!actor) continue
+
+      for (let otherIndex = index + 1; otherIndex < roamingPeople.length; otherIndex += 1) {
+        const other = roamingPeople[otherIndex]
+        if (!other || roamActivitiesRef.current[other.id]?.kind === 'chat') continue
+        const otherActor = actorRefs.current.get(other.id)
+        if (!otherActor) continue
+
+        const distance = Math.hypot(actor.position.x - otherActor.position.x, actor.position.z - otherActor.position.z)
+        if (distance > 1.25 || Math.random() > 0.025) continue
+
+        const until = now + 2.4 + Math.random() * 3.8
+        roamActivitiesRef.current[person.id] = { kind: 'chat', partnerId: other.id, until }
+        roamActivitiesRef.current[other.id] = { kind: 'chat', partnerId: person.id, until }
+        break
+      }
+    }
+
+    for (const person of people) {
+      if (!person.roam || !person.enabled) continue
+      if (person.id === selectedId && selectedIsKeyboardControlled) continue
+
+      const roamActor = actorRefs.current.get(person.id)
+      if (!roamActor) continue
+
+      const waterArea = getCharacterWaterAreaAt(roamActor.position.x, roamActor.position.z, collision)
+      if (waterArea) {
+        delete roamActivitiesRef.current[person.id]
+        const waterMotion = getWaterMotion(person, now, waterRuntimeRef) ?? 'swim'
+        roamActor.position.y = waterArea.surfaceY
+        roamUpdates.set(person.id, {
+          motion: waterMotion,
+          position: [roamActor.position.x, waterArea.surfaceY, roamActor.position.z],
+        })
+        continue
+      }
+      delete waterRuntimeRef.current[person.id]
+
+      let activity = roamActivitiesRef.current[person.id]
+      if (!activity || now >= activity.until) {
+        activity = pickCharacterRoamActivity(person, roamActor, collision, current.canPenetrate, now)
+        roamActivitiesRef.current[person.id] = activity
+      }
+
+      if (activity.kind === 'chat') {
+        const partnerActor = activity.partnerId ? actorRefs.current.get(activity.partnerId) : null
+        if (partnerActor) {
+          const dx = partnerActor.position.x - roamActor.position.x
+          const dz = partnerActor.position.z - roamActor.position.z
+          if (Math.hypot(dx, dz) > 0.001) {
+            roamActor.rotation.y = Math.atan2(dx, dz)
+          }
+        }
+        roamUpdates.set(person.id, {
+          motion: 'chat',
+          position: [roamActor.position.x, person.position[1], roamActor.position.z],
+        })
+        continue
+      }
+
+      if (activity.kind === 'pause' || activity.kind === 'sit' || activity.kind === 'jump') {
+        roamActor.position.y = person.position[1]
+        roamUpdates.set(person.id, {
+          motion: getRoamMotion(activity),
+          position: [roamActor.position.x, person.position[1], roamActor.position.z],
+        })
+        continue
+      }
+
+      let target = activity.target
+      const distanceToTarget = target
+        ? Math.hypot(target.x - roamActor.position.x, target.z - roamActor.position.z)
+        : 0
+      if (!target || distanceToTarget < 0.25) {
+        activity = pickCharacterRoamActivity(person, roamActor, collision, current.canPenetrate, now)
+        if (activity.kind === 'walk' || activity.kind === 'run') {
+          target = activity.target
+        } else {
+          roamActivitiesRef.current[person.id] = activity
+          roamUpdates.set(person.id, {
+            motion: getRoamMotion(activity),
+            position: [roamActor.position.x, person.position[1], roamActor.position.z],
+          })
+          continue
+        }
+        roamActivitiesRef.current[person.id] = activity
+      }
+      if (!target) continue
+
+      const dx = target.x - roamActor.position.x
+      const dz = target.z - roamActor.position.z
+      const distance = Math.hypot(dx, dz)
+      if (distance > 0.001) {
+        const baseSpeed = activity.kind === 'run' ? CHARACTER_RUN_SPEED : CHARACTER_WALK_SPEED
+        const speed = baseSpeed * (person.speed || 1) * (person.kind === 'dog' ? 1.25 : 1)
+        const step = Math.min(distance, speed * delta)
+        roamActor.position.x += (dx / distance) * step
+        roamActor.position.z += (dz / distance) * step
+        roamActor.position.y = person.position[1]
+        roamActor.rotation.y = Math.atan2(dx, dz)
+        roamUpdates.set(person.id, {
+          motion: activity.kind,
+          position: [roamActor.position.x, person.position[1], roamActor.position.z],
+        })
+      }
+    }
+
     const jumpOffset = jumpOffsetRef.current[selectedId] ?? 0
     const jumpVelocity = jumpVelocityRef.current[selectedId] ?? 0
 
@@ -1151,7 +1997,10 @@ export function CharacterActorSystem() {
       jumpVelocityRef.current[selectedId] = 4.2
     }
 
-    if ((jumpVelocityRef.current[selectedId] ?? 0) !== 0 || (jumpOffsetRef.current[selectedId] ?? 0) > 0) {
+    if (
+      !selectedWaterMotion &&
+      ((jumpVelocityRef.current[selectedId] ?? 0) !== 0 || (jumpOffsetRef.current[selectedId] ?? 0) > 0)
+    ) {
       jumpVelocityRef.current[selectedId] = (jumpVelocityRef.current[selectedId] ?? 0) - 9.8 * delta
       jumpOffsetRef.current[selectedId] = Math.max(
         0,
@@ -1160,19 +2009,27 @@ export function CharacterActorSystem() {
       if (jumpOffsetRef.current[selectedId] === 0) jumpVelocityRef.current[selectedId] = 0
     }
 
-    let nextMotion: CharacterMotion = 'idle'
-    if ((jumpOffsetRef.current[selectedId] ?? 0) > 0.025 || (jumpVelocityRef.current[selectedId] ?? 0) > 0) {
+    let nextMotion: CharacterMotion =
+      roamUpdates.get(selectedId)?.motion ?? manualMotionRef.current[selectedId] ?? 'idle'
+    if (selectedWaterMotion) {
+      delete manualMotionRef.current[selectedId]
+      nextMotion = selectedWaterMotion
+    } else if ((jumpOffsetRef.current[selectedId] ?? 0) > 0.025 || (jumpVelocityRef.current[selectedId] ?? 0) > 0) {
+      delete manualMotionRef.current[selectedId]
       nextMotion = 'jump'
     } else if (wantsCrouch) {
+      delete manualMotionRef.current[selectedId]
       nextMotion = 'crouch'
     } else if (wantsRun) {
+      delete manualMotionRef.current[selectedId]
       nextMotion = 'run'
     } else if (wantsMove) {
+      delete manualMotionRef.current[selectedId]
       nextMotion = 'walk'
     }
 
     _direction.set(0, 0, 0)
-    if (wantsMove) {
+    if (wantsMove && !selectedIsImmobile) {
       camera.getWorldDirection(_forward)
       _forward.y = 0
       if (_forward.lengthSq() < 1e-6) _forward.set(0, 0, -1)
@@ -1191,16 +2048,33 @@ export function CharacterActorSystem() {
         const fromZ = actor.position.z
         const toX = fromX + _direction.x * speed * delta
         const toZ = fromZ + _direction.z * speed * delta
-        const next = resolveWalkPosition(fromX, fromZ, toX, toZ, walls)
+        const next = resolveCharacterWalkPosition(
+          fromX,
+          fromZ,
+          toX,
+          toZ,
+          collision,
+          current.canPenetrate,
+        )
         actor.position.x = next.x
         actor.position.z = next.z
         actor.rotation.y = Math.atan2(_direction.x, _direction.z)
       }
     }
 
-    actor.position.y = selectedPerson.position[1] + (jumpOffsetRef.current[selectedId] ?? 0)
+    const selectedWaterAreaAfterMove = getCharacterWaterAreaAt(actor.position.x, actor.position.z, collision)
+    const selectedWaterMotionAfterMove = selectedWaterAreaAfterMove
+      ? getWaterMotion(selectedPerson, now, waterRuntimeRef)
+      : null
+    if (selectedWaterAreaAfterMove && selectedWaterMotionAfterMove) {
+      nextMotion = selectedWaterMotionAfterMove
+      actor.position.y = selectedWaterAreaAfterMove.surfaceY
+    } else {
+      actor.position.y = selectedPerson.position[1] + (jumpOffsetRef.current[selectedId] ?? 0)
+    }
 
     if (
+      roamUpdates.size > 0 ||
       selectedPerson.motion !== nextMotion ||
       Math.abs(selectedPerson.position[0] - actor.position.x) > 0.001 ||
       Math.abs(selectedPerson.position[2] - actor.position.z) > 0.001
@@ -1210,15 +2084,21 @@ export function CharacterActorSystem() {
           ? {
               ...person,
               motion: nextMotion,
-              position: [actor.position.x, person.position[1], actor.position.z] as [number, number, number],
+              position: [actor.position.x, actor.position.y, actor.position.z] as [number, number, number],
             }
-          : person,
+          : roamUpdates.has(person.id)
+            ? {
+                ...person,
+                motion: roamUpdates.get(person.id)?.motion ?? person.motion,
+                position: roamUpdates.get(person.id)?.position ?? person.position,
+              }
+            : person,
       )
       useViewer.setState({
         characterActor: {
           ...current,
           motion: nextMotion,
-          position: [actor.position.x, selectedPerson.position[1], actor.position.z],
+          position: [actor.position.x, actor.position.y, actor.position.z],
           people: nextPeople,
         },
       })
@@ -1234,6 +2114,8 @@ export function CharacterActorSystem() {
       {people.map((person) =>
         person.enabled && person.id !== hiddenFirstPersonPersonId ? (
           <CharacterPersonMesh
+            canPenetrate={character.canPenetrate}
+            collision={collision}
             isSelected={person.id === character.selectedPersonId}
             key={person.id}
             onActorRef={(id, group) => {
@@ -1242,7 +2124,6 @@ export function CharacterActorSystem() {
             }}
             person={person}
             startedAt={startedAt}
-            walls={walls}
           />
         ) : null,
       )}

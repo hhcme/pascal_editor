@@ -40,6 +40,9 @@ const isNodeInCurrentLevel = (node: AnyNode): boolean => {
 
 type SelectableNodeType =
   | 'wall'
+  | 'beam'
+  | 'loft'
+  | 'procedural-tower'
   | 'fence'
   | 'item'
   | 'building'
@@ -345,6 +348,9 @@ const SELECTION_STRATEGIES: Record<string, SelectionStrategy> = {
   structure: {
     types: [
       'wall',
+      'beam',
+      'loft',
+      'procedural-tower',
       'fence',
       'item',
       'zone',
@@ -401,6 +407,9 @@ const SELECTION_STRATEGIES: Record<string, SelectionStrategy> = {
       }
       if (
         node.type === 'wall' ||
+        node.type === 'beam' ||
+        node.type === 'loft' ||
+        node.type === 'procedural-tower' ||
         node.type === 'fence' ||
         node.type === 'slab' ||
         node.type === 'ceiling' ||
@@ -466,6 +475,9 @@ const getSelectionTarget = (node: AnyNode): SelectionTarget | null => {
 
   if (
     node.type === 'wall' ||
+    node.type === 'beam' ||
+    node.type === 'loft' ||
+    node.type === 'procedural-tower' ||
     node.type === 'fence' ||
     node.type === 'slab' ||
     node.type === 'ceiling' ||
@@ -651,6 +663,9 @@ export const SelectionManager = () => {
 
     const allTypes = [
       'wall',
+      'beam',
+      'loft',
+      'procedural-tower',
       'fence',
       'item',
       'building',
@@ -760,6 +775,9 @@ export const SelectionManager = () => {
         }
       } else if (
         node.type === 'wall' ||
+        node.type === 'beam' ||
+        node.type === 'loft' ||
+        node.type === 'procedural-tower' ||
         node.type === 'fence' ||
         node.type === 'slab' ||
         node.type === 'ceiling' ||
@@ -813,6 +831,9 @@ export const SelectionManager = () => {
 
     const allTypes = [
       'wall',
+      'beam',
+      'loft',
+      'procedural-tower',
       'fence',
       'item',
       'building',
@@ -888,6 +909,9 @@ export const SelectionManager = () => {
 
     const allTypes = [
       'wall',
+      'beam',
+      'loft',
+      'procedural-tower',
       'fence',
       'item',
       'slab',

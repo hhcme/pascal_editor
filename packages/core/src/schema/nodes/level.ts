@@ -1,10 +1,13 @@
 import dedent from 'dedent'
 import { z } from 'zod'
 import { BaseNode, nodeType, objectId } from '../base'
+import { BeamNode } from './beam'
 import { CeilingNode } from './ceiling'
 import { FeatureNode } from './feature'
 import { FenceNode } from './fence'
 import { GuideNode } from './guide'
+import { LoftNode } from './loft'
+import { ProceduralTowerNode } from './procedural-tower'
 import { RoofNode } from './roof'
 import { ScanNode } from './scan'
 import { SketchCircleNode } from './sketch-circle'
@@ -21,6 +24,9 @@ export const LevelNode = BaseNode.extend({
   children: z
     .array(
       z.union([
+        BeamNode.shape.id,
+        LoftNode.shape.id,
+        ProceduralTowerNode.shape.id,
         WallNode.shape.id,
         FenceNode.shape.id,
         FeatureNode.shape.id,

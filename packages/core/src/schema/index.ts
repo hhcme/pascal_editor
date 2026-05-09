@@ -24,6 +24,7 @@ export {
   resolveMaterial,
   TextureWrapMode,
 } from './material'
+export { BeamNode, BeamProfile } from './nodes/beam'
 export { BuildingNode } from './nodes/building'
 export { CeilingNode } from './nodes/ceiling'
 export { DoorNode, DoorSegment } from './nodes/door'
@@ -73,6 +74,8 @@ export type {
 } from './nodes/item'
 export { getScaledDimensions, ItemNode } from './nodes/item'
 export { LevelNode } from './nodes/level'
+export { LoftNode, LoftSection } from './nodes/loft'
+export { ProceduralTowerNode } from './nodes/procedural-tower'
 export type { RoofSurfaceMaterialRole, RoofSurfaceMaterialSpec } from './nodes/roof'
 export { getEffectiveRoofSurfaceMaterial, RoofNode } from './nodes/roof'
 export { RoofSegmentNode, RoofType } from './nodes/roof-segment'
@@ -102,6 +105,7 @@ export {
 } from './nodes/stair'
 export { AttachmentSide, StairSegmentNode, StairSegmentType } from './nodes/stair-segment'
 export { SurfaceHoleMetadata } from './nodes/surface-hole-metadata'
+export { TerrainNode } from './nodes/terrain'
 export type { WallSurfaceMaterialSpec, WallSurfaceSide } from './nodes/wall'
 export {
   getEffectiveWallSurfaceMaterial,

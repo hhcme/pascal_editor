@@ -78,6 +78,41 @@ export const SFX: Record<string, SFXConfig> = {
     minIntervalMs: 90,
     panJitter: 0.08,
   },
+  shooterPistol: {
+    src: '/audios/sfx/shooter_pistol.wav',
+    rateRange: [0.96, 1.04],
+    volumeRange: [0.9, 1.0],
+    minIntervalMs: 80,
+    panJitter: 0.1,
+  },
+  shooterSniper: {
+    src: '/audios/sfx/shooter_sniper.wav',
+    rateRange: [0.98, 1.03],
+    volumeRange: [0.9, 1.0],
+    minIntervalMs: 180,
+    panJitter: 0.08,
+  },
+  shooterKnife: {
+    src: '/audios/sfx/shooter_knife.wav',
+    rateRange: [0.94, 1.08],
+    volumeRange: [0.76, 0.92],
+    minIntervalMs: 120,
+    panJitter: 0.12,
+  },
+  shooterGrenade: {
+    src: '/audios/sfx/shooter_grenade.wav',
+    rateRange: [0.96, 1.04],
+    volumeRange: [0.84, 0.96],
+    minIntervalMs: 240,
+    panJitter: 0.1,
+  },
+  shooterExplosion: {
+    src: '/audios/sfx/shooter_explosion.wav',
+    rateRange: [0.96, 1.04],
+    volumeRange: [0.96, 1.0],
+    minIntervalMs: 160,
+    panJitter: 0.18,
+  },
   shooterHit: {
     src: '/audios/sfx/item_pick.mp3',
     rateRange: [0.72, 0.86],
@@ -92,12 +127,26 @@ export const SFX: Record<string, SFXConfig> = {
     minIntervalMs: 120,
     panJitter: 0.16,
   },
+  shooterCombo: {
+    src: '/audios/sfx/item_place.mp3',
+    rateRange: [1.28, 1.46],
+    volumeRange: [0.72, 0.88],
+    minIntervalMs: 180,
+    panJitter: 0.12,
+  },
   shooterDamage: {
     src: '/audios/sfx/item_delete.mp3',
     rateRange: [0.72, 0.82],
     volumeRange: [0.95, 1.0],
     minIntervalMs: 220,
     panJitter: 0.1,
+  },
+  shooterSpawnWarning: {
+    src: '/audios/sfx/grid_snap.mp3',
+    rateRange: [0.62, 0.7],
+    volumeRange: [0.72, 0.86],
+    minIntervalMs: 620,
+    panJitter: 0.04,
   },
   snapshotCapture: {
     // Shutter should sound consistent, no variation.

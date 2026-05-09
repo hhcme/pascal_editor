@@ -2,6 +2,7 @@ import type { ThreeEvent } from '@react-three/fiber'
 import mitt from 'mitt'
 import type { Object3D } from 'three'
 import type {
+  BeamNode,
   BuildingNode,
   CeilingNode,
   DoorNode,
@@ -9,6 +10,8 @@ import type {
   FenceNode,
   ItemNode,
   LevelNode,
+  LoftNode,
+  ProceduralTowerNode,
   RoofNode,
   RoofSegmentNode,
   SiteNode,
@@ -17,6 +20,7 @@ import type {
   SlabNode,
   StairNode,
   StairSegmentNode,
+  TerrainNode,
   WallNode,
   WindowNode,
   ZoneNode,
@@ -49,11 +53,14 @@ export interface NodeEvent<T extends AnyNode = AnyNode> {
 }
 
 export type WallEvent = NodeEvent<WallNode>
+export type BeamEvent = NodeEvent<BeamNode>
 export type FenceEvent = NodeEvent<FenceNode>
 export type ItemEvent = NodeEvent<ItemNode>
 export type SiteEvent = NodeEvent<SiteNode>
 export type BuildingEvent = NodeEvent<BuildingNode>
 export type LevelEvent = NodeEvent<LevelNode>
+export type LoftEvent = NodeEvent<LoftNode>
+export type ProceduralTowerEvent = NodeEvent<ProceduralTowerNode>
 export type ZoneEvent = NodeEvent<ZoneNode>
 export type SlabEvent = NodeEvent<SlabNode>
 export type CeilingEvent = NodeEvent<CeilingNode>
@@ -63,6 +70,7 @@ export type SketchCircleEvent = NodeEvent<SketchCircleNode>
 export type SketchLineEvent = NodeEvent<SketchLineNode>
 export type StairEvent = NodeEvent<StairNode>
 export type StairSegmentEvent = NodeEvent<StairSegmentNode>
+export type TerrainEvent = NodeEvent<TerrainNode>
 export type WindowEvent = NodeEvent<WindowNode>
 export type DoorEvent = NodeEvent<DoorNode>
 export type FeatureEvent = NodeEvent<FeatureNode>
@@ -146,6 +154,9 @@ type AIChatEvents = {
 
 type EditorEvents = GridEvents &
   NodeEvents<'wall', WallEvent> &
+  NodeEvents<'beam', BeamEvent> &
+  NodeEvents<'loft', LoftEvent> &
+  NodeEvents<'procedural-tower', ProceduralTowerEvent> &
   NodeEvents<'fence', FenceEvent> &
   NodeEvents<'item', ItemEvent> &
   NodeEvents<'site', SiteEvent> &
@@ -161,6 +172,7 @@ type EditorEvents = GridEvents &
   NodeEvents<'sketch-line', SketchLineEvent> &
   NodeEvents<'stair', StairEvent> &
   NodeEvents<'stair-segment', StairSegmentEvent> &
+  NodeEvents<'terrain', TerrainEvent> &
   NodeEvents<'window', WindowEvent> &
   NodeEvents<'door', DoorEvent> &
   CameraControlEvents &

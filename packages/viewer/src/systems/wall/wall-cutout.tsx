@@ -9,12 +9,16 @@ import { getMaterialsForWall } from './wall-materials'
 const tmpVec = new Vector3()
 const u = new Vector3()
 const v = new Vector3()
+const WALL_CUTAWAY_DOT_DEAD_BAND = 0.12
+const VISIBLE_WALL_RENDER_ORDER = 0
+const TRANSPARENT_WALL_RENDER_ORDER = 32
 
 function getWallHideState(
   wallNode: WallNode,
   wallMesh: Mesh,
   wallMode: string,
   cameraDir: Vector3,
+  previousHideWall: boolean | undefined,
 ): boolean {
   let hideWall = wallNode.frontSide === 'interior' && wallNode.backSide === 'interior'
 
@@ -24,7 +28,12 @@ function getWallHideState(
     hideWall = true
   } else {
     wallMesh.getWorldDirection(v)
-    if (v.dot(cameraDir) < 0) {
+    const facingDot = v.dot(cameraDir)
+    if (Math.abs(facingDot) < WALL_CUTAWAY_DOT_DEAD_BAND && previousHideWall !== undefined) {
+      return previousHideWall
+    }
+
+    if (facingDot < 0) {
       if (wallNode.frontSide === 'exterior' && wallNode.backSide !== 'exterior') {
         hideWall = true
       }
@@ -43,6 +52,7 @@ export const WallCutout = () => {
   const lastWallMode = useRef<string>(useViewer.getState().wallMode)
   const lastNumberOfWalls = useRef(0)
   const lastHighlightKey = useRef('')
+  const wallHideState = useRef(new Map<string, boolean>())
 
   useFrame(({ camera, clock }) => {
     const wallMode = useViewer.getState().wallMode
@@ -89,10 +99,20 @@ export const WallCutout = () => {
         const wallNode = useScene.getState().nodes[wallId as WallNode['id']]
         if (!wallNode || wallNode.type !== 'wall') return
 
-        const hideWall = getWallHideState(wallNode, wallMesh as Mesh, wallMode, u)
+        const hideWall = getWallHideState(
+          wallNode,
+          wallMesh as Mesh,
+          wallMode,
+          u,
+          wallHideState.current.get(wallId),
+        )
         const isDeleteHighlighted = deleteHoveredWallId === wallId
         const isSelectionHighlighted = !isDeleteHighlighted && highlightedWallIds.has(wallId)
         const materials = getMaterialsForWall(wallNode)
+        ;(wallMesh as Mesh).renderOrder = hideWall
+          ? TRANSPARENT_WALL_RENDER_ORDER
+          : VISIBLE_WALL_RENDER_ORDER
+        wallHideState.current.set(wallId, hideWall)
 
         if (hideWall) {
           ;(wallMesh as Mesh).material = isDeleteHighlighted
@@ -111,6 +131,11 @@ export const WallCutout = () => {
       lastWallMode.current = wallMode
       lastNumberOfWalls.current = sceneRegistry.byType.wall.size
       lastHighlightKey.current = highlightKey
+      for (const wallId of wallHideState.current.keys()) {
+        if (!sceneRegistry.byType.wall.has(wallId)) {
+          wallHideState.current.delete(wallId)
+        }
+      }
     }
   })
 

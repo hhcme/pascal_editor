@@ -5,18 +5,13 @@ import { z } from 'zod'
 import { BaseNode, nodeType, objectId } from '../base'
 import { BuildingNode } from './building'
 import { ItemNode } from './item'
+import { TerrainNode } from './terrain'
 
 // 2D Polygon
 const PropertyLineData = z.object({
   type: z.literal('polygon'),
   points: z.array(z.tuple([z.number(), z.number()])),
 })
-
-// 3D Polygon/Mesh
-// const TerrainData = z.object({
-//   type: z.literal('terrain'),
-//   points: z.array(z.tuple([z.number(), z.number(), z.number()])),
-// })
 
 export const SiteNode = BaseNode.extend({
   id: objectId('site'),
@@ -32,9 +27,8 @@ export const SiteNode = BaseNode.extend({
       [-15, 15],
     ],
   }),
-  // terrain: TerrainData,
   children: z
-    .array(z.discriminatedUnion('type', [BuildingNode, ItemNode]))
+    .array(z.discriminatedUnion('type', [BuildingNode, ItemNode, TerrainNode]))
     .default([BuildingNode.parse({})]),
 }).describe(
   dedent`

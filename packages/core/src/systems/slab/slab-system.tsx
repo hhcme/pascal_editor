@@ -62,14 +62,24 @@ function updateSlabGeometry(node: SlabNode, mesh: THREE.Mesh) {
 const SLAB_OUTSET = 0.05
 const AUTO_SLAB_INSET = 0.02
 const AUTO_SLAB_SIMPLIFY_TOLERANCE = 0.08
+const SURFACE_SLAB_MAX_ELEVATION = 0.06
 
 function getRenderableSlabPolygon(slabNode: SlabNode): Array<[number, number]> {
-  return slabNode.autoFromWalls
-    ? simplifyClosedPolygon(
-        insetPolygonFromCentroid(slabNode.polygon, AUTO_SLAB_INSET),
-        AUTO_SLAB_SIMPLIFY_TOLERANCE,
-      )
-    : outsetPolygon(slabNode.polygon, SLAB_OUTSET)
+  if (slabNode.autoFromWalls) {
+    return simplifyClosedPolygon(
+      insetPolygonFromCentroid(slabNode.polygon, AUTO_SLAB_INSET),
+      AUTO_SLAB_SIMPLIFY_TOLERANCE,
+    )
+  }
+
+  // Thin site paving/landscape slabs are visual surface layers. Outsetting them
+  // makes adjacent roads, walks, lawns, and plazas overlap at their edges, which
+  // creates z-fighting when the camera is nearly top-down.
+  if ((slabNode.elevation ?? 0.05) <= SURFACE_SLAB_MAX_ELEVATION) {
+    return slabNode.polygon
+  }
+
+  return outsetPolygon(slabNode.polygon, SLAB_OUTSET)
 }
 
 /**
@@ -199,13 +209,7 @@ function generatePoolGeometry(slabNode: SlabNode): THREE.BufferGeometry {
     uvs.push((x - bounds.min.x) / floorWidth, (z - bounds.min.y) / floorHeight)
   }
 
-  const pushWallVertex = (
-    x: number,
-    y: number,
-    z: number,
-    u: number,
-    v: number,
-  ) => {
+  const pushWallVertex = (x: number, y: number, z: number, u: number, v: number) => {
     positions.push(x, y, z)
     uvs.push(u, v)
   }

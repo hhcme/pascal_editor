@@ -76,6 +76,7 @@ import { OrientationGuide } from './orientation-guide'
 import { PresetThumbnailGenerator } from './preset-thumbnail-generator'
 import { SelectionManager } from './selection-manager'
 import { SiteEdgeLabels } from './site-edge-labels'
+import { SunTimeFlowSystem } from './sun-time-flow-system'
 import { ThumbnailGenerator } from './thumbnail-generator'
 import {
   ViewpointPlacementController,
@@ -575,6 +576,7 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
       {!isFirstPersonMode && <WallMeasurementLabel />}
       {!isFirstPersonMode && <MeasurementModeController />}
       <ExportManager />
+      <SunTimeFlowSystem />
       {isFirstPersonMode ? <ViewerZoneSystem /> : <ZoneSystem />}
       <CeilingSystem />
       <CeilingSelectionAffordanceSystem />

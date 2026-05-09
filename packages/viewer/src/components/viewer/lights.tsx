@@ -18,6 +18,9 @@ import {
 import useViewer from '../../store/use-viewer'
 
 const SITE_ORIENTATION_DEGREES_KEY = 'orientationDegrees'
+const SUN_LIGHT_DISTANCE = 1200
+const SUN_SHADOW_CAMERA_SIZE = 900
+const SUN_SHADOW_CAMERA_FAR = 2600
 
 function normalizeDegrees(degrees: number): number {
   const normalized = ((degrees % 360) + 360) % 360
@@ -74,7 +77,7 @@ export function Lights() {
           position: getSunPositionFromAngles(
             solarPosition.azimuthDeg,
             solarPosition.elevationDeg,
-            36,
+            SUN_LIGHT_DISTANCE,
           ),
         }
       }
@@ -85,13 +88,12 @@ export function Lights() {
 
     return {
       lighting,
-      position: getSunPositionForProgress(sunProgress, 36),
+      position: getSunPositionForProgress(sunProgress, SUN_LIGHT_DISTANCE),
     }
   }, [solarLocation, sunStudy])
 
   const light1Ref = useRef<DirectionalLight>(null)
   const shadowCamera = useRef<OrthographicCamera>(null)
-  const shadowCameraSize = 50 // The "area" around the camera to shadow
 
   const light2Ref = useRef<DirectionalLight>(null)
   const light3Ref = useRef<DirectionalLight>(null)
@@ -233,19 +235,19 @@ export function Lights() {
         position={[10, 10, 10]}
         ref={light1Ref}
         shadow-bias={-0.002}
-        shadow-mapSize={[1024, 1024]}
+        shadow-mapSize={[2048, 2048]}
         shadow-normalBias={0.3}
         shadow-radius={3}
       >
         <orthographicCamera
           attach="shadow-camera"
-          bottom={-shadowCameraSize}
-          far={100}
-          left={-shadowCameraSize}
-          near={1}
+          bottom={-SUN_SHADOW_CAMERA_SIZE}
+          far={SUN_SHADOW_CAMERA_FAR}
+          left={-SUN_SHADOW_CAMERA_SIZE}
+          near={0.5}
           ref={shadowCamera}
-          right={shadowCameraSize}
-          top={shadowCameraSize}
+          right={SUN_SHADOW_CAMERA_SIZE}
+          top={SUN_SHADOW_CAMERA_SIZE}
         />
       </directionalLight>
 

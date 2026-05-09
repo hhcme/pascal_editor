@@ -40,13 +40,13 @@ export const ItemSystem = () => {
         if (parentNode?.type !== 'item') {
           // Floor item: elevate by slab height (using full footprint overlap)
           const levelId = resolveLevelId(item, nodes)
-          const slabElevation = spatialGridManager.getSlabElevationForItem(
+          const groundElevation = spatialGridManager.getGroundElevationForItem(
             levelId,
             item.position,
             getScaledDimensions(item),
             item.rotation,
           )
-          mesh.position.y = slabElevation + item.position[1]
+          mesh.position.y = groundElevation + item.position[1]
         }
       }
 

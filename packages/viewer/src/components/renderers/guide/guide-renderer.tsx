@@ -7,6 +7,9 @@ import { MeshBasicNodeMaterial } from 'three/webgpu'
 import { useAssetUrl } from '../../../hooks/use-asset-url'
 import useViewer from '../../../store/use-viewer'
 
+const GUIDE_SURFACE_OFFSET = 0.025
+const GUIDE_RENDER_ORDER = 6
+
 export const GuideRenderer = ({ node }: { node: GuideNode }) => {
   const showGuides = useViewer((s) => s.showGuides)
   const ref = useRef<Group>(null!)
@@ -60,7 +63,9 @@ const GuidePlane = ({ url, scale, opacity }: { url: string; scale: number; opaci
     <mesh
       frustumCulled={false}
       material={material}
+      position-y={GUIDE_SURFACE_OFFSET}
       raycast={() => {}}
+      renderOrder={GUIDE_RENDER_ORDER}
       rotation={[-Math.PI / 2, 0, 0]}
     >
       <planeGeometry args={[width, height]} boundingBox={null} boundingSphere={null} />

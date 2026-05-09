@@ -1,4 +1,5 @@
 export type {
+  BeamEvent,
   BuildingEvent,
   CameraControlEvent,
   CeilingEvent,
@@ -9,7 +10,9 @@ export type {
   GridEvent,
   ItemEvent,
   LevelEvent,
+  LoftEvent,
   NodeEvent,
+  ProceduralTowerEvent,
   RoofEvent,
   RoofSegmentEvent,
   SiteEvent,
@@ -17,6 +20,7 @@ export type {
   SlabEvent,
   StairEvent,
   StairSegmentEvent,
+  TerrainEvent,
   WallEvent,
   WindowEvent,
   ZoneEvent,

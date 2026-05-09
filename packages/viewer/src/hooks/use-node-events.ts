@@ -1,4 +1,6 @@
 import {
+  type BeamEvent,
+  type BeamNode,
   type BuildingEvent,
   type BuildingNode,
   type CeilingEvent,
@@ -15,6 +17,10 @@ import {
   type ItemNode,
   type LevelEvent,
   type LevelNode,
+  type LoftEvent,
+  type LoftNode,
+  type ProceduralTowerEvent,
+  type ProceduralTowerNode,
   type RoofEvent,
   type RoofNode,
   type RoofSegmentEvent,
@@ -29,6 +35,8 @@ import {
   type StairNode,
   type StairSegmentEvent,
   type StairSegmentNode,
+  type TerrainEvent,
+  type TerrainNode,
   type WallEvent,
   type WallNode,
   type WindowEvent,
@@ -40,6 +48,9 @@ import type { ThreeEvent } from '@react-three/fiber'
 import useViewer from '../store/use-viewer'
 
 type NodeConfig = {
+  beam: { node: BeamNode; event: BeamEvent }
+  loft: { node: LoftNode; event: LoftEvent }
+  'procedural-tower': { node: ProceduralTowerNode; event: ProceduralTowerEvent }
   site: { node: SiteNode; event: SiteEvent }
   item: { node: ItemNode; event: ItemEvent }
   wall: { node: WallNode; event: WallEvent }
@@ -55,6 +66,7 @@ type NodeConfig = {
   'sketch-line': { node: SketchLineNode; event: SketchLineEvent }
   stair: { node: StairNode; event: StairEvent }
   'stair-segment': { node: StairSegmentNode; event: StairSegmentEvent }
+  terrain: { node: TerrainNode; event: TerrainEvent }
   window: { node: WindowNode; event: WindowEvent }
   door: { node: DoorNode; event: DoorEvent }
 }

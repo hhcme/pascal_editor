@@ -20,6 +20,11 @@ export type SolarPathSample = SolarPosition & {
   minutesOfDay: number
 }
 
+export type ZonedSolarClockTime = {
+  date: string
+  minutesOfDay: number
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value))
 }
@@ -31,6 +36,10 @@ function normalizeDegrees(value: number) {
 
 function clampMinutesOfDay(value: number) {
   return clamp(Math.round(value), 0, 23 * 60 + 59)
+}
+
+function formatDatePart(value: number) {
+  return value.toString().padStart(2, '0')
 }
 
 function parseDateString(date: string) {
@@ -122,6 +131,22 @@ function getTimeZoneOffsetMinutes(timeZone: string, date: Date) {
   )
 
   return Math.round((asUtc - date.getTime()) / MINUTE_MS)
+}
+
+export function getZonedSolarClockTime(
+  timeZone: string,
+  date = new Date(),
+): ZonedSolarClockTime | null {
+  try {
+    const parts = getTimeZoneParts(date, timeZone)
+
+    return {
+      date: `${parts.year}-${formatDatePart(parts.month)}-${formatDatePart(parts.day)}`,
+      minutesOfDay: clampMinutesOfDay(parts.hour * 60 + parts.minute),
+    }
+  } catch {
+    return null
+  }
 }
 
 function getZonedDateUtcMs(date: string, minutesOfDay: number, timeZone: string) {

@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { getSolarPathForLocation, getSolarPositionForLocation } from '../src/lib/solar-position'
+import {
+  getSolarPathForLocation,
+  getSolarPositionForLocation,
+  getZonedSolarClockTime,
+} from '../src/lib/solar-position'
 import { normalizeSiteSolarLocation } from '../src/lib/site-solar'
 
 describe('site solar location', () => {
@@ -55,5 +59,16 @@ describe('solar position', () => {
         (sample, index) => index === 0 || sample.minutesOfDay > (samples[index - 1]?.minutesOfDay ?? -1),
       ),
     ).toBe(true)
+  })
+
+  test('zoned solar clock resolves date and minutes in the requested timezone', () => {
+    const utcDate = new Date(Date.UTC(2026, 4, 9, 16, 30))
+
+    expect(getZonedSolarClockTime('Asia/Shanghai', utcDate)).toEqual({
+      date: '2026-05-10',
+      minutesOfDay: 30,
+    })
+
+    expect(getZonedSolarClockTime('Invalid/Zone', utcDate)).toBeNull()
   })
 })

@@ -2,6 +2,15 @@ export { default as Viewer } from './components/viewer'
 export { SSGI_PARAMS } from './components/viewer/post-processing'
 export { WalkthroughControls } from './components/viewer/walkthrough-controls'
 export { ASSETS_CDN_URL, resolveAssetUrl, resolveCdnUrl } from './lib/asset-url'
+export {
+  buildCharacterCollisionMap,
+  isCharacterMovementBlocked,
+  resolveCharacterWalkPosition,
+  type CharacterCollisionMap,
+  type CharacterCollisionObstacle,
+  type CharacterCollisionSegment,
+  type CharacterDoorOpening,
+} from './lib/character-collision'
 export { SCENE_LAYER, ZONE_LAYER } from './lib/layers'
 export {
   clearMaterialCache,
@@ -19,8 +28,10 @@ export { mergedOutline } from './lib/merged-outline-node'
 export {
   getSolarPathForLocation,
   getSolarPositionForLocation,
+  getZonedSolarClockTime,
   type SolarPathSample,
   type SolarPosition,
+  type ZonedSolarClockTime,
 } from './lib/solar-position'
 export {
   getBrowserTimeZone,
@@ -58,6 +69,7 @@ export {
   type SunStudyMode,
   type SunStudyState,
   type SunTimeOfDay,
+  type SunTimeFlowMode,
 } from './lib/sun-study'
 export {
   clampWeatherIntensity,
@@ -74,6 +86,7 @@ export {
 } from './lib/weather'
 export type {
   CharacterActorState,
+  CharacterKind,
   CharacterMotion,
   CharacterPersonState,
   ExportSceneRequest,

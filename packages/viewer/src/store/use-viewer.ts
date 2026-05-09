@@ -19,6 +19,7 @@ import {
   type SunStudyMode,
   type SunStudyState,
   type SunTimeOfDay,
+  type SunTimeFlowMode,
 } from '../lib/sun-study'
 import {
   clampWeatherIntensity,
@@ -51,20 +52,36 @@ type ProjectViewerPreferences = {
   sunStudy?: SunStudyState
 }
 
-export type CharacterMotion = 'idle' | 'walk' | 'run' | 'crouch' | 'jump'
+export type CharacterMotion =
+  | 'idle'
+  | 'walk'
+  | 'run'
+  | 'jump'
+  | 'sit'
+  | 'crouch'
+  | 'lie'
+  | 'chat'
+  | 'swim'
+  | 'drown'
+  | 'dead'
+export type CharacterKind = 'adult' | 'child' | 'elder' | 'wheelchair' | 'dog'
 
 export type CharacterPersonState = {
   id: string
   name: string
+  kind: CharacterKind
   enabled: boolean
   motion: CharacterMotion
+  roam: boolean
   speed: number
   showBones: boolean
   position: [number, number, number]
+  route?: [number, number, number][]
   color: string
 }
 
 export type CharacterActorState = {
+  canPenetrate: boolean
   enabled: boolean
   motion: CharacterMotion
   speed: number
@@ -73,6 +90,7 @@ export type CharacterActorState = {
   count: number
   people: CharacterPersonState[]
   selectedPersonId: string
+  pendingPlacementKind: CharacterKind | null
 }
 
 export type SectionPlaneAxis = 'x' | 'y' | 'z'
@@ -92,6 +110,7 @@ const DEFAULT_SECTION_PLANE_STATE: SectionPlaneState = {
 }
 
 const DEFAULT_CHARACTER_ACTOR_STATE: CharacterActorState = {
+  canPenetrate: false,
   enabled: false,
   motion: 'idle',
   speed: 1,
@@ -102,8 +121,10 @@ const DEFAULT_CHARACTER_ACTOR_STATE: CharacterActorState = {
     {
       id: 'character-1',
       name: '角色 1',
+      kind: 'adult',
       enabled: true,
       motion: 'idle',
+      roam: false,
       speed: 1,
       showBones: true,
       position: [0, 0, 0],
@@ -111,6 +132,7 @@ const DEFAULT_CHARACTER_ACTOR_STATE: CharacterActorState = {
     },
   ],
   selectedPersonId: 'character-1',
+  pendingPlacementKind: null,
 }
 
 export type ExportSceneRequest =
@@ -173,6 +195,8 @@ type ViewerState = {
   setSunProgress: (progress: number) => void
   setSunStudyDate: (date: string) => void
   setSunMinutesOfDay: (minutesOfDay: number) => void
+  setSunFollowClock: (enabled: boolean) => void
+  setSunTimeFlowMode: (mode: SunTimeFlowMode) => void
 
   weather: WeatherState
   setWeatherMode: (mode: WeatherMode) => void
@@ -225,10 +249,18 @@ function updateProjectPreferences(
   }
 }
 
-function finalizeSunStudyState(sunStudy: Partial<SunStudyState> | SunStudyState | null | undefined) {
+function finalizeSunStudyState(
+  sunStudy: Partial<SunStudyState> | SunStudyState | null | undefined,
+): SunStudyState {
   const normalized = resolveSunStudyState(sunStudy)
 
-  if (normalized.mode !== 'real') return normalized
+  if (normalized.mode !== 'real') {
+    return {
+      ...normalized,
+      followClock: false,
+      timeFlowMode: 'manual',
+    }
+  }
 
   return {
     ...normalized,
@@ -250,13 +282,20 @@ function withProjectSunStudy(
 }
 
 const CHARACTER_COLORS = ['#4c6fff', '#22c55e', '#f59e0b', '#ec4899', '#14b8a6', '#8b5cf6']
+const MAX_CHARACTER_COUNT = 200
 
-function createCharacterPerson(index: number, position: [number, number, number]): CharacterPersonState {
+function createCharacterPerson(
+  index: number,
+  position: [number, number, number],
+  kind: CharacterKind = 'adult',
+): CharacterPersonState {
   return {
     id: `character-${index + 1}`,
     name: `角色 ${index + 1}`,
+    kind,
     enabled: true,
     motion: 'idle',
+    roam: false,
     speed: 1,
     showBones: true,
     position: [position[0] + index * 0.55, position[1], position[2]],
@@ -269,7 +308,10 @@ function normalizeCharacterActorState(
   updates: Partial<CharacterActorState>,
 ): CharacterActorState {
   const selectedPersonId = updates.selectedPersonId ?? current.selectedPersonId
-  const requestedCount = Math.max(1, Math.min(24, Math.round(updates.count ?? current.count ?? 1)))
+  const requestedCount = Math.max(
+    1,
+    Math.min(MAX_CHARACTER_COUNT, Math.round(updates.count ?? current.count ?? 1)),
+  )
   const basePosition = updates.position ?? current.position ?? [0, 0, 0]
   let people = [...(updates.people ?? current.people ?? [])]
 
@@ -293,6 +335,18 @@ function normalizeCharacterActorState(
   if (updates.showBones !== undefined) selectedUpdates.showBones = updates.showBones
   if (updates.position !== undefined) selectedUpdates.position = updates.position
 
+  people = people.map((person) => ({
+    ...person,
+    kind: person.kind ?? 'adult',
+    roam: person.roam ?? false,
+    route: person.route?.filter(
+      (point): point is [number, number, number] =>
+        Array.isArray(point) &&
+        point.length === 3 &&
+        point.every((value) => typeof value === 'number' && Number.isFinite(value)),
+    ),
+  }))
+
   people = people.map((person) =>
     person.id === resolvedSelectedId
       ? {
@@ -307,6 +361,7 @@ function normalizeCharacterActorState(
   return {
     ...current,
     ...updates,
+    canPenetrate: updates.canPenetrate ?? current.canPenetrate ?? false,
     count: requestedCount,
     enabled: updates.enabled ?? current.enabled,
     motion: selectedPerson.motion,
@@ -426,6 +481,8 @@ const useViewer = create<ViewerState>()(
               ...state.sunStudy,
               enabled: true,
               mode,
+              followClock: mode === 'real' ? state.sunStudy.followClock : false,
+              timeFlowMode: mode === 'real' ? state.sunStudy.timeFlowMode : 'manual',
               date:
                 mode === 'real'
                   ? resolveSunStudyDate(state.sunStudy.date) ?? getDefaultSunStudyDate()
@@ -442,6 +499,8 @@ const useViewer = create<ViewerState>()(
               ...state.sunStudy,
               enabled: true,
               mode: 'preset',
+              followClock: false,
+              timeFlowMode: 'manual',
               timeOfDay,
               progress: getSunProgressForTimeOfDay(timeOfDay),
             }),
@@ -455,6 +514,8 @@ const useViewer = create<ViewerState>()(
             ...state.sunStudy,
             enabled: true,
             mode: 'preset',
+            followClock: false,
+            timeFlowMode: 'manual',
             progress: sunProgress,
             timeOfDay: getNearestSunTimeOfDay(sunProgress),
           }))
@@ -467,6 +528,8 @@ const useViewer = create<ViewerState>()(
               ...state.sunStudy,
               enabled: true,
               mode: 'real',
+              followClock: false,
+              timeFlowMode: 'manual',
               date: resolveSunStudyDate(date) ?? getDefaultSunStudyDate(),
             }),
           ),
@@ -479,8 +542,40 @@ const useViewer = create<ViewerState>()(
               ...state.sunStudy,
               enabled: true,
               mode: 'real',
+              followClock: false,
+              timeFlowMode: 'manual',
               date: resolveSunStudyDate(state.sunStudy.date) ?? getDefaultSunStudyDate(),
               minutesOfDay: clampSunMinutesOfDay(minutesOfDay),
+            }),
+          ),
+        ),
+      setSunFollowClock: (enabled) =>
+        set((state) =>
+          withProjectSunStudy(
+            state,
+            finalizeSunStudyState({
+              ...state.sunStudy,
+              enabled: true,
+              mode: 'real',
+              date: resolveSunStudyDate(state.sunStudy.date) ?? getDefaultSunStudyDate(),
+              minutesOfDay: resolveSunMinutesOfDay(state.sunStudy.minutesOfDay),
+              followClock: enabled,
+              timeFlowMode: enabled ? 'clock' : 'manual',
+            }),
+          ),
+        ),
+      setSunTimeFlowMode: (mode) =>
+        set((state) =>
+          withProjectSunStudy(
+            state,
+            finalizeSunStudyState({
+              ...state.sunStudy,
+              enabled: true,
+              mode: 'real',
+              date: resolveSunStudyDate(state.sunStudy.date) ?? getDefaultSunStudyDate(),
+              minutesOfDay: resolveSunMinutesOfDay(state.sunStudy.minutesOfDay),
+              followClock: mode === 'clock',
+              timeFlowMode: mode,
             }),
           ),
         ),
@@ -615,7 +710,10 @@ const useViewer = create<ViewerState>()(
         showCompass: state.showCompass,
         sunStudy: state.sunStudy,
         weather: state.weather,
-        characterActor: state.characterActor,
+        characterActor: {
+          ...state.characterActor,
+          pendingPlacementKind: null,
+        },
       }),
     },
   ),

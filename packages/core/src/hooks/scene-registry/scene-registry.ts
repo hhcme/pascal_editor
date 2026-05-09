@@ -10,11 +10,14 @@ export const sceneRegistry = {
   // Categorized lookups: Type -> Set of IDs
   // Using a Set is faster for adding/deleting than an Array
   byType: {
+    beam: new Set<string>(),
     site: new Set<string>(),
     building: new Set<string>(),
     ceiling: new Set<string>(),
     feature: new Set<string>(),
     level: new Set<string>(),
+    loft: new Set<string>(),
+    'procedural-tower': new Set<string>(),
     wall: new Set<string>(),
     fence: new Set<string>(),
     item: new Set<string>(),
@@ -24,6 +27,7 @@ export const sceneRegistry = {
     'roof-segment': new Set<string>(),
     stair: new Set<string>(),
     'stair-segment': new Set<string>(),
+    terrain: new Set<string>(),
     scan: new Set<string>(),
     guide: new Set<string>(),
     'sketch-circle': new Set<string>(),

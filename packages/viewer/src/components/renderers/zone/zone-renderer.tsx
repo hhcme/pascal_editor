@@ -7,8 +7,10 @@ import { MeshBasicNodeMaterial } from 'three/webgpu'
 import { useNodeEvents } from '../../../hooks/use-node-events'
 import { ZONE_LAYER } from '../../../lib/layers'
 
-const Y_OFFSET = 0.01
+const Y_OFFSET = 0.03
 const WALL_HEIGHT = 2.3
+const ZONE_FLOOR_RENDER_ORDER = 20
+const ZONE_WALL_RENDER_ORDER = 21
 
 /**
  * Creates a gradient material for zone walls using TSL
@@ -29,7 +31,7 @@ const createWallGradientMaterial = (zoneColor: string) => {
     colorNode: baseColor,
     opacityNode: finalOpacity,
     side: DoubleSide,
-    depthWrite: true,
+    depthWrite: false,
     depthTest: false,
     userData: {
       uOpacity: opacity,
@@ -243,13 +245,20 @@ export const ZoneRenderer = ({ node }: { node: ZoneNode }) => {
         material={floorMaterial}
         name="floor"
         position={[0, Y_OFFSET, 0]}
+        renderOrder={ZONE_FLOOR_RENDER_ORDER}
         rotation={[-Math.PI / 2, 0, 0]}
       >
         <shapeGeometry args={[floorShape]} />
       </mesh>
 
       {/* Wall borders with gradient */}
-      <mesh geometry={wallGeometry} layers={ZONE_LAYER} material={wallMaterial} name="walls" />
+      <mesh
+        geometry={wallGeometry}
+        layers={ZONE_LAYER}
+        material={wallMaterial}
+        name="walls"
+        renderOrder={ZONE_WALL_RENDER_ORDER}
+      />
     </group>
   )
 }

@@ -38,6 +38,9 @@ export const MAX_FIRST_PERSON_FLY_CLEARANCE = 80
 export const DEFAULT_FIRST_PERSON_SPEED = 33
 export const MIN_FIRST_PERSON_SPEED = 1
 export const MAX_FIRST_PERSON_SPEED = 999
+export const DEFAULT_CAMERA_WHEEL_SPEED = 1
+export const MIN_CAMERA_WHEEL_SPEED = 0.25
+export const MAX_CAMERA_WHEEL_SPEED = 3
 
 export type ViewMode = '3d' | '2d' | 'split' | 'tri-view'
 export type SplitOrientation = 'horizontal' | 'vertical'
@@ -278,6 +281,8 @@ type EditorState = {
   // Development-only camera debug flag for inspecting underside geometry
   allowUndergroundCamera: boolean
   setAllowUndergroundCamera: (enabled: boolean) => void
+  cameraWheelSpeed: number
+  setCameraWheelSpeed: (speed: number) => void
   activeSidebarPanel: string
   setActiveSidebarPanel: (id: string) => void
   floorplanPaneRatio: number
@@ -384,6 +389,15 @@ export function normalizeFirstPersonSpeed(value: unknown): number {
   }
 
   return Math.min(MAX_FIRST_PERSON_SPEED, Math.max(MIN_FIRST_PERSON_SPEED, value))
+}
+
+export function normalizeCameraWheelSpeed(value: unknown): number {
+  const number = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(number)) {
+    return DEFAULT_CAMERA_WHEEL_SPEED
+  }
+
+  return Math.min(MAX_CAMERA_WHEEL_SPEED, Math.max(MIN_CAMERA_WHEEL_SPEED, number))
 }
 
 export function normalizePersistedEditorUiState(
@@ -740,6 +754,8 @@ const useEditor = create<EditorState>()(
       setInspectorPinned: (pinned) => set({ isInspectorPinned: pinned }),
       allowUndergroundCamera: false,
       setAllowUndergroundCamera: (enabled) => set({ allowUndergroundCamera: enabled }),
+      cameraWheelSpeed: DEFAULT_CAMERA_WHEEL_SPEED,
+      setCameraWheelSpeed: (speed) => set({ cameraWheelSpeed: normalizeCameraWheelSpeed(speed) }),
       isFirstPersonMode: false,
       _viewModeBeforeFirstPerson: null as ViewMode | null,
       firstPersonNavigationMode: 'walk',

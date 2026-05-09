@@ -1,5 +1,6 @@
 export type SunTimeOfDay = 'morning' | 'noon' | 'afternoon' | 'evening'
 export type SunStudyMode = 'preset' | 'real'
+export type SunTimeFlowMode = 'manual' | 'clock' | 'day-cycle'
 
 export type SunStudyState = {
   enabled: boolean
@@ -8,6 +9,8 @@ export type SunStudyState = {
   progress: number
   date: string | null
   minutesOfDay: number
+  followClock: boolean
+  timeFlowMode: SunTimeFlowMode
 }
 
 export type SunPreset = {
@@ -43,6 +46,8 @@ export const DEFAULT_SUN_STUDY_STATE: SunStudyState = {
   progress: 0.78,
   date: null,
   minutesOfDay: DEFAULT_SUN_MINUTES_OF_DAY,
+  followClock: false,
+  timeFlowMode: 'manual',
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -245,6 +250,13 @@ export function resolveSunStudyState(
     ? (state.timeOfDay as SunTimeOfDay)
     : DEFAULT_SUN_STUDY_STATE.timeOfDay
 
+  const timeFlowMode: SunTimeFlowMode =
+    state?.timeFlowMode === 'clock' || state?.timeFlowMode === 'day-cycle'
+      ? state.timeFlowMode
+      : state?.followClock === true
+        ? 'clock'
+        : 'manual'
+
   return {
     enabled: state?.enabled === true,
     mode: state?.mode === 'real' ? 'real' : DEFAULT_SUN_MODE,
@@ -252,6 +264,8 @@ export function resolveSunStudyState(
     progress: resolveSunProgress(timeOfDay, state?.progress),
     date: resolveSunStudyDate(state?.date),
     minutesOfDay: resolveSunMinutesOfDay(state?.minutesOfDay),
+    followClock: timeFlowMode === 'clock',
+    timeFlowMode,
   }
 }
 

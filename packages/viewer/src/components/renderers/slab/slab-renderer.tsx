@@ -1,13 +1,15 @@
 import { getMaterialPresetByRef, type SlabNode, useRegistry } from '@pascal-app/core'
 import { useEffect, useMemo, useRef } from 'react'
-import * as THREE from 'three'
 import type { Mesh } from 'three'
+import * as THREE from 'three'
 import { useNodeEvents } from '../../../hooks/use-node-events'
 import {
   applyMaterialPresetToMaterials,
   createMaterial,
   DEFAULT_SLAB_MATERIAL,
 } from '../../../lib/materials'
+
+const DEPTH_BIAS_ELEVATION_SCALE = 1000
 
 export const SlabRenderer = ({ node }: { node: SlabNode }) => {
   const ref = useRef<Mesh>(null!)
@@ -38,6 +40,14 @@ export const SlabRenderer = ({ node }: { node: SlabNode }) => {
     slabMaterial.alphaMap = null
     slabMaterial.side = THREE.DoubleSide
     slabMaterial.depthWrite = true
+
+    const elevation = Math.max(0, node.elevation ?? 0.05)
+    slabMaterial.polygonOffset = true
+    slabMaterial.polygonOffsetFactor = -1
+    slabMaterial.polygonOffsetUnits = -Math.max(
+      1,
+      Math.round(elevation * DEPTH_BIAS_ELEVATION_SCALE),
+    )
     slabMaterial.needsUpdate = true
 
     return slabMaterial
@@ -47,6 +57,7 @@ export const SlabRenderer = ({ node }: { node: SlabNode }) => {
     node.material?.properties,
     node.material?.texture,
     node.materialPreset,
+    node.elevation,
   ])
 
   useEffect(() => {

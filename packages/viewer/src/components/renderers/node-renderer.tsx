@@ -1,6 +1,7 @@
 'use client'
 
 import { type AnyNode, useScene } from '@pascal-app/core'
+import { BeamRenderer } from './beam/beam-renderer'
 import { BuildingRenderer } from './building/building-renderer'
 import { CeilingRenderer } from './ceiling/ceiling-renderer'
 import { DoorRenderer } from './door/door-renderer'
@@ -9,6 +10,8 @@ import { FenceRenderer } from './fence/fence-renderer'
 import { GuideRenderer } from './guide/guide-renderer'
 import { ItemRenderer } from './item/item-renderer'
 import { LevelRenderer } from './level/level-renderer'
+import { LoftRenderer } from './loft/loft-renderer'
+import { ProceduralTowerRenderer } from './procedural-tower/procedural-tower-renderer'
 import { RoofRenderer } from './roof/roof-renderer'
 import { RoofSegmentRenderer } from './roof-segment/roof-segment-renderer'
 import { ScanRenderer } from './scan/scan-renderer'
@@ -16,6 +19,7 @@ import { SiteRenderer } from './site/site-renderer'
 import { SlabRenderer } from './slab/slab-renderer'
 import { StairRenderer } from './stair/stair-renderer'
 import { StairSegmentRenderer } from './stair-segment/stair-segment-renderer'
+import { TerrainRenderer } from './terrain/terrain-renderer'
 import { WallRenderer } from './wall/wall-renderer'
 import { WindowRenderer } from './window/window-renderer'
 import { ZoneRenderer } from './zone/zone-renderer'
@@ -27,11 +31,14 @@ export const NodeRenderer = ({ nodeId }: { nodeId: AnyNode['id'] }) => {
 
   return (
     <>
+      {node.type === 'beam' && <BeamRenderer node={node} />}
       {node.type === 'site' && <SiteRenderer node={node} />}
       {node.type === 'building' && <BuildingRenderer node={node} />}
       {node.type === 'ceiling' && <CeilingRenderer node={node} />}
       {node.type === 'feature' && <FeatureRenderer node={node} />}
       {node.type === 'level' && <LevelRenderer node={node} />}
+      {node.type === 'loft' && <LoftRenderer node={node} />}
+      {node.type === 'procedural-tower' && <ProceduralTowerRenderer node={node} />}
       {node.type === 'item' && <ItemRenderer node={node} />}
       {node.type === 'slab' && <SlabRenderer node={node} />}
       {node.type === 'wall' && <WallRenderer node={node} />}
@@ -43,6 +50,7 @@ export const NodeRenderer = ({ nodeId }: { nodeId: AnyNode['id'] }) => {
       {node.type === 'roof-segment' && <RoofSegmentRenderer node={node} />}
       {node.type === 'stair' && <StairRenderer node={node} />}
       {node.type === 'stair-segment' && <StairSegmentRenderer node={node} />}
+      {node.type === 'terrain' && <TerrainRenderer node={node} />}
       {node.type === 'scan' && <ScanRenderer node={node} />}
       {node.type === 'guide' && <GuideRenderer node={node} />}
     </>

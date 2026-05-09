@@ -4,6 +4,7 @@ import {
   getScaledDimensions,
   type ItemNode,
   type SlabNode,
+  type TerrainNode,
   type WallNode,
 } from '../../schema'
 import useScene from '../../store/use-scene'
@@ -60,6 +61,8 @@ export function initSpatialGridSync(): () => void {
         // When a slab is added, mark overlapping items/walls dirty
         if (node.type === 'slab') {
           markNodesOverlappingSlab(node as SlabNode, state.nodes, markDirty)
+        } else if (node.type === 'terrain') {
+          markSiteFloorItems(state.nodes, markDirty)
         }
       }
     }
@@ -73,6 +76,8 @@ export function initSpatialGridSync(): () => void {
         // When a slab is removed, mark items/walls that were on it dirty (using current state)
         if (node.type === 'slab') {
           markNodesOverlappingSlab(node as SlabNode, state.nodes, markDirty)
+        } else if (node.type === 'terrain') {
+          markSiteFloorItems(state.nodes, markDirty)
         }
       }
     }
@@ -112,11 +117,36 @@ export function initSpatialGridSync(): () => void {
           markNodesOverlappingSlab(prev as SlabNode, state.nodes, markDirty)
           markNodesOverlappingSlab(node as SlabNode, state.nodes, markDirty)
         }
+      } else if (node.type === 'terrain' && prev.type === 'terrain') {
+        if (
+          node.vertices !== prev.vertices ||
+          node.triangles !== prev.triangles ||
+          node.visible !== prev.visible
+        ) {
+          spatialGridManager.handleNodeUpdated(
+            node as TerrainNode,
+            resolveLevelId(node, state.nodes),
+          )
+          markSiteFloorItems(state.nodes, markDirty)
+        }
       }
     }
   })
 
   return unsubscribe
+}
+
+function markSiteFloorItems(nodes: Record<string, AnyNode>, markDirty: (id: AnyNodeId) => void) {
+  for (const node of Object.values(nodes)) {
+    if (node.type !== 'item') continue
+    const item = node as ItemNode
+    if (item.asset.attachTo) continue
+
+    const parent = item.parentId ? nodes[item.parentId as AnyNodeId] : undefined
+    if (parent?.type === 'site') {
+      markDirty(item.id)
+    }
+  }
 }
 
 function arraysEqual(a: number[], b: number[]): boolean {

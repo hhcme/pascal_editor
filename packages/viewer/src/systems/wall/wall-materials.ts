@@ -121,13 +121,16 @@ function createHighlightedWallMaterial(material: Material, kind: WallHighlightKi
 }
 
 function createInvisibleWallMaterial(color: string): MeshStandardNodeMaterial {
-  return new MeshStandardNodeMaterial({
+  const material = new MeshStandardNodeMaterial({
     transparent: true,
     opacityNode: mix(float(0.0), float(0.24), dotPattern()),
     color,
+    depthTest: true,
     depthWrite: false,
     emissive: color,
   })
+  material.forceSinglePass = true
+  return material
 }
 
 function mapWallMaterialArray(

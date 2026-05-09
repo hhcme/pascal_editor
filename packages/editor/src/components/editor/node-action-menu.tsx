@@ -1,7 +1,8 @@
 'use client'
 
-import { Eye, EyeOff, Layers, Redo2, Undo2 } from 'lucide-react'
+import { ChevronRight, Eye, EyeOff, Layers, Redo2, Undo2 } from 'lucide-react'
 import type { MouseEventHandler, PointerEventHandler, ReactNode } from 'react'
+import { useState } from 'react'
 import { cn } from '../../lib/utils'
 
 export type NodeActionMenuExtraAction = {
@@ -10,6 +11,7 @@ export type NodeActionMenuExtraAction = {
   icon: ReactNode
   onClick?: MouseEventHandler<HTMLButtonElement>
   active?: boolean
+  children?: NodeActionMenuExtraAction[]
   disabled?: boolean
   disabledReason?: string
 }
@@ -78,6 +80,36 @@ function ActionMenuButton({
       <span className="flex h-4 w-4 shrink-0 items-center justify-center">{icon}</span>
       <span className="min-w-0 flex-1 truncate font-medium text-sm">{children ?? label}</span>
     </button>
+  )
+}
+
+function ExtraActionButton({ action }: { action: NodeActionMenuExtraAction }) {
+  const [open, setOpen] = useState(false)
+  const hasChildren = Boolean(action.children?.length)
+
+  return (
+    <div className="relative" onPointerEnter={() => setOpen(true)} onPointerLeave={() => setOpen(false)}>
+      <ActionMenuButton
+        active={action.active}
+        disabled={action.disabled}
+        icon={action.icon}
+        label={action.label}
+        onClick={hasChildren ? undefined : action.onClick}
+        title={action.disabled ? (action.disabledReason ?? action.label) : action.label}
+      >
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="min-w-0 flex-1 truncate">{action.label}</span>
+          {hasChildren ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : null}
+        </span>
+      </ActionMenuButton>
+      {hasChildren && open ? (
+        <div className="editor-floorplan-feedback absolute top-0 left-full z-10 ml-1 flex min-w-36 max-w-48 flex-col gap-0.5 rounded-md p-1">
+          {action.children?.map((child) => (
+            <ExtraActionButton action={child} key={child.id} />
+          ))}
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -181,19 +213,7 @@ export function NodeActionMenu({
           Curve
         </ActionMenuButton>
       )}
-      {extraActions?.map((action) => (
-        <ActionMenuButton
-          active={action.active}
-          disabled={action.disabled}
-          icon={action.icon}
-          key={action.id}
-          label={action.label}
-          onClick={action.onClick}
-          title={action.disabled ? (action.disabledReason ?? action.label) : action.label}
-        >
-          {action.label}
-        </ActionMenuButton>
-      ))}
+      {extraActions?.map((action) => <ExtraActionButton action={action} key={action.id} />)}
       {onDuplicate && (
         <ActionMenuButton
           icon={<MenuIcon alt="" src="/icons/action-duplicate.svg" />}

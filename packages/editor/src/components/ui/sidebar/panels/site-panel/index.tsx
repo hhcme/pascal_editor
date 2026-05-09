@@ -1,12 +1,16 @@
 import {
   type AnyNode,
   type AnyNodeId,
+  type AssetInput,
   type BuildingNode,
   emitter,
+  generateId,
   type GuideNode,
+  ItemNode,
   LevelNode,
   type ScanNode,
   type SiteNode,
+  type TerrainNode,
   useScene,
   type ZoneNode,
 } from '@pascal-app/core'
@@ -33,12 +37,14 @@ import {
   Loader2,
   MapPinned,
   MoreHorizontal,
+  Mountain,
   Pencil,
   Pentagon,
   Plus,
   Shapes,
   Sofa,
   SunMedium,
+  Trees,
   Trash2,
   X,
 } from 'lucide-react'
@@ -54,6 +60,11 @@ import {
   PopoverTrigger,
 } from './../../../../../components/ui/primitives/popover'
 import { deleteLevelWithFallbackSelection } from './../../../../../lib/level-selection'
+import {
+  createGeneratedTerrainNode,
+  createTerrainMesh,
+  type TerrainPreset,
+} from './../../../../../lib/terrain-generation'
 import { cn } from './../../../../../lib/utils'
 import {
   isZoneLabelHidden,
@@ -76,6 +87,7 @@ import {
 } from '../../../../../lib/site-measurement-rules'
 import useEditor from './../../../../../store/use-editor'
 import { useUploadStore } from '../../../../../store/use-upload'
+import { CATALOG_ITEMS } from '../../../item-catalog/catalog-items'
 import { InlineRenameInput } from './inline-rename-input'
 import { focusTreeNode, TreeNode } from './tree-node'
 import { TreeNodeDragProvider } from './tree-node-drag'
@@ -107,6 +119,39 @@ function calculatePolygonArea(polygon: Array<[number, number]>): number {
     area -= nextX * currentY
   }
   return Math.abs(area) / 2
+}
+
+function getPolygonBounds(points: Array<[number, number]>) {
+  const fallback = {
+    minX: -15,
+    maxX: 15,
+    minZ: -15,
+    maxZ: 15,
+    width: 30,
+    depth: 30,
+  }
+
+  if (points.length === 0) return fallback
+
+  const xs = points.map(([x]) => x)
+  const zs = points.map(([, z]) => z)
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minZ = Math.min(...zs)
+  const maxZ = Math.max(...zs)
+
+  return {
+    minX,
+    maxX,
+    minZ,
+    maxZ,
+    width: Math.max(maxX - minX, 1),
+    depth: Math.max(maxZ - minZ, 1),
+  }
+}
+
+function getCatalogAsset(assetId: string): AssetInput | null {
+  return CATALOG_ITEMS.find((item) => item.id === assetId) ?? null
 }
 
 function useSiteNode(): SiteNode | null {
@@ -284,6 +329,339 @@ const PropertyLineSection = memo(function PropertyLineSection() {
           </button>
         </div>
       )}
+    </div>
+  )
+})
+
+const SiteTerrainSection = memo(function SiteTerrainSection() {
+  const siteNode = useSiteNode()
+  const nodes = useScene((state) => state.nodes)
+  const createNode = useScene((state) => state.createNode)
+  const updateNode = useScene((state) => state.updateNode)
+  const setSelection = useViewer((state) => state.setSelection)
+
+  if (!siteNode) return null
+
+  const terrains = siteNode.children
+    .map((child) => {
+      const id = typeof child === 'string' ? child : child.id
+      return nodes[id as AnyNodeId] as TerrainNode | undefined
+    })
+    .filter((node): node is TerrainNode => node?.type === 'terrain')
+
+  const handleGenerate = (preset: TerrainPreset) => {
+    const existingTerrain = terrains[0]
+
+    if (existingTerrain) {
+      updateNode(existingTerrain.id, {
+        name:
+          preset === 'flat'
+            ? 'Flat Site Terrain'
+            : preset === 'gentle-slope'
+              ? 'Gentle Slope Terrain'
+              : 'Soft Hill Terrain',
+        ...createTerrainMesh(existingTerrain.boundary ?? siteNode.polygon?.points ?? [], preset),
+      })
+      setSelection({ selectedIds: [existingTerrain.id] })
+      return
+    }
+
+    const terrain = createGeneratedTerrainNode(siteNode, preset)
+    createNode(terrain, siteNode.id)
+    setSelection({ selectedIds: [terrain.id] })
+  }
+
+  return (
+    <div className="border-border/50 border-b bg-sidebar">
+      <div className="flex h-8 items-center justify-between border-border/50 border-b bg-muted/40 px-3">
+        <div className="flex items-center gap-1.5 font-medium text-muted-foreground text-xs">
+          <Mountain className="h-3.5 w-3.5" />
+          <span>Terrain</span>
+        </div>
+        {terrains.length > 0 ? (
+          <button
+            className="flex h-6 cursor-pointer items-center gap-1 rounded-md px-1.5 text-muted-foreground text-xs transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
+            onClick={() => setSelection({ selectedIds: [terrains[0]!.id] })}
+            type="button"
+          >
+            Select
+          </button>
+        ) : null}
+      </div>
+      <div className="grid grid-cols-3 gap-1.5 px-3 py-2">
+        <button
+          className="flex h-7 cursor-pointer items-center justify-center rounded-md border border-border/60 bg-card px-2 font-medium text-foreground text-xs transition-colors hover:bg-accent/55"
+          onClick={() => handleGenerate('gentle-slope')}
+          type="button"
+        >
+          Slope
+        </button>
+        <button
+          className="flex h-7 cursor-pointer items-center justify-center rounded-md border border-border/60 bg-card px-2 font-medium text-foreground text-xs transition-colors hover:bg-accent/55"
+          onClick={() => handleGenerate('soft-hill')}
+          type="button"
+        >
+          Hill
+        </button>
+        <button
+          className="flex h-7 cursor-pointer items-center justify-center rounded-md border border-border/60 bg-card px-2 font-medium text-foreground text-xs transition-colors hover:bg-accent/55"
+          onClick={() => handleGenerate('flat')}
+          type="button"
+        >
+          Flat
+        </button>
+      </div>
+    </div>
+  )
+})
+
+type LandscapePreset = 'garden' | 'mountain'
+
+type LandscapePlacement = {
+  assetId: string
+  name: string
+  position: [number, number, number]
+  rotation?: [number, number, number]
+  scale?: [number, number, number]
+}
+
+const GENERATED_LANDSCAPE_METADATA_KEY = 'siteLandscapeGenerated'
+
+function isGeneratedLandscapeNode(node: AnyNode | undefined): node is AnyNode {
+  if (node?.type !== 'item') return false
+  const metadata = node.metadata
+  return (
+    typeof metadata === 'object' &&
+    metadata !== null &&
+    !Array.isArray(metadata) &&
+    (metadata as Record<string, unknown>)[GENERATED_LANDSCAPE_METADATA_KEY] === true
+  )
+}
+
+function createLandscapePlacements(
+  siteNode: SiteNode,
+  preset: LandscapePreset,
+): LandscapePlacement[] {
+  const bounds = getPolygonBounds(siteNode.polygon?.points ?? [])
+  const insetX = Math.min(Math.max(bounds.width * 0.1, 1.4), 3)
+  const insetZ = Math.min(Math.max(bounds.depth * 0.1, 1.4), 3)
+  const centerX = (bounds.minX + bounds.maxX) / 2
+  const centerZ = (bounds.minZ + bounds.maxZ) / 2
+  const leftX = bounds.minX + insetX
+  const rightX = bounds.maxX - insetX
+  const frontZ = bounds.minZ + insetZ
+  const backZ = bounds.maxZ - insetZ
+
+  if (preset === 'mountain') {
+    return [
+      {
+        assetId: 'fir-tree',
+        name: 'Back Hill Fir',
+        position: [leftX, 0, backZ],
+        scale: [1.2, 1.2, 1.2],
+      },
+      {
+        assetId: 'cypress-tree',
+        name: 'Back Hill Cypress',
+        position: [centerX - bounds.width * 0.18, 0, backZ - 0.7],
+        scale: [1.15, 1.15, 1.15],
+      },
+      {
+        assetId: 'shade-tree',
+        name: 'Back Hill Shade Tree',
+        position: [centerX + bounds.width * 0.14, 0, backZ - 1],
+        scale: [1.05, 1.05, 1.05],
+      },
+      {
+        assetId: 'fir-tree',
+        name: 'Back Hill Fir',
+        position: [rightX, 0, backZ - 0.4],
+        scale: [1.35, 1.35, 1.35],
+      },
+      {
+        assetId: 'round-shrub',
+        name: 'Hill Shrub',
+        position: [leftX + bounds.width * 0.18, 0, centerZ + bounds.depth * 0.18],
+      },
+      {
+        assetId: 'grass-clump',
+        name: 'Hill Grass',
+        position: [rightX - bounds.width * 0.15, 0, centerZ + bounds.depth * 0.2],
+      },
+    ]
+  }
+
+  return [
+    {
+      assetId: 'shade-tree',
+      name: 'Garden Shade Tree',
+      position: [leftX, 0, backZ],
+    },
+    {
+      assetId: 'small-ornamental-tree',
+      name: 'Ornamental Tree',
+      position: [rightX, 0, backZ - bounds.depth * 0.12],
+    },
+    {
+      assetId: 'flowering-bush',
+      name: 'Flowering Bush',
+      position: [leftX + bounds.width * 0.18, 0, frontZ],
+    },
+    {
+      assetId: 'round-shrub',
+      name: 'Round Shrub',
+      position: [rightX - bounds.width * 0.14, 0, frontZ + bounds.depth * 0.08],
+    },
+    {
+      assetId: 'rectangular-flower-bed',
+      name: 'Flower Bed',
+      position: [centerX, 0, frontZ],
+    },
+    {
+      assetId: 'hedge-row',
+      name: 'Hedge Row',
+      position: [leftX, 0, centerZ],
+      rotation: [0, Math.PI / 2, 0],
+    },
+    {
+      assetId: 'hedge-row',
+      name: 'Hedge Row',
+      position: [rightX, 0, centerZ],
+      rotation: [0, Math.PI / 2, 0],
+    },
+    {
+      assetId: 'entry-planter-pair',
+      name: 'Entry Planters',
+      position: [centerX, 0, frontZ + bounds.depth * 0.16],
+    },
+  ]
+}
+
+const SiteLandscapeSection = memo(function SiteLandscapeSection() {
+  const siteNode = useSiteNode()
+  const nodes = useScene((state) => state.nodes)
+  const createNode = useScene((state) => state.createNode)
+  const updateNode = useScene((state) => state.updateNode)
+  const deleteNodes = useScene((state) => state.deleteNodes)
+  const setSelection = useViewer((state) => state.setSelection)
+
+  if (!siteNode) return null
+
+  const siteChildren = siteNode.children
+    .map((child) => {
+      const id = typeof child === 'string' ? child : child.id
+      return nodes[id as AnyNodeId]
+    })
+    .filter(Boolean)
+
+  const generatedLandscapeIds = siteChildren
+    .filter(isGeneratedLandscapeNode)
+    .map((node) => node.id as AnyNodeId)
+
+  const terrains = siteChildren.filter((node): node is TerrainNode => node?.type === 'terrain')
+
+  const clearGeneratedLandscape = () => {
+    if (generatedLandscapeIds.length > 0) {
+      deleteNodes(generatedLandscapeIds)
+    }
+  }
+
+  const ensureMountainTerrain = () => {
+    const existingTerrain = terrains[0]
+    const mesh = createTerrainMesh(
+      existingTerrain?.boundary ?? siteNode.polygon?.points ?? [],
+      'soft-hill',
+    )
+
+    if (existingTerrain) {
+      updateNode(existingTerrain.id, {
+        name: 'Mountain View Terrain',
+        ...mesh,
+      })
+      return existingTerrain.id
+    }
+
+    const terrain = createGeneratedTerrainNode(siteNode, 'soft-hill')
+    createNode(
+      {
+        ...terrain,
+        name: 'Mountain View Terrain',
+      },
+      siteNode.id,
+    )
+    return terrain.id
+  }
+
+  const handleGenerate = (preset: LandscapePreset) => {
+    clearGeneratedLandscape()
+
+    const selectedIds: AnyNodeId[] = []
+    if (preset === 'mountain') {
+      selectedIds.push(ensureMountainTerrain())
+    }
+
+    for (const placement of createLandscapePlacements(siteNode, preset)) {
+      const asset = getCatalogAsset(placement.assetId)
+      if (!asset) continue
+
+      const node = ItemNode.parse({
+        id: generateId('item'),
+        type: 'item',
+        name: placement.name,
+        position: placement.position,
+        rotation: placement.rotation ?? [0, 0, 0],
+        scale: placement.scale ?? [1, 1, 1],
+        children: [],
+        parentId: siteNode.id,
+        asset,
+        metadata: {
+          [GENERATED_LANDSCAPE_METADATA_KEY]: true,
+          siteLandscapePreset: preset,
+        },
+      })
+
+      createNode(node, siteNode.id)
+      selectedIds.push(node.id)
+    }
+
+    if (selectedIds.length > 0) {
+      setSelection({ selectedIds })
+    }
+  }
+
+  return (
+    <div className="border-border/50 border-b bg-sidebar">
+      <div className="flex h-8 items-center justify-between border-border/50 border-b bg-muted/40 px-3">
+        <div className="flex items-center gap-1.5 font-medium text-muted-foreground text-xs">
+          <Trees className="h-3.5 w-3.5" />
+          <span>Landscape</span>
+        </div>
+        {generatedLandscapeIds.length > 0 ? (
+          <button
+            className="flex h-6 cursor-pointer items-center gap-1 rounded-md px-1.5 text-muted-foreground text-xs transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
+            onClick={clearGeneratedLandscape}
+            type="button"
+          >
+            Clear
+          </button>
+        ) : null}
+      </div>
+      <div className="grid grid-cols-2 gap-1.5 px-3 py-2">
+        <button
+          className="flex h-7 cursor-pointer items-center justify-center rounded-md border border-border/60 bg-card px-2 font-medium text-foreground text-xs transition-colors hover:bg-accent/55"
+          onClick={() => handleGenerate('garden')}
+          type="button"
+        >
+          庭院
+        </button>
+        <button
+          className="flex h-7 cursor-pointer items-center justify-center rounded-md border border-border/60 bg-card px-2 font-medium text-foreground text-xs transition-colors hover:bg-accent/55"
+          onClick={() => handleGenerate('mountain')}
+          type="button"
+        >
+          山景
+        </button>
+      </div>
     </div>
   )
 })
@@ -2118,6 +2496,8 @@ export function SitePanel({ projectId, onUploadAsset, onDeleteAsset }: SitePanel
                   )}
                 </AnimatePresence>
                 <PropertyLineSection />
+                <SiteTerrainSection />
+                <SiteLandscapeSection />
               </motion.div>
             )}
           </AnimatePresence>

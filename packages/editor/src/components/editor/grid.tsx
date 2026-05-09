@@ -10,6 +10,13 @@ import { MeshBasicNodeMaterial } from 'three/webgpu'
 import { useGridEvents } from '../../hooks/use-grid-events'
 import { EDITOR_LAYER } from '../../lib/constants'
 
+const GRID_SURFACE_OFFSET = 0.025
+const GRID_RENDER_ORDER = 5
+const FINE_GRID_CAMERA_FADE_START = 24
+const FINE_GRID_CAMERA_FADE_END = 48
+const SECTION_GRID_CAMERA_FADE_START = 56
+const SECTION_GRID_CAMERA_FADE_END = 88
+
 export const Grid = ({
   cellSize = 0.5,
   cellThickness = 0.5,
@@ -37,6 +44,7 @@ export const Grid = ({
   const effectiveSectionColor = theme === 'dark' ? '#aeb7c5' : sectionColor
 
   const cursorPositionRef = useRef(new Vector2(0, 0))
+  const cameraGridPositionRef = useRef(new Vector2(0, 0))
 
   const material = useMemo(() => {
     // Use xy since plane geometry is in XY space (before rotation)
@@ -44,6 +52,7 @@ export const Grid = ({
 
     // Cursor position uniform
     const cursorPos = uniform(cursorPositionRef.current)
+    const cameraGridPos = uniform(cameraGridPositionRef.current)
 
     // Grid line function using fwidth for anti-aliasing
     // Returns 1 on grid lines, 0 elsewhere
@@ -76,6 +85,24 @@ export const Grid = ({
     const dist = pos.length()
     const fade = float(1).sub(dist.div(fadeDistance).min(1)).pow(fadeStrength)
 
+    const cameraDist = pos.sub(cameraGridPos).length()
+    const fineGridCameraFade = float(1)
+      .sub(
+        cameraDist
+          .sub(FINE_GRID_CAMERA_FADE_START)
+          .div(FINE_GRID_CAMERA_FADE_END - FINE_GRID_CAMERA_FADE_START)
+          .clamp(0, 1),
+      )
+      .smoothstep(0, 1)
+    const sectionGridCameraFade = float(1)
+      .sub(
+        cameraDist
+          .sub(SECTION_GRID_CAMERA_FADE_START)
+          .div(SECTION_GRID_CAMERA_FADE_END - SECTION_GRID_CAMERA_FADE_START)
+          .clamp(0, 1),
+      )
+      .smoothstep(0, 1)
+
     // Cursor reveal effect - distance from cursor
     const cursorDist = pos.sub(cursorPos).length()
     const cursorFade = float(1).sub(cursorDist.div(revealRadius).clamp(0, 1)).smoothstep(0, 1)
@@ -87,12 +114,10 @@ export const Grid = ({
       float(sectionThickness).mul(g2).min(1),
     )
 
-    // Baseline alpha: small amount of opacity everywhere the grid exists
-    const baseAlpha = float(0.4) // Subtle global visibility
-
-    // Combined alpha with cursor fade and baseline minimum
-    const alpha = g1.add(g2).mul(fade).mul(cursorFade.max(baseAlpha))
-    const finalAlpha = mix(alpha.mul(0.75), alpha, g2)
+    // Fade fine cells out before section lines so distant perspective does not shimmer.
+    const cellAlpha = g1.mul(fineGridCameraFade).mul(0.75)
+    const sectionAlpha = g2.mul(sectionGridCameraFade)
+    const finalAlpha = cellAlpha.add(sectionAlpha).mul(fade).mul(cursorFade.max(0.08)).min(1)
 
     return new MeshBasicNodeMaterial({
       transparent: true,
@@ -130,7 +155,9 @@ export const Grid = ({
     }
   }, [])
 
-  useFrame((_, delta) => {
+  useFrame(({ camera }, delta) => {
+    cameraGridPositionRef.current.set(camera.position.x, -camera.position.z)
+
     const currentLevelId = useViewer.getState().selection.levelId
     let targetY = 0
     if (currentLevelId) {
@@ -139,7 +166,11 @@ export const Grid = ({
         targetY = levelMesh.position.y
       }
     }
-    const newY = MathUtils.lerp(gridRef.current.position.y, targetY, 12 * delta)
+    const newY = MathUtils.lerp(
+      gridRef.current.position.y,
+      targetY + GRID_SURFACE_OFFSET,
+      12 * delta,
+    )
     gridRef.current.position.y = newY
     setGridY(newY)
   })
@@ -151,6 +182,7 @@ export const Grid = ({
       layers={EDITOR_LAYER}
       material={material}
       ref={gridRef}
+      renderOrder={GRID_RENDER_ORDER}
       rotation-x={-Math.PI / 2}
       visible={showGrid}
     >

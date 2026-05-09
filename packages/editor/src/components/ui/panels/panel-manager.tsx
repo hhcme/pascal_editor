@@ -8,6 +8,7 @@ import { DoorPanel } from './door-panel'
 import { FeaturePanel } from './feature-panel'
 import { FencePanel } from './fence-panel'
 import { ItemPanel } from './item-panel'
+import { ProceduralTowerPanel } from './procedural-tower-panel'
 import { ReferencePanel } from './reference-panel'
 import { RoofPanel } from './roof-panel'
 import { RoofSegmentPanel } from './roof-segment-panel'
@@ -17,16 +18,19 @@ import { SketchLinePanel } from './sketch-line-panel'
 import { SlabPanel } from './slab-panel'
 import { StairPanel } from './stair-panel'
 import { StairSegmentPanel } from './stair-segment-panel'
+import { TerrainPanel } from './terrain-panel'
 import { WallPanel } from './wall-panel'
 import { WindowPanel } from './window-panel'
 
 type InspectorPanelType =
   | 'reference'
   | 'item'
+  | 'procedural-tower'
   | 'roof'
   | 'roof-segment'
   | 'stair'
   | 'stair-segment'
+  | 'terrain'
   | 'slab'
   | 'sketch-circle'
   | 'sketch-dimension'
@@ -41,10 +45,12 @@ type InspectorPanelType =
 function isInspectorPanelType(nodeType: string | null): nodeType is InspectorPanelType {
   switch (nodeType) {
     case 'item':
+    case 'procedural-tower':
     case 'roof':
     case 'roof-segment':
     case 'stair':
     case 'stair-segment':
+    case 'terrain':
     case 'slab':
     case 'sketch-circle':
     case 'sketch-dimension':
@@ -93,6 +99,8 @@ export function PanelManager() {
         return <ReferencePanel />
       case 'item':
         return <ItemPanel />
+      case 'procedural-tower':
+        return <ProceduralTowerPanel />
       case 'roof':
         return <RoofPanel />
       case 'roof-segment':
@@ -101,6 +109,8 @@ export function PanelManager() {
         return <StairPanel />
       case 'stair-segment':
         return <StairSegmentPanel />
+      case 'terrain':
+        return <TerrainPanel />
       case 'slab':
         return <SlabPanel />
       case 'sketch-circle':

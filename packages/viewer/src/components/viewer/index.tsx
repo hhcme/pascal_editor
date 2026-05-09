@@ -13,7 +13,7 @@ import {
 } from '@pascal-app/core'
 import { Bvh } from '@react-three/drei'
 import { Canvas, extend, type ThreeToJSXElements, useFrame, useThree } from '@react-three/fiber'
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo } from 'react'
 import * as THREE from 'three/webgpu'
 import useViewer from '../../store/use-viewer'
 import { CharacterActorSystem } from '../../systems/character/character-actor-system'
@@ -30,37 +30,8 @@ import { Lights } from './lights'
 import { PerfMonitor } from './perf-monitor'
 import PostProcessing from './post-processing'
 import { SelectionManager } from './selection-manager'
+import { SkyEnvironment } from './sky-environment'
 import { ViewerCamera } from './viewer-camera'
-
-const SOFT_DARK_SCENE_BG = '#eef2f7'
-const SOFT_LIGHT_SCENE_BG = '#f8fafc'
-
-function AnimatedBackground({ isDark }: { isDark: boolean }) {
-  const targetColor = useMemo(() => new THREE.Color(), [])
-  const initialized = useRef(false)
-
-  useFrame(({ scene }, delta) => {
-    const dt = Math.min(delta, 0.1) * 4
-    const targetHex = isDark ? SOFT_DARK_SCENE_BG : SOFT_LIGHT_SCENE_BG
-
-    if (!(scene.background && scene.background instanceof THREE.Color)) {
-      scene.background = new THREE.Color(targetHex)
-      initialized.current = true
-      return
-    }
-
-    if (!initialized.current) {
-      scene.background.set(targetHex)
-      initialized.current = true
-      return
-    }
-
-    targetColor.set(targetHex)
-    scene.background.lerp(targetColor, dt)
-  })
-
-  return null
-}
 
 function SectionPlaneSystem() {
   const sectionPlane = useViewer((state) => state.sectionPlane)
@@ -177,7 +148,7 @@ const Viewer: React.FC<ViewerProps> = ({
   return (
     <Canvas
       camera={{ position: [50, 50, 50], fov: 50 }}
-      className={`transition-colors duration-700 ${theme === 'dark' ? 'bg-[#eef2f7]' : 'bg-[#f8fafc]'}`}
+      className={`transition-colors duration-700 ${theme === 'dark' ? 'bg-[#050815]' : 'bg-[#78bff2]'}`}
       dpr={[1, 1.5]}
       frameloop="never"
       gl={async (props) => {
@@ -206,7 +177,7 @@ const Viewer: React.FC<ViewerProps> = ({
       }}
     >
       <FrameLimiter fps={50} />
-      <AnimatedBackground isDark={theme === 'dark'} />
+      <SkyEnvironment />
       <SectionPlaneSystem />
       <ViewerCamera />
 

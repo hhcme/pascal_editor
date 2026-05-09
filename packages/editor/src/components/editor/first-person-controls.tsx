@@ -4,7 +4,6 @@ import {
   type AnyNodeId,
   type BuildingNode,
   type CeilingNode,
-  type DoorNode,
   type LevelNode,
   type RoofNode,
   type RoofSegmentNode,
@@ -17,7 +16,13 @@ import {
   type WallNode,
   type ZoneNode,
 } from '@pascal-app/core'
-import { useViewer } from '@pascal-app/viewer'
+import {
+  buildCharacterCollisionMap,
+  type CharacterCollisionMap,
+  type CharacterCollisionSegment,
+  resolveCharacterWalkPosition,
+  useViewer,
+} from '@pascal-app/viewer'
 import { useFrame, useThree } from '@react-three/fiber'
 import {
   type PointerEvent as ReactPointerEvent,
@@ -29,7 +34,16 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import { Euler, Plane, Raycaster, Vector2, Vector3 } from 'three'
+import {
+  type Camera,
+  Euler,
+  type PerspectiveCamera,
+  Plane,
+  Raycaster,
+  type Scene,
+  Vector2,
+  Vector3,
+} from 'three'
 import { cn } from '../../lib/utils'
 import useEditor, {
   type FirstPersonEyeHeightPreset,
@@ -50,8 +64,16 @@ import {
 import { type PathPoint, planWalkPath } from './first-person-pathfinding'
 import {
   dispatchFirstPersonShooterCommand,
+  dispatchFirstPersonShooterGrenade,
+  dispatchFirstPersonShooterReload,
   dispatchFirstPersonShooterShot,
   getFirstPersonShooterStateSnapshot,
+  getShooterStanceEyeHeightMultiplier,
+  getShooterStanceSpeedMultiplier,
+  setFirstPersonShooterScoped,
+  setFirstPersonShooterStance,
+  setFirstPersonShooterWeapon,
+  shouldShooterBlockFirstPersonNavigation,
   subscribeFirstPersonShooterState,
 } from './first-person-shooter-utils'
 
@@ -66,12 +88,12 @@ const SLOW_MULTIPLIER = 0.35
 const VERTICAL_SPEED = 6
 const FIRST_PERSON_SPEED_WHEEL_STEP = 5
 const MOUSE_SENSITIVITY = 0.002
+const SNIPER_SCOPE_FOV = 24
 const DEFAULT_LEVEL_HEIGHT = 2.5
 const MIN_FLY_HEIGHT = 0.25
 const FLY_ENTRY_PITCH = -0.18
 const FLY_CLEARANCE_STEP = 0.5
 const WALL_COLLISION_RADIUS = 0.32
-const DOOR_OPENING_PADDING = 0.16
 const MIN_WALL_LENGTH = 0.001
 const STAIR_SURFACE_PADDING = 0.18
 const TWO_PI = Math.PI * 2
@@ -88,6 +110,8 @@ const MINIMAP_GRID_BASE_STEP = 0.5
 const MINIMAP_GRID_MIN_SCREEN_SPACING = 16
 const BOOKMARK_STORAGE_PREFIX = 'pascal:first-person-bookmarks'
 const BOOKMARK_LIMIT = 16
+const SAVED_ROUTE_STORAGE_PREFIX = 'pascal:first-person-routes'
+const SAVED_ROUTE_LIMIT = 12
 const MANUAL_ROUTE_LIMIT = 128
 const TOUR_SPEED = 6.75
 const TOUR_WAYPOINT_DWELL = 1.25
@@ -106,6 +130,8 @@ const ROUTE_PLANNING_EVENT = 'editor:first-person-route-planning'
 const ROUTE_POINT_EVENT = 'editor:first-person-route-point'
 const FIRST_PERSON_END_EVENT = 'editor:first-person-ended'
 const FIRST_PERSON_CURSOR_STYLE_ID = 'editor-first-person-cursor-style'
+const FIRST_PERSON_SHAKE_STYLE_ID = 'editor-first-person-shake-style'
+const FIRST_PERSON_SHAKE_CLASS = 'editor-first-person-screen-shake'
 
 function hideFirstPersonSystemCursor() {
   if (typeof document === 'undefined') return
@@ -124,6 +150,41 @@ function hideFirstPersonSystemCursor() {
 function showFirstPersonSystemCursor() {
   if (typeof document === 'undefined') return
   document.getElementById(FIRST_PERSON_CURSOR_STYLE_ID)?.remove()
+}
+
+function ensureFirstPersonShakeStyle() {
+  if (typeof document === 'undefined') return
+  if (document.getElementById(FIRST_PERSON_SHAKE_STYLE_ID)) return
+
+  const shakeStyle = document.createElement('style')
+  shakeStyle.id = FIRST_PERSON_SHAKE_STYLE_ID
+  shakeStyle.textContent = `
+    @keyframes editor-first-person-screen-shake {
+      0% { transform: translate3d(0, 0, 0); }
+      18% { transform: translate3d(-4px, 2px, 0); }
+      34% { transform: translate3d(5px, -3px, 0); }
+      50% { transform: translate3d(-3px, -2px, 0); }
+      66% { transform: translate3d(3px, 2px, 0); }
+      82% { transform: translate3d(-2px, 1px, 0); }
+      100% { transform: translate3d(0, 0, 0); }
+    }
+    .${FIRST_PERSON_SHAKE_CLASS} canvas {
+      animation: editor-first-person-screen-shake 220ms ease-out both;
+      transform-origin: 50% 50%;
+    }
+  `
+  document.head.appendChild(shakeStyle)
+}
+
+function triggerFirstPersonScreenShake() {
+  if (typeof document === 'undefined') return
+  ensureFirstPersonShakeStyle()
+  document.body.classList.remove(FIRST_PERSON_SHAKE_CLASS)
+  void document.body.offsetWidth
+  document.body.classList.add(FIRST_PERSON_SHAKE_CLASS)
+  window.setTimeout(() => {
+    document.body.classList.remove(FIRST_PERSON_SHAKE_CLASS)
+  }, 240)
 }
 
 function toFiniteNumber(value: unknown, fallback: number) {
@@ -188,21 +249,6 @@ type FirstPersonSettingsSnapshot = {
   flyCameraMode: FirstPersonFlyCameraMode
 }
 
-type DoorOpening = {
-  leftT: number
-  rightT: number
-}
-
-type WallCollisionSegment = {
-  id: string
-  sx: number
-  sz: number
-  ex: number
-  ez: number
-  length: number
-  openings: DoorOpening[]
-}
-
 type LinearStairWalkSegment = {
   id: string
   kind: 'linear'
@@ -247,7 +293,8 @@ type FirstPersonNavigationData = {
   level: LevelNode | null
   slabs: SlabNode[]
   stairs: StairWalkSurface[]
-  walls: WallCollisionSegment[]
+  collision: CharacterCollisionMap
+  walls: CharacterCollisionSegment[]
   zones: ZoneNode[]
 }
 
@@ -273,11 +320,52 @@ type FirstPersonBookmark = FirstPersonPose & {
   name: string
 }
 
+type FirstPersonSavedRoute = {
+  id: string
+  name: string
+  mode: FirstPersonNavigationMode
+  points: FirstPersonPose[]
+  createdAt: string
+}
+
+type FirstPersonSavedViewpointPayload = {
+  preset: {
+    camera: {
+      mode: 'perspective'
+      position: [number, number, number]
+      target: [number, number, number]
+    }
+    createdAt: string
+    id: string
+    kind: 'camera'
+    levelId: string | null
+    name: string
+    overlays: {
+      showPerimeterGuides: boolean
+      showRoomArea: boolean
+      showRoomName: boolean
+      showWallLength: boolean
+    }
+    thumbnailDataUrl?: string
+    source: 'first-person'
+    updatedAt: string
+    viewMode: '3d'
+  }
+}
+
 type FirstPersonTourStatus = {
   active: boolean
   index: number
   total: number
 }
+
+type FirstPersonThumbnailRenderer = {
+  domElement: HTMLCanvasElement
+  render: (scene: Scene, camera: Camera) => void
+  renderAsync?: (scene: Scene, camera: Camera) => Promise<void>
+}
+
+let captureRenderedFirstPersonThumbnail: (() => Promise<string | undefined>) | null = null
 
 type TourState = {
   active: boolean
@@ -364,10 +452,6 @@ function isTransientNode(node: { metadata?: unknown }) {
 
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, value))
-}
-
-function wallLength(wall: WallNode) {
-  return Math.hypot(wall.end[0] - wall.start[0], wall.end[1] - wall.start[1])
 }
 
 function rotateXZ(x: number, z: number, angle: number): [number, number] {
@@ -688,7 +772,6 @@ function buildFirstPersonNavigationData(
   nodes: SceneNodeMap,
   activeLevelId: AnyNodeId | null | undefined,
 ): FirstPersonNavigationData {
-  const doorsByWallId = new Map<string, DoorNode[]>()
   const footprintPoints: PathPoint[] = []
   const slabs: SlabNode[] = []
   const stairs: StairWalkSurface[] = []
@@ -727,41 +810,13 @@ function buildFirstPersonNavigationData(
       continue
     }
 
-    if (node.type !== 'door' || isTransientNode(node)) continue
-    const door = node as DoorNode
-    const wallId = door.wallId ?? door.parentId
-    if (!wallId) continue
-
-    const existing = doorsByWallId.get(wallId) ?? []
-    existing.push(door)
-    doorsByWallId.set(wallId, existing)
+    if (node.type === 'door' && isTransientNode(node)) continue
   }
 
-  const walls: WallCollisionSegment[] = []
+  const collision = buildCharacterCollisionMap(nodes, levelId)
 
-  for (const node of Object.values(nodes)) {
-    if (!node || node.type !== 'wall') continue
-    const wall = node as WallNode
-    if (levelId && wall.parentId !== levelId) continue
-
-    const length = wallLength(wall)
-    if (length < MIN_WALL_LENGTH) continue
-
-    const openings = (doorsByWallId.get(wall.id) ?? []).map((door) => ({
-      leftT: clamp01((door.position[0] - door.width / 2 - DOOR_OPENING_PADDING) / length),
-      rightT: clamp01((door.position[0] + door.width / 2 + DOOR_OPENING_PADDING) / length),
-    }))
-
-    walls.push({
-      id: wall.id,
-      sx: wall.start[0],
-      sz: wall.start[1],
-      ex: wall.end[0],
-      ez: wall.end[1],
-      length,
-      openings,
-    })
-    footprintPoints.push({ x: wall.start[0], z: wall.start[1] }, { x: wall.end[0], z: wall.end[1] })
+  for (const wall of collision.walls) {
+    footprintPoints.push({ x: wall.sx, z: wall.sz }, { x: wall.ex, z: wall.ez })
   }
 
   zones.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
@@ -775,7 +830,8 @@ function buildFirstPersonNavigationData(
     level,
     slabs,
     stairs,
-    walls,
+    collision,
+    walls: collision.walls,
     zones,
   }
 }
@@ -785,107 +841,6 @@ function useFirstPersonNavigationData() {
   const activeLevelId = useViewer((state) => state.selection.levelId)
 
   return useMemo(() => buildFirstPersonNavigationData(nodes, activeLevelId), [activeLevelId, nodes])
-}
-
-function isWallOpening(wall: WallCollisionSegment, t: number) {
-  return wall.openings.some((opening) => t >= opening.leftT && t <= opening.rightT)
-}
-
-function pointToSegmentDistanceT(
-  px: number,
-  pz: number,
-  sx: number,
-  sz: number,
-  ex: number,
-  ez: number,
-) {
-  const dx = ex - sx
-  const dz = ez - sz
-  const lengthSq = dx * dx + dz * dz
-
-  if (lengthSq < 1e-9) {
-    return { distance: Math.hypot(px - sx, pz - sz), t: 0 }
-  }
-
-  const t = clamp01(((px - sx) * dx + (pz - sz) * dz) / lengthSq)
-  const closestX = sx + dx * t
-  const closestZ = sz + dz * t
-  return { distance: Math.hypot(px - closestX, pz - closestZ), t }
-}
-
-function wallIntersectionT(
-  ax: number,
-  az: number,
-  bx: number,
-  bz: number,
-  wall: WallCollisionSegment,
-) {
-  const rx = bx - ax
-  const rz = bz - az
-  const sx = wall.ex - wall.sx
-  const sz = wall.ez - wall.sz
-  const denominator = rx * sz - rz * sx
-
-  if (Math.abs(denominator) < 1e-9) return null
-
-  const qpx = wall.sx - ax
-  const qpz = wall.sz - az
-  const moveT = (qpx * sz - qpz * sx) / denominator
-  const wallT = (qpx * rz - qpz * rx) / denominator
-
-  if (moveT < 0 || moveT > 1 || wallT < 0 || wallT > 1) return null
-  return wallT
-}
-
-function isMovementBlocked(
-  fromX: number,
-  fromZ: number,
-  toX: number,
-  toZ: number,
-  walls: WallCollisionSegment[],
-) {
-  if (Math.hypot(toX - fromX, toZ - fromZ) < 1e-6) return false
-
-  for (const wall of walls) {
-    const intersectionT = wallIntersectionT(fromX, fromZ, toX, toZ, wall)
-    if (intersectionT !== null && !isWallOpening(wall, intersectionT)) {
-      return true
-    }
-
-    const next = pointToSegmentDistanceT(toX, toZ, wall.sx, wall.sz, wall.ex, wall.ez)
-    const previous = pointToSegmentDistanceT(fromX, fromZ, wall.sx, wall.sz, wall.ex, wall.ez)
-    if (
-      next.distance < WALL_COLLISION_RADIUS &&
-      !isWallOpening(wall, next.t) &&
-      (previous.distance >= WALL_COLLISION_RADIUS || next.distance < previous.distance - 0.01)
-    ) {
-      return true
-    }
-  }
-
-  return false
-}
-
-function resolveWalkPosition(
-  fromX: number,
-  fromZ: number,
-  toX: number,
-  toZ: number,
-  walls: WallCollisionSegment[],
-) {
-  if (!isMovementBlocked(fromX, fromZ, toX, toZ, walls)) {
-    return { x: toX, z: toZ }
-  }
-
-  if (!isMovementBlocked(fromX, fromZ, toX, fromZ, walls)) {
-    return { x: toX, z: fromZ }
-  }
-
-  if (!isMovementBlocked(fromX, fromZ, fromX, toZ, walls)) {
-    return { x: fromX, z: toZ }
-  }
-
-  return { x: fromX, z: fromZ }
 }
 
 function polygonCentroid(points: [number, number][]) {
@@ -1026,6 +981,31 @@ function getWalkCameraY(
   return getWalkSurfaceY(navigationData, x, z) + eyeHeight
 }
 
+function getEffectiveWalkSurfaceY(
+  navigationData: FirstPersonNavigationData,
+  x: number,
+  z: number,
+  surfaceYOverride: number | null,
+) {
+  const surfaceY = getWalkSurfaceY(navigationData, x, z)
+  return surfaceYOverride !== null && surfaceYOverride > surfaceY + 0.05
+    ? surfaceYOverride
+    : surfaceY
+}
+
+function getEffectiveWalkCameraY(
+  navigationData: FirstPersonNavigationData,
+  x: number,
+  z: number,
+  eyeHeight: number,
+  surfaceYOverride: number | null,
+) {
+  return Math.max(
+    getWalkCameraY(navigationData, x, z, eyeHeight),
+    getEffectiveWalkSurfaceY(navigationData, x, z, surfaceYOverride) + eyeHeight,
+  )
+}
+
 function getFlyBaseY(navigationData: FirstPersonNavigationData, x: number, z: number) {
   const surfaceY = getWalkSurfaceY(navigationData, x, z)
   return Math.max(surfaceY, navigationData.buildingTopY ?? surfaceY)
@@ -1153,7 +1133,9 @@ function buildMiniMapGridPath(
 
     const start = projectPlan(x, minY)
     const end = projectPlan(x, maxY)
-    commands.push(`M ${start.x.toFixed(2)} ${start.y.toFixed(2)} L ${end.x.toFixed(2)} ${end.y.toFixed(2)}`)
+    commands.push(
+      `M ${start.x.toFixed(2)} ${start.y.toFixed(2)} L ${end.x.toFixed(2)} ${end.y.toFixed(2)}`,
+    )
   }
 
   for (let index = startYIndex; index <= endYIndex; index += 1) {
@@ -1164,7 +1146,9 @@ function buildMiniMapGridPath(
 
     const start = projectPlan(minX, y)
     const end = projectPlan(maxX, y)
-    commands.push(`M ${start.x.toFixed(2)} ${start.y.toFixed(2)} L ${end.x.toFixed(2)} ${end.y.toFixed(2)}`)
+    commands.push(
+      `M ${start.x.toFixed(2)} ${start.y.toFixed(2)} L ${end.x.toFixed(2)} ${end.y.toFixed(2)}`,
+    )
   }
 
   return commands.join(' ')
@@ -1286,6 +1270,44 @@ function buildFlyTourRoute(
   })
 }
 
+function buildMultiModeTourRoute(
+  start: FirstPersonPose,
+  targets: FirstPersonPose[],
+  navigationData: FirstPersonNavigationData,
+  flyClearance: number,
+) {
+  const route: FirstPersonPose[] = []
+  let cursor: FirstPersonPose = start
+  let index = 0
+
+  while (index < targets.length) {
+    const mode: FirstPersonNavigationMode = targets[index]?.mode === 'fly' ? 'fly' : 'walk'
+    const segmentTargets: FirstPersonPose[] = []
+
+    while (index < targets.length) {
+      const target = targets[index]!
+      const targetMode: FirstPersonNavigationMode = target.mode === 'fly' ? 'fly' : 'walk'
+      if (targetMode !== mode) break
+      segmentTargets.push(target)
+      index += 1
+    }
+
+    const segmentRoute =
+      mode === 'fly'
+        ? buildFlyTourRoute(cursor, segmentTargets, navigationData, flyClearance)
+        : buildPlannedTourRoute(cursor, segmentTargets, navigationData)
+
+    if (segmentRoute.length > 0) {
+      route.push(...segmentRoute)
+      cursor = segmentRoute[segmentRoute.length - 1]!
+    } else {
+      cursor = segmentTargets[segmentTargets.length - 1] ?? cursor
+    }
+  }
+
+  return route
+}
+
 function dispatchJumpToPose(pose: JumpToPosePayload) {
   window.dispatchEvent(new CustomEvent<JumpToPosePayload>(JUMP_TO_POSE_EVENT, { detail: pose }))
 }
@@ -1326,8 +1348,115 @@ function dispatchRoutePoint(pose: FirstPersonPose) {
   window.dispatchEvent(new CustomEvent<FirstPersonPose>(ROUTE_POINT_EVENT, { detail: pose }))
 }
 
+function getFirstPersonPoseTarget(pose: FirstPersonPose): [number, number, number] {
+  const cosPitch = Math.cos(pose.pitch)
+  const distance = 10
+  const directionX = -Math.sin(pose.yaw) * cosPitch
+  const directionY = Math.sin(pose.pitch)
+  const directionZ = -Math.cos(pose.yaw) * cosPitch
+
+  return [
+    pose.x + directionX * distance,
+    pose.y + directionY * distance,
+    pose.z + directionZ * distance,
+  ]
+}
+
+function postSavedViewpointToHost(payload: FirstPersonSavedViewpointPayload) {
+  if (typeof window === 'undefined') return
+  window.parent.postMessage(
+    {
+      source: 'findtop-editor',
+      type: 'ai-viewpoint-saved',
+      payload,
+    },
+    '*',
+  )
+}
+
+function isProbablyBlankThumbnail(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+) {
+  try {
+    const sample = context.getImageData(0, 0, width, height).data
+    let checked = 0
+    let totalLuma = 0
+    const stride = Math.max(4, Math.floor(sample.length / 1200 / 4) * 4)
+
+    for (let index = 0; index < sample.length; index += stride) {
+      const alpha = sample[index + 3] ?? 255
+      if (alpha < 8) continue
+
+      const red = sample[index] ?? 0
+      const green = sample[index + 1] ?? 0
+      const blue = sample[index + 2] ?? 0
+      totalLuma += 0.2126 * red + 0.7152 * green + 0.0722 * blue
+      checked += 1
+    }
+
+    return checked > 0 && totalLuma / checked < 2
+  } catch {
+    return false
+  }
+}
+
+async function renderFirstPersonViewpointThumbnail(options: {
+  camera: Camera
+  renderer: FirstPersonThumbnailRenderer
+  scene: Scene
+}) {
+  const { camera, renderer, scene } = options
+  const canvas = renderer.domElement
+  if (!(canvas instanceof HTMLCanvasElement)) return undefined
+
+  if (typeof renderer.renderAsync === 'function') {
+    await renderer.renderAsync(scene, camera)
+  } else {
+    renderer.render(scene, camera)
+  }
+
+  return captureFirstPersonViewpointThumbnailFromCanvas(canvas)
+}
+
+function captureFirstPersonViewpointThumbnailFromCanvas(canvas: HTMLCanvasElement) {
+  if (typeof document === 'undefined') return undefined
+
+  const width = 240
+  const height = 135
+  const targetCanvas = document.createElement('canvas')
+  targetCanvas.width = width
+  targetCanvas.height = height
+  const context = targetCanvas.getContext('2d')
+  if (!context) return undefined
+
+  try {
+    context.drawImage(canvas, 0, 0, width, height)
+    if (isProbablyBlankThumbnail(context, width, height)) return undefined
+    return targetCanvas.toDataURL('image/jpeg', 0.72)
+  } catch {
+    return undefined
+  }
+}
+
+async function captureFirstPersonViewpointThumbnail() {
+  if (captureRenderedFirstPersonThumbnail) {
+    const renderedThumbnail = await captureRenderedFirstPersonThumbnail()
+    if (renderedThumbnail) return renderedThumbnail
+  }
+
+  const canvas = document.querySelector('canvas')
+  if (!(canvas instanceof HTMLCanvasElement)) return undefined
+  return captureFirstPersonViewpointThumbnailFromCanvas(canvas)
+}
+
 function getBookmarkStorageKey(buildingId: string | null, levelId: string | null) {
   return `${BOOKMARK_STORAGE_PREFIX}:${buildingId ?? 'scene'}:${levelId ?? 'all'}`
+}
+
+function getSavedRouteStorageKey(buildingId: string | null, levelId: string | null) {
+  return `${SAVED_ROUTE_STORAGE_PREFIX}:${buildingId ?? 'scene'}:${levelId ?? 'all'}`
 }
 
 function normalizeStoredBookmark(value: unknown): FirstPersonBookmark | null {
@@ -1376,6 +1505,29 @@ function normalizeTourPose(value: unknown): FirstPersonPose | null {
   }
 }
 
+function normalizeStoredRoute(value: unknown): FirstPersonSavedRoute | null {
+  if (!value || typeof value !== 'object') return null
+  const route = value as Partial<FirstPersonSavedRoute>
+  const points = Array.isArray(route.points)
+    ? route.points
+        .map(normalizeTourPose)
+        .filter((point): point is FirstPersonPose => point !== null)
+        .slice(0, MANUAL_ROUTE_LIMIT)
+    : []
+
+  if (typeof route.id !== 'string' || typeof route.name !== 'string' || points.length === 0) {
+    return null
+  }
+
+  return {
+    id: route.id,
+    name: route.name,
+    mode: route.mode === 'fly' ? 'fly' : 'walk',
+    points,
+    createdAt: typeof route.createdAt === 'string' ? route.createdAt : new Date().toISOString(),
+  }
+}
+
 function loadStoredBookmarks(storageKey: string): FirstPersonBookmark[] {
   if (typeof window === 'undefined') return []
 
@@ -1403,8 +1555,35 @@ function saveStoredBookmarks(storageKey: string, bookmarks: FirstPersonBookmark[
   }
 }
 
+function loadStoredRoutes(storageKey: string): FirstPersonSavedRoute[] {
+  if (typeof window === 'undefined') return []
+
+  try {
+    const raw = window.localStorage.getItem(storageKey)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .map(normalizeStoredRoute)
+      .filter((route): route is FirstPersonSavedRoute => route !== null)
+      .slice(0, SAVED_ROUTE_LIMIT)
+  } catch {
+    return []
+  }
+}
+
+function saveStoredRoutes(storageKey: string, routes: FirstPersonSavedRoute[]) {
+  if (typeof window === 'undefined') return
+
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(routes.slice(0, SAVED_ROUTE_LIMIT)))
+  } catch {
+    // Ignore localStorage failures; route plans remain available for the current session.
+  }
+}
+
 export const FirstPersonControls = () => {
-  const { camera, gl } = useThree()
+  const { camera, gl, scene } = useThree()
   const navigationData = useFirstPersonNavigationData()
   const navigationMode = useEditor((s) => s.firstPersonNavigationMode)
   const setNavigationMode = useEditor((s) => s.setFirstPersonNavigationMode)
@@ -1413,6 +1592,7 @@ export const FirstPersonControls = () => {
   const eyeHeightPreset = useEditor((s) => s.firstPersonEyeHeightPreset)
   const flyClearance = useEditor((s) => s.firstPersonFlyClearance)
   const flyCameraMode = useEditor((s) => s.firstPersonFlyCameraMode)
+  const characterCanPenetrate = useViewer((s) => s.characterActor.canPenetrate)
   const shooterState = useSyncExternalStore(
     subscribeFirstPersonShooterState,
     getFirstPersonShooterStateSnapshot,
@@ -1420,17 +1600,35 @@ export const FirstPersonControls = () => {
   )
   const shooterCanFire = shooterState.active && !shooterState.gameOver
 
+  useEffect(() => {
+    const capture = () =>
+      renderFirstPersonViewpointThumbnail({
+        camera,
+        renderer: gl as FirstPersonThumbnailRenderer,
+        scene,
+      })
+
+    captureRenderedFirstPersonThumbnail = capture
+    return () => {
+      if (captureRenderedFirstPersonThumbnail === capture) {
+        captureRenderedFirstPersonThumbnail = null
+      }
+    }
+  }, [camera, gl, scene])
+
   const keysRef = useRef<Set<string>>(new Set())
   const virtualMoveRef = useRef<VirtualMove>({ x: 0, z: 0 })
   const routePlanningRef = useRef(false)
   const navigationDataRef = useRef(navigationData)
-  const wallsRef = useRef(navigationData.walls)
   const zonesRef = useRef(navigationData.zones)
+  const characterCanPenetrateRef = useRef(characterCanPenetrate)
   const tourRef = useRef<TourState>({ active: false, route: [], index: 0, dwell: 0 })
   const yawRef = useRef(0)
   const pitchRef = useRef(0)
   const isLookingRef = useRef(false)
+  const isLookDraggingRef = useRef(false)
   const initializedRef = useRef(false)
+  const walkSurfaceYOverrideRef = useRef<number | null>(null)
   const poseElapsedRef = useRef(0)
   const previousNavigationModeRef = useRef(navigationMode)
   const settingsRef = useRef<FirstPersonSettingsSnapshot>({
@@ -1440,6 +1638,7 @@ export const FirstPersonControls = () => {
     flyClearance,
     flyCameraMode,
   })
+  const defaultCameraFovRef = useRef<number | null>(null)
 
   const eyeHeight = EYE_HEIGHT_CONFIG[eyeHeightPreset].height
 
@@ -1448,8 +1647,28 @@ export const FirstPersonControls = () => {
   }, [flyCameraMode, navigationMode, speed, eyeHeight, flyClearance])
 
   useEffect(() => {
+    characterCanPenetrateRef.current = characterCanPenetrate
+  }, [characterCanPenetrate])
+
+  useEffect(() => {
+    const perspectiveCamera = camera as PerspectiveCamera
+    if (!perspectiveCamera.isPerspectiveCamera) return
+    defaultCameraFovRef.current ??= perspectiveCamera.fov
+    perspectiveCamera.fov =
+      shooterState.active && shooterState.weapon === 'sniper' && shooterState.scoped
+        ? SNIPER_SCOPE_FOV
+        : defaultCameraFovRef.current
+    perspectiveCamera.updateProjectionMatrix()
+
+    return () => {
+      if (defaultCameraFovRef.current === null) return
+      perspectiveCamera.fov = defaultCameraFovRef.current
+      perspectiveCamera.updateProjectionMatrix()
+    }
+  }, [camera, shooterState.active, shooterState.scoped, shooterState.weapon])
+
+  useEffect(() => {
     navigationDataRef.current = navigationData
-    wallsRef.current = navigationData.walls
     zonesRef.current = navigationData.zones
   }, [navigationData])
 
@@ -1458,15 +1677,17 @@ export const FirstPersonControls = () => {
     previousNavigationModeRef.current = navigationMode
 
     if (navigationMode === 'walk') {
-      camera.position.y = getWalkCameraY(
+      camera.position.y = getEffectiveWalkCameraY(
         navigationDataRef.current,
         camera.position.x,
         camera.position.z,
         eyeHeight,
+        walkSurfaceYOverrideRef.current,
       )
       return
     }
 
+    walkSurfaceYOverrideRef.current = null
     if (previousMode === 'walk') {
       const targetY = getFlyCameraY(
         navigationDataRef.current,
@@ -1501,6 +1722,17 @@ export const FirstPersonControls = () => {
       yawRef.current = Math.atan2(-_lookDirection.x, -_lookDirection.z)
     }
     pitchRef.current = 0
+    if (navigationMode === 'walk') {
+      const surfaceY = getWalkSurfaceY(
+        navigationDataRef.current,
+        camera.position.x,
+        camera.position.z,
+      )
+      const cameraSurfaceY = camera.position.y - eyeHeight
+      walkSurfaceYOverrideRef.current = cameraSurfaceY > surfaceY + 0.05 ? cameraSurfaceY : null
+    } else {
+      walkSurfaceYOverrideRef.current = null
+    }
     camera.position.y =
       navigationMode === 'fly'
         ? getFlyCameraY(
@@ -1509,7 +1741,13 @@ export const FirstPersonControls = () => {
             camera.position.z,
             flyClearance,
           )
-        : getWalkCameraY(navigationDataRef.current, camera.position.x, camera.position.z, eyeHeight)
+        : getEffectiveWalkCameraY(
+            navigationDataRef.current,
+            camera.position.x,
+            camera.position.z,
+            eyeHeight,
+            walkSurfaceYOverrideRef.current,
+          )
   }, [camera, eyeHeight, flyClearance, navigationMode])
 
   const setMouseLookActive = useCallback((active: boolean) => {
@@ -1543,8 +1781,6 @@ export const FirstPersonControls = () => {
         flyClearance: currentFlyClearance,
       } = settingsRef.current
       const navigation = navigationDataRef.current
-      const shouldFly =
-        currentNavigationMode === 'fly' || targets.some((target) => target.mode === 'fly')
       const startPose: FirstPersonPose = {
         x: camera.position.x,
         y: camera.position.y,
@@ -1554,9 +1790,12 @@ export const FirstPersonControls = () => {
         mode: currentNavigationMode,
         eyeHeight: currentEyeHeight,
       }
-      const plannedRoute = shouldFly
-        ? buildFlyTourRoute(startPose, targets, navigation, currentFlyClearance)
-        : buildPlannedTourRoute(startPose, targets, navigation)
+      const plannedRoute = buildMultiModeTourRoute(
+        startPose,
+        targets,
+        navigation,
+        currentFlyClearance,
+      )
 
       if (plannedRoute.length === 0) {
         tourRef.current = { active: false, route: [], index: 0, dwell: 0 }
@@ -1564,7 +1803,7 @@ export const FirstPersonControls = () => {
         return false
       }
 
-      const nextMode: FirstPersonNavigationMode = shouldFly ? 'fly' : 'walk'
+      const nextMode = plannedRoute[0]?.mode ?? currentNavigationMode
       settingsRef.current = { ...settingsRef.current, navigationMode: nextMode }
       setNavigationMode(nextMode)
       tourRef.current = { active: true, route: plannedRoute, index: 0, dwell: 0 }
@@ -1594,11 +1833,28 @@ export const FirstPersonControls = () => {
       }
       setNavigationMode(nextMode)
 
+      if (nextMode === 'walk') {
+        const defaultSurfaceY = getWalkSurfaceY(navigation, target.x, target.z)
+        const targetSurfaceY = target.y - targetEyeHeight
+        walkSurfaceYOverrideRef.current =
+          Number.isFinite(targetSurfaceY) && targetSurfaceY > defaultSurfaceY + 0.05
+            ? targetSurfaceY
+            : null
+      } else {
+        walkSurfaceYOverrideRef.current = null
+      }
+
       camera.position.x = target.x
       camera.position.z = target.z
       camera.position.y =
         nextMode === 'walk'
-          ? getWalkCameraY(navigation, target.x, target.z, targetEyeHeight)
+          ? getEffectiveWalkCameraY(
+              navigation,
+              target.x,
+              target.z,
+              targetEyeHeight,
+              walkSurfaceYOverrideRef.current,
+            )
           : Math.max(target.y, getFlyMinY(navigation, target.x, target.z))
       yawRef.current = target.yaw
       pitchRef.current = target.pitch
@@ -1665,12 +1921,13 @@ export const FirstPersonControls = () => {
 
       const target =
         currentMode === 'walk'
-          ? resolveWalkPosition(
+          ? resolveCharacterWalkPosition(
               camera.position.x,
               camera.position.z,
               clickedTarget.x,
               clickedTarget.z,
-              wallsRef.current,
+              navigationDataRef.current.collision,
+              characterCanPenetrateRef.current,
             )
           : clickedTarget
 
@@ -1678,7 +1935,13 @@ export const FirstPersonControls = () => {
       camera.position.z = target.z
       camera.position.y =
         currentMode === 'walk'
-          ? getWalkCameraY(navigation, target.x, target.z, currentEyeHeight)
+          ? getEffectiveWalkCameraY(
+              navigation,
+              target.x,
+              target.z,
+              currentEyeHeight,
+              walkSurfaceYOverrideRef.current,
+            )
           : Math.max(camera.position.y, getFlyMinY(navigation, target.x, target.z))
     },
     [camera, gl, startTourRoute],
@@ -1810,21 +2073,9 @@ export const FirstPersonControls = () => {
   }, [startTourRoute])
 
   // First-person event handlers. Pointer Lock is disabled in the desktop webview because
-  // Electron 33 crashes the renderer on requestPointerLock(); fullscreen + hidden cursor is
-  // the stable fallback for walkthrough mouse-look.
+  // Electron 33 crashes the renderer on requestPointerLock().
   useEffect(() => {
     const canvas = gl.domElement
-
-    const requestWalkthroughFullscreen = () => {
-      if (document.fullscreenElement) return
-      try {
-        void document.documentElement.requestFullscreen?.().catch(() => {
-          // Fullscreen is best-effort; mouse-look still works inside the app window.
-        })
-      } catch {
-        // Ignore browser fullscreen denial.
-      }
-    }
 
     const exitWalkthroughFullscreen = () => {
       if (!document.fullscreenElement) return
@@ -1838,9 +2089,42 @@ export const FirstPersonControls = () => {
     }
 
     const deactivateMouseLook = () => {
+      isLookDraggingRef.current = false
       setMouseLookActive(false)
       showFirstPersonSystemCursor()
       exitWalkthroughFullscreen()
+    }
+
+    const startMouseLookDrag = (event: MouseEvent) => {
+      if (event.button === 2) {
+        const currentShooterState = getFirstPersonShooterStateSnapshot()
+        if (
+          currentShooterState.active &&
+          !currentShooterState.gameOver &&
+          currentShooterState.weapon === 'sniper'
+        ) {
+          event.preventDefault()
+          event.stopPropagation()
+          setFirstPersonShooterScoped(true)
+        }
+        return
+      }
+
+      if (event.button !== 0) return
+      event.preventDefault()
+      event.stopPropagation()
+
+      if (!isLookingRef.current) {
+        setMouseLookActive(true)
+        hideFirstPersonSystemCursor()
+      }
+
+      isLookDraggingRef.current = true
+    }
+
+    const stopMouseLookDrag = () => {
+      isLookDraggingRef.current = false
+      setFirstPersonShooterScoped(false)
     }
 
     const handleCanvasClick = (event: MouseEvent) => {
@@ -1852,7 +2136,7 @@ export const FirstPersonControls = () => {
         event.stopPropagation()
         setMouseLookActive(true)
         hideFirstPersonSystemCursor()
-        dispatchFirstPersonShooterShot()
+        dispatchFirstPersonShooterShot({ clientX: event.clientX, clientY: event.clientY })
         return
       }
 
@@ -1861,7 +2145,6 @@ export const FirstPersonControls = () => {
       event.stopPropagation()
       setMouseLookActive(true)
       hideFirstPersonSystemCursor()
-      requestWalkthroughFullscreen()
     }
 
     const handleCanvasDoubleClick = (event: MouseEvent) => {
@@ -1870,7 +2153,7 @@ export const FirstPersonControls = () => {
       event.stopPropagation()
 
       const currentShooterState = getFirstPersonShooterStateSnapshot()
-      if (currentShooterState.active && !currentShooterState.gameOver) {
+      if (shouldShooterBlockFirstPersonNavigation(currentShooterState)) {
         setMouseLookActive(true)
         hideFirstPersonSystemCursor()
         return
@@ -1885,12 +2168,12 @@ export const FirstPersonControls = () => {
     }
 
     const handleMouseMove = (event: MouseEvent) => {
-      if (!isLookingRef.current) return
+      if (!(isLookingRef.current && isLookDraggingRef.current)) return
       event.preventDefault()
       event.stopPropagation()
 
-      yawRef.current -= event.movementX * MOUSE_SENSITIVITY
-      pitchRef.current -= event.movementY * MOUSE_SENSITIVITY
+      yawRef.current += event.movementX * MOUSE_SENSITIVITY
+      pitchRef.current += event.movementY * MOUSE_SENSITIVITY
       pitchRef.current = Math.max(
         -Math.PI / 2 + 0.05,
         Math.min(Math.PI / 2 - 0.05, pitchRef.current),
@@ -1926,6 +2209,74 @@ export const FirstPersonControls = () => {
         return
       }
 
+      const currentShooterState = getFirstPersonShooterStateSnapshot()
+      if (currentShooterState.active && !currentShooterState.gameOver) {
+        if (code === 'Digit1') {
+          event.preventDefault()
+          event.stopPropagation()
+          setFirstPersonShooterWeapon('pistol')
+          return
+        }
+
+        if (code === 'Digit2') {
+          event.preventDefault()
+          event.stopPropagation()
+          setFirstPersonShooterWeapon('sniper')
+          return
+        }
+
+        if (code === 'Digit3') {
+          event.preventDefault()
+          event.stopPropagation()
+          setFirstPersonShooterWeapon('knife')
+          return
+        }
+
+        if (code === 'KeyG') {
+          event.preventDefault()
+          event.stopPropagation()
+          dispatchFirstPersonShooterGrenade()
+          return
+        }
+
+        if (code === 'KeyR') {
+          event.preventDefault()
+          event.stopPropagation()
+          dispatchFirstPersonShooterReload()
+          return
+        }
+
+        if (code === 'KeyZ') {
+          event.preventDefault()
+          event.stopPropagation()
+          setFirstPersonShooterScoped(
+            currentShooterState.weapon === 'sniper' ? !currentShooterState.scoped : false,
+          )
+          return
+        }
+
+        if (code === 'KeyC') {
+          event.preventDefault()
+          event.stopPropagation()
+          setFirstPersonShooterStance('crouch')
+          return
+        }
+
+        if (code === 'KeyX') {
+          event.preventDefault()
+          event.stopPropagation()
+          setFirstPersonShooterStance('prone')
+          return
+        }
+
+        if (code === 'KeyV') {
+          event.preventDefault()
+          event.stopPropagation()
+          setFirstPersonShooterStance('stand')
+          return
+        }
+      }
+
       if (MOVEMENT_KEY_CODES.has(code)) {
         event.preventDefault()
         event.stopPropagation()
@@ -1942,6 +2293,8 @@ export const FirstPersonControls = () => {
     }
 
     document.addEventListener('mousemove', handleMouseMove, true)
+    canvas.addEventListener('mousedown', startMouseLookDrag, true)
+    document.addEventListener('mouseup', stopMouseLookDrag, true)
     canvas.addEventListener('click', handleCanvasClick, true)
     canvas.addEventListener('dblclick', handleCanvasDoubleClick)
     canvas.addEventListener('contextmenu', handleContextMenu)
@@ -1953,6 +2306,8 @@ export const FirstPersonControls = () => {
     return () => {
       deactivateMouseLook()
       document.removeEventListener('mousemove', handleMouseMove, true)
+      canvas.removeEventListener('mousedown', startMouseLookDrag, true)
+      document.removeEventListener('mouseup', stopMouseLookDrag, true)
       canvas.removeEventListener('click', handleCanvasClick, true)
       canvas.removeEventListener('dblclick', handleCanvasDoubleClick)
       canvas.removeEventListener('contextmenu', handleContextMenu)
@@ -1981,8 +2336,17 @@ export const FirstPersonControls = () => {
     const isSprinting = hasAnyKey(keys, ['ShiftLeft', 'ShiftRight'])
     const isSlowing = hasAnyKey(keys, ['AltLeft', 'AltRight'])
     const baseSpeed = currentSpeed
+    const stanceSpeed = shooterState.active
+      ? getShooterStanceSpeedMultiplier(shooterState.stance)
+      : 1
+    const stanceEyeHeight = shooterState.active
+      ? getShooterStanceEyeHeightMultiplier(shooterState.stance)
+      : 1
     const speed =
-      baseSpeed * (isSprinting ? SPRINT_MULTIPLIER : 1) * (isSlowing ? SLOW_MULTIPLIER : 1)
+      baseSpeed *
+      stanceSpeed *
+      (isSprinting ? SPRINT_MULTIPLIER : 1) *
+      (isSlowing ? SLOW_MULTIPLIER : 1)
     const verticalSpeed = Math.max(VERTICAL_SPEED, speed * 0.75)
     const routeSpeed = Math.max(TOUR_SPEED, baseSpeed)
 
@@ -2001,7 +2365,7 @@ export const FirstPersonControls = () => {
 
     if (typeof navigator !== 'undefined' && typeof navigator.getGamepads === 'function') {
       const gamepad = Array.from(navigator.getGamepads()).find((pad) => pad?.connected)
-        if (gamepad) {
+      if (gamepad) {
         const leftX = applyDeadzone(gamepad.axes[0] ?? 0)
         const leftY = applyDeadzone(gamepad.axes[1] ?? 0)
         const rightX = applyDeadzone(gamepad.axes[2] ?? 0)
@@ -2035,18 +2399,40 @@ export const FirstPersonControls = () => {
         tourRef.current = { active: false, route: [], index: 0, dwell: 0 }
         dispatchTourStatus({ active: false, index: 0, total: 0 })
       } else {
+        const tourMode: FirstPersonNavigationMode = target.mode === 'fly' ? 'fly' : 'walk'
+        if (settingsRef.current.navigationMode !== tourMode) {
+          settingsRef.current = { ...settingsRef.current, navigationMode: tourMode }
+          setNavigationMode(tourMode)
+          if (tourMode === 'walk') {
+            const defaultSurfaceY = getWalkSurfaceY(
+              navigation,
+              camera.position.x,
+              camera.position.z,
+            )
+            const cameraSurfaceY = camera.position.y - target.eyeHeight
+            walkSurfaceYOverrideRef.current =
+              cameraSurfaceY > defaultSurfaceY + 0.05 ? cameraSurfaceY : null
+          } else {
+            walkSurfaceYOverrideRef.current = null
+            camera.position.y = Math.max(
+              camera.position.y,
+              getFlyMinY(navigation, camera.position.x, camera.position.z),
+            )
+          }
+        }
+
         const deltaX = target.x - camera.position.x
-        const deltaY = currentMode === 'fly' ? target.y - camera.position.y : 0
+        const deltaY = tourMode === 'fly' ? target.y - camera.position.y : 0
         const deltaZ = target.z - camera.position.z
         const distance =
-          currentMode === 'fly' ? Math.hypot(deltaX, deltaY, deltaZ) : Math.hypot(deltaX, deltaZ)
+          tourMode === 'fly' ? Math.hypot(deltaX, deltaY, deltaZ) : Math.hypot(deltaX, deltaZ)
         const arrivalDistance =
           target.tourDwell === false ? Math.max(TOUR_ARRIVAL_DISTANCE, 0.28) : TOUR_ARRIVAL_DISTANCE
 
         if (distance > arrivalDistance) {
           const step = Math.min(distance, routeSpeed * dt)
           camera.position.x += (deltaX / distance) * step
-          if (currentMode === 'fly') {
+          if (tourMode === 'fly') {
             camera.position.y += (deltaY / distance) * step
           }
           camera.position.z += (deltaZ / distance) * step
@@ -2083,12 +2469,13 @@ export const FirstPersonControls = () => {
       _moveVector.normalize().multiplyScalar(speed * dt)
 
       if (currentMode === 'walk') {
-        const next = resolveWalkPosition(
+        const next = resolveCharacterWalkPosition(
           camera.position.x,
           camera.position.z,
           camera.position.x + _moveVector.x,
           camera.position.z + _moveVector.z,
-          wallsRef.current,
+          navigationDataRef.current.collision,
+          characterCanPenetrateRef.current,
         )
         camera.position.x = next.x
         camera.position.z = next.z
@@ -2097,22 +2484,25 @@ export const FirstPersonControls = () => {
       }
     }
 
-    if (currentMode === 'fly') {
+    const effectiveMode = settingsRef.current.navigationMode
+
+    if (effectiveMode === 'fly') {
       if (keys.has('KeyQ')) camera.position.y += verticalSpeed * dt
       if (keys.has('KeyE')) camera.position.y -= verticalSpeed * dt
       const minY = getFlyMinY(navigation, camera.position.x, camera.position.z)
       if (camera.position.y < minY) camera.position.y = minY
     } else {
-      const targetY = getWalkCameraY(
+      const targetY = getEffectiveWalkCameraY(
         navigation,
         camera.position.x,
         camera.position.z,
-        currentEyeHeight,
+        currentEyeHeight * stanceEyeHeight,
+        walkSurfaceYOverrideRef.current,
       )
       camera.position.y += (targetY - camera.position.y) * Math.min(1, dt * 14)
     }
 
-    if (currentMode === 'fly' && currentFlyCameraMode === 'focus-building') {
+    if (currentFlyCameraMode === 'focus-building') {
       const focusTarget = navigation.buildingFocusTarget
       if (focusTarget) {
         const orientation = getYawPitchToWorldPoint(
@@ -2138,8 +2528,8 @@ export const FirstPersonControls = () => {
             z: camera.position.z,
             yaw: yawRef.current,
             pitch: pitchRef.current,
-            mode: currentMode,
-            eyeHeight: currentEyeHeight,
+            mode: effectiveMode,
+            eyeHeight: currentEyeHeight * stanceEyeHeight,
           },
         }),
       )
@@ -2175,6 +2565,26 @@ function useMouseLookStatus() {
   }, [])
 
   return status
+}
+
+function useViewportPointerPosition() {
+  const [position, setPosition] = useState(() => {
+    if (typeof window === 'undefined') return { x: 0, y: 0 }
+    return { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+  })
+
+  useEffect(() => {
+    const handlePointerMove = (event: MouseEvent) => {
+      setPosition({ x: event.clientX, y: event.clientY })
+    }
+
+    window.addEventListener('mousemove', handlePointerMove)
+    return () => {
+      window.removeEventListener('mousemove', handlePointerMove)
+    }
+  }, [])
+
+  return position
 }
 
 function useFirstPersonPose() {
@@ -2277,6 +2687,7 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
   const flyClearance = useEditor((s) => s.firstPersonFlyClearance)
   const setFlyClearance = useEditor((s) => s.setFirstPersonFlyClearance)
   const lookStatus = useMouseLookStatus()
+  const pointerPosition = useViewportPointerPosition()
   const pose = useFirstPersonPose()
   const tourStatus = useFirstPersonTourStatus()
   const shooterState = useSyncExternalStore(
@@ -2288,14 +2699,27 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
     () => getBookmarkStorageKey(buildingId, activeLevelId),
     [activeLevelId, buildingId],
   )
+  const savedRouteStorageKey = useMemo(
+    () => getSavedRouteStorageKey(buildingId, activeLevelId),
+    [activeLevelId, buildingId],
+  )
   const [bookmarkState, setBookmarkState] = useState(() => ({
     bookmarks: loadStoredBookmarks(bookmarkStorageKey),
     storageKey: bookmarkStorageKey,
+  }))
+  const [savedRouteState, setSavedRouteState] = useState(() => ({
+    routes: loadStoredRoutes(savedRouteStorageKey),
+    storageKey: savedRouteStorageKey,
   }))
   const [presentationMode, setPresentationMode] = useState(false)
   const [arrivalMode, setArrivalMode] = useState<ArrivalMode>('walk')
   const [routePlanning, setRoutePlanning] = useState(false)
   const [manualRoute, setManualRoute] = useState<FirstPersonPose[]>([])
+  const [floatingAwards, setFloatingAwards] = useState<
+    { id: string; label: string; tone: 'hit' | 'kill' | 'supply' }[]
+  >([])
+  const previousShooterKillsRef = useRef(shooterState.kills)
+  const previousSupplyFlashRef = useRef(shooterState.supplyFlashTimer)
   const sceneNodes = useScene((state) => state.nodes)
   const floorplanLevels = useMemo(() => {
     const activeLevel = activeLevelId ? sceneNodes[activeLevelId] : null
@@ -2332,6 +2756,8 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
     MAX_FIRST_PERSON_FLY_CLEARANCE,
   )
   const bookmarks = bookmarkState.storageKey === bookmarkStorageKey ? bookmarkState.bookmarks : []
+  const savedRoutes =
+    savedRouteState.storageKey === savedRouteStorageKey ? savedRouteState.routes : []
   const zoneTourRoute = useMemo(
     () => buildZoneTourRoute(navigationData.zones, pose, navigationMode, eyeHeight.height),
     [eyeHeight.height, navigationData.zones, navigationMode, pose],
@@ -2355,11 +2781,67 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
   }, [bookmarkState, bookmarkStorageKey])
 
   useEffect(() => {
+    setSavedRouteState({
+      routes: loadStoredRoutes(savedRouteStorageKey),
+      storageKey: savedRouteStorageKey,
+    })
+  }, [savedRouteStorageKey])
+
+  useEffect(() => {
+    if (savedRouteState.storageKey !== savedRouteStorageKey) return
+    saveStoredRoutes(savedRouteStorageKey, savedRouteState.routes)
+  }, [savedRouteState, savedRouteStorageKey])
+
+  useEffect(() => {
     dispatchRoutePlanning(routePlanning)
     return () => {
       dispatchRoutePlanning(false)
     }
   }, [routePlanning])
+
+  useEffect(() => {
+    const previousKills = previousShooterKillsRef.current
+    previousShooterKillsRef.current = shooterState.kills
+    if (!shooterState.active || shooterState.kills <= previousKills) return
+    triggerFirstPersonScreenShake()
+  }, [shooterState.active, shooterState.kills])
+
+  useEffect(() => {
+    if (!shooterState.active || shooterState.lastScoreAward <= 0) return
+
+    const id = `award-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    setFloatingAwards((current) => [
+      ...current.slice(-3),
+      {
+        id,
+        label: `+${shooterState.lastScoreAward}`,
+        tone: shooterState.lastScoreAward >= 10 ? 'kill' : 'hit',
+      },
+    ])
+    const timeout = window.setTimeout(() => {
+      setFloatingAwards((current) => current.filter((award) => award.id !== id))
+    }, 720)
+
+    return () => {
+      window.clearTimeout(timeout)
+    }
+  }, [shooterState.active, shooterState.lastScoreAward])
+
+  useEffect(() => {
+    const previous = previousSupplyFlashRef.current
+    previousSupplyFlashRef.current = shooterState.supplyFlashTimer
+    if (!shooterState.active || shooterState.supplyFlashTimer <= previous) return
+
+    const id = `supply-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    setFloatingAwards((current) => [...current.slice(-3), { id, label: '补给+', tone: 'supply' }])
+    const timeout = window.setTimeout(() => {
+      setFloatingAwards((current) => current.filter((award) => award.id !== id))
+    }, 720)
+
+    return () => {
+      window.clearTimeout(timeout)
+    }
+  }, [shooterState.active, shooterState.supplyFlashTimer])
 
   const handleExit = useCallback(() => {
     exitPointerLockSafely()
@@ -2403,24 +2885,97 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
     [bookmarkStorageKey],
   )
 
-  const saveBookmark = useCallback(() => {
+  const updateSavedRoutes = useCallback(
+    (updater: (current: FirstPersonSavedRoute[]) => FirstPersonSavedRoute[]) => {
+      setSavedRouteState((currentState) => {
+        const current =
+          currentState.storageKey === savedRouteStorageKey
+            ? currentState.routes
+            : loadStoredRoutes(savedRouteStorageKey)
+        const next = updater(current).slice(-SAVED_ROUTE_LIMIT)
+
+        return { routes: next, storageKey: savedRouteStorageKey }
+      })
+    },
+    [savedRouteStorageKey],
+  )
+
+  const saveBookmark = useCallback(async () => {
     if (!pose) return
 
-    updateBookmarks((current) => [
-      ...current,
-      {
+    const thumbnailDataUrl = await captureFirstPersonViewpointThumbnail()
+
+    updateBookmarks((current) => {
+      const createdAt = new Date().toISOString()
+      const id = `first-person-viewpoint:${Date.now()}-${current.length}`
+      const name = currentZone?.name ?? `View ${current.length + 1}`
+      const bookmark: FirstPersonBookmark = {
         ...pose,
-        id: `${Date.now()}-${current.length}`,
-        name: currentZone?.name ?? `View ${current.length + 1}`,
-      },
-    ])
-  }, [currentZone?.name, pose, updateBookmarks])
+        id,
+        name,
+      }
+
+      postSavedViewpointToHost({
+        preset: {
+          id,
+          name,
+          kind: 'camera',
+          source: 'first-person',
+          createdAt,
+          updatedAt: createdAt,
+          viewMode: '3d',
+          levelId: activeLevelId,
+          overlays: {
+            showRoomName: true,
+            showRoomArea: false,
+            showWallLength: true,
+            showPerimeterGuides: true,
+          },
+          thumbnailDataUrl,
+          camera: {
+            mode: 'perspective',
+            position: [pose.x, pose.y, pose.z],
+            target: getFirstPersonPoseTarget(pose),
+          },
+        },
+      })
+
+      return [...current, bookmark]
+    })
+  }, [activeLevelId, currentZone?.name, pose, updateBookmarks])
 
   const deleteBookmark = useCallback(
     (bookmarkId: string) => {
       updateBookmarks((current) => current.filter((bookmark) => bookmark.id !== bookmarkId))
     },
     [updateBookmarks],
+  )
+
+  const saveManualRoute = useCallback(() => {
+    if (manualRoute.length === 0) return
+
+    updateSavedRoutes((current) => {
+      const createdAt = new Date().toISOString()
+      const mode: FirstPersonNavigationMode = manualRoute.some((point) => point.mode === 'fly')
+        ? 'fly'
+        : 'walk'
+      const route: FirstPersonSavedRoute = {
+        id: `first-person-route:${Date.now()}-${current.length}`,
+        name: `${mode === 'fly' ? '飞行' : '行走'}路线 ${current.length + 1}`,
+        mode,
+        points: manualRoute.map((point) => ({ ...point })),
+        createdAt,
+      }
+
+      return [...current, route]
+    })
+  }, [manualRoute, updateSavedRoutes])
+
+  const deleteSavedRoute = useCallback(
+    (routeId: string) => {
+      updateSavedRoutes((current) => current.filter((route) => route.id !== routeId))
+    },
+    [updateSavedRoutes],
   )
 
   const addManualRoutePoint = useCallback(
@@ -2541,14 +3096,40 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
     dispatchStartTour(manualRoute)
   }, [manualRoute])
 
+  const startSavedRoute = useCallback((route: FirstPersonSavedRoute) => {
+    if (route.points.length === 0) return
+    setRoutePlanning(false)
+    dispatchStartTour(route.points)
+  }, [])
+
+  const startSavedRoutes = useCallback(() => {
+    const route = savedRoutes.flatMap((savedRoute) => savedRoute.points)
+    if (route.length === 0) return
+    setRoutePlanning(false)
+    dispatchStartTour(route)
+  }, [savedRoutes])
+
   const stopTour = useCallback(() => {
     dispatchStopTour()
   }, [])
 
-  const activeSpeedDescription = useMemo(
-    () => `Speed ${formatFirstPersonSpeed(speed)}`,
-    [speed],
-  )
+  useEffect(() => {
+    const handleSaveViewpointShortcut = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) return
+      if (event.code !== 'KeyB') return
+
+      event.preventDefault()
+      event.stopPropagation()
+      void saveBookmark()
+    }
+
+    document.addEventListener('keydown', handleSaveViewpointShortcut, true)
+    return () => {
+      document.removeEventListener('keydown', handleSaveViewpointShortcut, true)
+    }
+  }, [saveBookmark])
+
+  const activeSpeedDescription = useMemo(() => `Speed ${formatFirstPersonSpeed(speed)}`, [speed])
   const shooterHealthPercent =
     shooterState.maxHealth > 0 ? (shooterState.health / shooterState.maxHealth) * 100 : 0
   const shooterReticleTone =
@@ -2557,6 +3138,38 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
       : shooterState.lastShotHit === false
         ? 'border-rose-300 bg-rose-300'
         : 'border-white/80 bg-white/80'
+  const weaponLabel =
+    shooterState.weapon === 'sniper' ? '狙击枪' : shooterState.weapon === 'knife' ? '刀' : '手枪'
+  const stanceLabel =
+    shooterState.stance === 'crouch' ? '蹲着' : shooterState.stance === 'prone' ? '趴下' : '站着'
+  const weaponStatusLabel =
+    shooterState.weaponReload > 0
+      ? `换弹 ${shooterState.weaponReload.toFixed(1)}s`
+      : shooterState.weaponCooldown > 0
+        ? `冷却 ${shooterState.weaponCooldown.toFixed(1)}s`
+        : shooterState.weaponMagazineSize > 0
+          ? `${shooterState.weaponAmmo}/${shooterState.weaponMagazineSize}`
+          : '近战'
+  const waveProgressPercent =
+    shooterState.waveTargetKills > 0
+      ? (shooterState.waveKills / shooterState.waveTargetKills) * 100
+      : 0
+  const waveAnnouncementLabel =
+    shooterState.waveBreakTimer > 0
+      ? `下一波 ${shooterState.waveBreakTimer.toFixed(1)}s`
+      : shooterState.waveIntroTimer > 0
+        ? `第 ${shooterState.wave} 波`
+        : null
+  const spawnWarningActive =
+    shooterState.active && !shooterState.gameOver && shooterState.spawnWarningTimer > 0
+  const comboLabel =
+    shooterState.comboCount >= 2
+      ? `${shooterState.comboCount} 连杀${shooterState.lastComboBonus > 0 ? ` +${shooterState.lastComboBonus}` : ''}`
+      : null
+  const bestComboLabel =
+    shooterState.kills > 0
+      ? `${Math.round(shooterState.score / shooterState.kills)} 分/杀`
+      : '0 分/杀'
 
   const startShooter = useCallback(() => {
     dispatchFirstPersonShooterCommand('start')
@@ -2574,7 +3187,14 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
     <>
       {!presentationMode ? (
         <>
-          <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center">
+          <div
+            className="pointer-events-none fixed z-40"
+            style={{
+              left: pointerPosition.x,
+              top: pointerPosition.y,
+              transform: 'translate(-50%, -50%)',
+            }}
+          >
             <div
               className={cn(
                 'relative h-12 w-12 transition-transform duration-75',
@@ -2635,8 +3255,106 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
                     ? navigationMode === 'fly'
                       ? '双击场景添加航点，或在右侧 2D 图上单击/拖拽画线'
                       : '双击地面添加点位，或在右侧 2D 图上单击加点'
-                    : '移动鼠标转动视角，按 Esc 退出漫游'}
+                    : '按住鼠标左键拖动转动视角，按 Esc 退出漫游'}
                 </div>
+              </div>
+            </div>
+          ) : null}
+          {shooterState.active && shooterState.weapon === 'sniper' && shooterState.scoped ? (
+            <div className="pointer-events-none fixed inset-0 z-30 bg-black/28">
+              <div
+                className="absolute h-[52vh] w-[52vh] max-w-[82vw] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/45 bg-white/10 shadow-[0_0_0_9999px_rgba(0,0,0,0.22),inset_0_0_28px_rgba(255,255,255,0.16)] transition-[left,top] duration-75"
+                style={{
+                  left: pointerPosition.x,
+                  top: pointerPosition.y,
+                }}
+              />
+              <div
+                className="absolute h-px w-[46vh] max-w-[74vw] -translate-x-1/2 -translate-y-1/2 bg-white/55 transition-[left,top] duration-75"
+                style={{
+                  left: pointerPosition.x,
+                  top: pointerPosition.y,
+                }}
+              />
+              <div
+                className="absolute h-[46vh] max-h-[74vw] w-px -translate-x-1/2 -translate-y-1/2 bg-white/55 transition-[left,top] duration-75"
+                style={{
+                  left: pointerPosition.x,
+                  top: pointerPosition.y,
+                }}
+              />
+            </div>
+          ) : null}
+          {shooterState.active && shooterState.lastScoreAward >= 10 ? (
+            <div className="pointer-events-none fixed inset-0 z-30 animate-pulse bg-orange-300/12" />
+          ) : null}
+          {spawnWarningActive ? (
+            <div className="pointer-events-none fixed inset-0 z-30 border-[10px] border-rose-500/18 shadow-[inset_0_0_44px_rgba(244,63,94,0.22)]" />
+          ) : null}
+          {floatingAwards.length > 0 ? (
+            <div
+              className="pointer-events-none fixed z-50 flex -translate-x-1/2 -translate-y-full flex-col items-center gap-1"
+              style={{ left: pointerPosition.x, top: pointerPosition.y - 28 }}
+            >
+              {floatingAwards.map((award) => (
+                <div
+                  className={cn(
+                    'animate-bounce rounded-md border px-2 py-0.5 font-mono text-xs shadow-lg backdrop-blur-sm',
+                    award.tone === 'supply'
+                      ? 'border-cyan-200/40 bg-cyan-400/20 text-cyan-50'
+                      : award.tone === 'kill'
+                        ? 'border-orange-200/40 bg-orange-400/20 text-orange-50'
+                        : 'border-emerald-200/40 bg-emerald-400/20 text-emerald-50',
+                  )}
+                  key={award.id}
+                >
+                  {award.label}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {shooterState.active && shooterState.supplyFlashTimer > 0 ? (
+            <div className="pointer-events-none fixed inset-0 z-30 animate-pulse bg-cyan-300/10" />
+          ) : null}
+          {shooterState.active && comboLabel ? (
+            <div className="pointer-events-none fixed top-[18vh] left-1/2 z-40 -translate-x-1/2 rounded-lg border border-amber-200/35 bg-slate-950/68 px-4 py-2 text-amber-50 shadow-xl backdrop-blur-md">
+              <div className="font-semibold text-sm">{comboLabel}</div>
+            </div>
+          ) : null}
+          {shooterState.active && waveAnnouncementLabel ? (
+            <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center px-4">
+              <div className="rounded-lg border border-cyan-200/30 bg-slate-950/70 px-8 py-5 text-center text-white shadow-2xl backdrop-blur-md">
+                <div className="font-semibold text-3xl tracking-normal">
+                  {waveAnnouncementLabel}
+                </div>
+                <div className="mt-2 text-cyan-100/80 text-sm">
+                  {shooterState.waveBreakTimer > 0 ? '补给已整理，准备下一轮' : '特殊怪可能出现'}
+                </div>
+              </div>
+            </div>
+          ) : null}
+          {shooterState.active && shooterState.gameOver ? (
+            <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center px-4">
+              <div className="pointer-events-auto w-[min(360px,calc(100vw-32px))] rounded-lg border border-white/15 bg-slate-950/82 p-5 text-white shadow-2xl backdrop-blur-md">
+                <div className="text-center">
+                  <div className="font-semibold text-2xl">战斗结束</div>
+                  <div className="mt-1 text-sm text-white/65">第 {shooterState.wave} 波</div>
+                </div>
+                <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                  <ShooterStat label="分数" value={shooterState.score} />
+                  <ShooterStat label="击杀" value={shooterState.kills} />
+                  <ShooterStat label="怪物" value={shooterState.monsterCount} />
+                </div>
+                <div className="mt-3 rounded-md border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-center text-white/70 text-xs">
+                  {bestComboLabel}
+                </div>
+                <button
+                  className="mt-4 h-9 w-full rounded-md border border-emerald-300/30 bg-emerald-400/16 font-medium text-emerald-50 text-sm transition-colors hover:bg-emerald-400/25"
+                  onClick={restartShooter}
+                  type="button"
+                >
+                  重新开始
+                </button>
               </div>
             </div>
           ) : null}
@@ -2713,6 +3431,33 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
                   <ShooterStat label="击杀" value={shooterState.kills} />
                   <ShooterStat label="怪物" value={shooterState.monsterCount} />
                 </div>
+                <div className="grid grid-cols-3 gap-1 text-center">
+                  <ShooterStat label="补给" value={shooterState.supplyCount} />
+                  <ShooterStat label="炸弹" value={shooterState.grenades} />
+                  <ShooterStat label="连杀" value={shooterState.comboCount} />
+                </div>
+                <ShooterRadar pose={pose} shooterState={shooterState} />
+                {spawnWarningActive ? (
+                  <div className="rounded-md border border-rose-300/25 bg-rose-400/12 px-2 py-1 text-center font-medium text-[10px] text-rose-50">
+                    敌人接近 {shooterState.spawnWarningTimer.toFixed(1)}s
+                  </div>
+                ) : null}
+                <div>
+                  <div className="mb-1 flex items-center justify-between text-[10px] text-white/65">
+                    <span>第 {shooterState.wave} 波</span>
+                    <span>
+                      {shooterState.waveBreakTimer > 0
+                        ? `下一波 ${shooterState.waveBreakTimer.toFixed(1)}s`
+                        : `${shooterState.waveKills}/${shooterState.waveTargetKills}`}
+                    </span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-white/12">
+                    <div
+                      className="h-full rounded-full bg-cyan-300 transition-all"
+                      style={{ width: `${Math.max(0, Math.min(100, waveProgressPercent))}%` }}
+                    />
+                  </div>
+                </div>
                 {shooterState.lastScoreAward > 0 ? (
                   <div className="rounded-md border border-emerald-300/25 bg-emerald-400/10 px-2 py-1 text-center font-mono text-[11px] text-emerald-100">
                     +{shooterState.lastScoreAward} 积分
@@ -2727,6 +3472,76 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
                     重开
                   </button>
                 ) : null}
+                <div className="grid grid-cols-3 gap-1">
+                  <ShooterChoiceButton
+                    active={shooterState.weapon === 'pistol'}
+                    label="手枪"
+                    onClick={() => setFirstPersonShooterWeapon('pistol')}
+                    shortcut="1"
+                  />
+                  <ShooterChoiceButton
+                    active={shooterState.weapon === 'sniper'}
+                    label="狙击枪"
+                    onClick={() => setFirstPersonShooterWeapon('sniper')}
+                    shortcut="2"
+                  />
+                  <ShooterChoiceButton
+                    active={shooterState.weapon === 'knife'}
+                    label="刀"
+                    onClick={() => setFirstPersonShooterWeapon('knife')}
+                    shortcut="3"
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-1">
+                  <ShooterChoiceButton
+                    active={shooterState.stance === 'stand'}
+                    label="站着"
+                    onClick={() => setFirstPersonShooterStance('stand')}
+                    shortcut="V"
+                  />
+                  <ShooterChoiceButton
+                    active={shooterState.stance === 'crouch'}
+                    label="蹲着"
+                    onClick={() => setFirstPersonShooterStance('crouch')}
+                    shortcut="C"
+                  />
+                  <ShooterChoiceButton
+                    active={shooterState.stance === 'prone'}
+                    label="趴下"
+                    onClick={() => setFirstPersonShooterStance('prone')}
+                    shortcut="X"
+                  />
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    className="pointer-events-auto h-8 flex-1 rounded-md border border-white/[0.12] bg-white/[0.08] px-2 font-medium text-[11px] text-white transition-colors hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-45"
+                    disabled={shooterState.grenades <= 0}
+                    onClick={() => dispatchFirstPersonShooterGrenade()}
+                    type="button"
+                  >
+                    炸弹 G · {shooterState.grenades}
+                  </button>
+                  <button
+                    className={cn(
+                      'pointer-events-auto h-8 flex-1 rounded-md border px-2 font-medium text-[11px] transition-colors',
+                      shooterState.weapon === 'sniper' && shooterState.scoped
+                        ? 'border-cyan-300/40 bg-cyan-300/18 text-cyan-50'
+                        : 'border-white/[0.12] bg-white/[0.08] text-white hover:bg-white/[0.14]',
+                    )}
+                    disabled={shooterState.weapon !== 'sniper'}
+                    onClick={() => setFirstPersonShooterScoped(!shooterState.scoped)}
+                    type="button"
+                  >
+                    狙击镜 Z
+                  </button>
+                </div>
+                <div className="rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[10px] text-white/65">
+                  {weaponLabel} · {stanceLabel}
+                  {' · '}
+                  {weaponStatusLabel}
+                  {shooterState.weapon === 'sniper' ? ' · 右键按住放大' : ''}
+                  {shooterState.supplyCount > 0 ? ' · 靠近补给自动装弹' : ''}
+                </div>
               </div>
             ) : null}
           </div>
@@ -2749,6 +3564,7 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
       {!presentationMode ? (
         <FirstPersonNavigationPanel
           bookmarks={bookmarks}
+          savedRoutes={savedRoutes}
           currentZone={currentZone}
           arrivalMode={arrivalMode}
           flyCameraMode={flyCameraMode}
@@ -2761,13 +3577,16 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
           onAddManualRoutePoint={addManualRoutePoint}
           onClearManualRoute={() => setManualRoute([])}
           onDeleteBookmark={deleteBookmark}
+          onDeleteSavedRoute={deleteSavedRoute}
           onLevelSelect={selectLevel}
           onArrivalModeChange={setArrivalMode}
           onFlyCameraModeChange={setFlyCameraMode}
           onSelectBookmark={selectBookmark}
           onSelectZone={selectZone}
-          onSaveBookmark={saveBookmark}
+          onSaveManualRoute={saveManualRoute}
           onStartManualRoute={startManualRoute}
+          onStartSavedRoute={startSavedRoute}
+          onStartSavedRoutes={startSavedRoutes}
           onStartTour={startTour}
           onStopTour={stopTour}
           onTogglePresentation={() => setPresentationMode(true)}
@@ -2790,10 +3609,32 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
             <HudHint label="Slower" keys={['Alt']} />
             <HudHint label="Speed" keys={['Wheel']} />
             <HudHint label="Gamepad" keys={['L', 'R']} />
+            {shooterState.active ? (
+              <>
+                <HudHint label="Weapon" keys={['1', '2', '3']} />
+                <HudHint label="Reload" keys={['R']} />
+                <HudHint label="Bomb" keys={['G']} />
+                <HudHint label="Pose" keys={['V', 'C', 'X']} />
+              </>
+            ) : null}
 
             <div className="mx-1 h-6 w-px bg-white/15" />
 
             <FirstPersonSpeedControl onChange={setSpeed} value={speed} />
+
+            <button
+              aria-label="保存视角"
+              className="pointer-events-auto flex h-8 items-center gap-1.5 rounded-md border border-emerald-300/25 bg-emerald-400/14 px-3 font-medium text-[11px] text-emerald-50 transition-colors hover:bg-emerald-400/24 disabled:cursor-not-allowed disabled:opacity-45"
+              disabled={!pose}
+              onClick={() => void saveBookmark()}
+              title="保存当前视角，快捷键 B"
+              type="button"
+            >
+              <span>保存视角</span>
+              <kbd className="rounded border border-white/20 bg-white/10 px-1.5 py-0.5 font-mono text-[10px] text-white/75">
+                B
+              </kbd>
+            </button>
 
             <button
               aria-label={modeLabel}
@@ -2839,6 +3680,112 @@ function ShooterStat({ label, value }: { label: string; value: number }) {
       <div className="font-mono text-[12px] leading-none text-white">{value}</div>
       <div className="mt-0.5 text-[9px] text-white/55">{label}</div>
     </div>
+  )
+}
+
+function ShooterRadar({
+  pose,
+  shooterState,
+}: {
+  pose: FirstPersonPose | null
+  shooterState: ReturnType<typeof getFirstPersonShooterStateSnapshot>
+}) {
+  const range = 34
+  const yaw = pose?.yaw ?? 0
+  const originX = pose?.x ?? 0
+  const originZ = pose?.z ?? 0
+
+  const project = (x: number, z: number) => {
+    const dx = x - originX
+    const dz = z - originZ
+    const right = dx * Math.cos(yaw) - dz * Math.sin(yaw)
+    const forward = dx * -Math.sin(yaw) + dz * -Math.cos(yaw)
+    const distance = Math.hypot(right, forward)
+    const scale = distance > range ? range / distance : 1
+
+    return {
+      left: 50 + ((right * scale) / range) * 48,
+      top: 50 - ((forward * scale) / range) * 48,
+      clamped: distance > range,
+    }
+  }
+
+  return (
+    <div className="relative h-28 overflow-hidden rounded-md border border-white/[0.1] bg-slate-950/35">
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.08)_1px,transparent_1px)] bg-[length:18px_18px]" />
+      <div className="absolute top-1/2 left-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.7)]" />
+      <div className="absolute top-2 left-1/2 -translate-x-1/2 text-[9px] text-white/45">前</div>
+      {shooterState.radarSupplies.map((supply) => {
+        const point = project(supply.x, supply.z)
+        return (
+          <span
+            className={cn(
+              'absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-[3px] border border-cyan-100/70 bg-cyan-300 shadow-[0_0_8px_rgba(34,211,238,0.75)]',
+              point.clamped && 'opacity-55',
+            )}
+            key={supply.id}
+            style={{ left: `${point.left}%`, top: `${point.top}%` }}
+          />
+        )
+      })}
+      {shooterState.radarMonsters.map((monster) => {
+        const point = project(monster.x, monster.z)
+        const color =
+          monster.kind === 'runner'
+            ? 'bg-amber-300'
+            : monster.kind === 'brute'
+              ? 'bg-violet-400'
+              : 'bg-rose-500'
+        return (
+          <span
+            className={cn(
+              'absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/50 shadow-[0_0_8px_rgba(248,113,113,0.65)]',
+              color,
+              point.clamped && 'opacity-55',
+            )}
+            key={monster.id}
+            style={{
+              left: `${point.left}%`,
+              top: `${point.top}%`,
+              transform: `translate(-50%, -50%) scale(${0.75 + monster.healthRatio * 0.45})`,
+            }}
+          />
+        )
+      })}
+      <div className="absolute right-1.5 bottom-1.5 flex items-center gap-1 text-[8px] text-white/45">
+        <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+        <span>敌</span>
+        <span className="ml-1 h-1.5 w-1.5 rounded-[2px] bg-cyan-300" />
+        <span>补</span>
+      </div>
+    </div>
+  )
+}
+
+function ShooterChoiceButton({
+  active,
+  label,
+  onClick,
+  shortcut,
+}: {
+  active: boolean
+  label: string
+  onClick: () => void
+  shortcut: string
+}) {
+  return (
+    <button
+      className={cn(
+        'pointer-events-auto h-8 rounded-md border px-1 font-medium text-[10px] transition-colors',
+        active
+          ? 'border-emerald-300/40 bg-emerald-400/16 text-emerald-50'
+          : 'border-white/[0.1] bg-white/[0.06] text-white/78 hover:bg-white/[0.12]',
+      )}
+      onClick={onClick}
+      type="button"
+    >
+      {label} <span className="font-mono text-white/45">{shortcut}</span>
+    </button>
   )
 }
 
@@ -3023,6 +3970,7 @@ function TouchMovePad() {
 
 function FirstPersonNavigationPanel({
   bookmarks,
+  savedRoutes,
   currentZone,
   arrivalMode,
   flyCameraMode,
@@ -3037,11 +3985,14 @@ function FirstPersonNavigationPanel({
   onArrivalModeChange,
   onFlyCameraModeChange,
   onDeleteBookmark,
+  onDeleteSavedRoute,
   onLevelSelect,
-  onSaveBookmark,
   onSelectBookmark,
   onSelectZone,
+  onSaveManualRoute,
   onStartManualRoute,
+  onStartSavedRoute,
+  onStartSavedRoutes,
   onStartTour,
   onStopTour,
   onTogglePresentation,
@@ -3051,6 +4002,7 @@ function FirstPersonNavigationPanel({
   tourStatus,
 }: {
   bookmarks: FirstPersonBookmark[]
+  savedRoutes: FirstPersonSavedRoute[]
   currentZone: ZoneNode | null
   arrivalMode: ArrivalMode
   flyCameraMode: FirstPersonFlyCameraMode
@@ -3060,16 +4012,21 @@ function FirstPersonNavigationPanel({
   navigationMode: FirstPersonNavigationMode
   routePlanning: boolean
   activeLevelId: LevelNode['id'] | null
-  onAddManualRoutePoint: (point: Partial<FirstPersonPose> & Pick<FirstPersonPose, 'x' | 'z'>) => void
+  onAddManualRoutePoint: (
+    point: Partial<FirstPersonPose> & Pick<FirstPersonPose, 'x' | 'z'>,
+  ) => void
   onClearManualRoute: () => void
   onArrivalModeChange: (mode: ArrivalMode) => void
   onFlyCameraModeChange: (mode: FirstPersonFlyCameraMode) => void
   onDeleteBookmark: (bookmarkId: string) => void
+  onDeleteSavedRoute: (routeId: string) => void
   onLevelSelect: (level: LevelNode) => void
-  onSaveBookmark: () => void
   onSelectBookmark: (pose: FirstPersonPose) => void
   onSelectZone: (zoneId: string) => void
+  onSaveManualRoute: () => void
   onStartManualRoute: () => void
+  onStartSavedRoute: (route: FirstPersonSavedRoute) => void
+  onStartSavedRoutes: () => void
   onStartTour: () => void
   onStopTour: () => void
   onTogglePresentation: () => void
@@ -3079,6 +4036,7 @@ function FirstPersonNavigationPanel({
   tourStatus: FirstPersonTourStatus
 }) {
   const manualRouteLength = manualRoute.length
+  const savedRoutePointCount = savedRoutes.reduce((sum, route) => sum + route.points.length, 0)
   const modeLabel = navigationMode === 'walk' ? '行走' : '飞行'
   const routeLabel = navigationMode === 'fly' ? '航线' : '路线'
   const levelDisplayName = getLevelDisplayName(navigationData.level)
@@ -3094,14 +4052,6 @@ function FirstPersonNavigationPanel({
               {currentZone?.name ?? '当前位置'} / {modeLabel}
             </div>
           </div>
-          <button
-            className="h-7 rounded-md border border-white/[0.12] bg-white/[0.08] px-2 font-medium text-[11px] text-white transition-colors hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-45"
-            disabled={!pose}
-            onClick={onSaveBookmark}
-            type="button"
-          >
-            保存视角
-          </button>
         </div>
 
         <div className="grid grid-cols-2 gap-1 px-3 pb-3">
@@ -3231,7 +4181,7 @@ function FirstPersonNavigationPanel({
 
         <div className="border-white/10 border-t px-3 py-2">
           <div className="flex items-center justify-between gap-2">
-            <div className="font-semibold text-[11px] text-white/80">飞行镜头</div>
+            <div className="font-semibold text-[11px] text-white/80">镜头方向</div>
             <div className="text-[10px] text-white/45">
               {flyCameraMode === 'focus-building' ? '全程拍摄房子' : '沿飞行方向'}
             </div>
@@ -3263,7 +4213,7 @@ function FirstPersonNavigationPanel({
             </button>
           </div>
           <div className="mt-2 text-[10px] leading-4 text-white/45">
-            飞行时可选择镜头沿航线前进，或持续锁定建筑中心。
+            行走或飞行时可选择镜头沿路线前进，或持续锁定建筑中心。
           </div>
         </div>
 
@@ -3273,9 +4223,10 @@ function FirstPersonNavigationPanel({
             <div className="font-mono text-[10px] text-white/45">{manualRouteLength}</div>
           </div>
           <div className="mt-2 text-[10px] leading-4 text-white/45">
-            规划时可在 3D 里双击加点，也可以直接在 2D 图上单击或拖拽画线；滚轮缩放，拖动画布平移，规划时中键也可拖动视图。
+            规划时可在 3D 里双击加点，也可以直接在 2D
+            图上单击或拖拽画线；滚轮缩放，拖动画布平移，规划时中键也可拖动视图。
           </div>
-          <div className="mt-2 grid grid-cols-3 gap-1">
+          <div className="mt-2 grid grid-cols-4 gap-1">
             <button
               className={cn(
                 'h-7 rounded-md border border-white/[0.12] px-2 font-medium text-[11px] transition-colors',
@@ -3299,11 +4250,81 @@ function FirstPersonNavigationPanel({
             <button
               className="h-7 rounded-md border border-white/[0.12] bg-white/[0.08] px-2 font-medium text-[11px] text-white transition-colors hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-45"
               disabled={manualRouteLength === 0}
+              onClick={onSaveManualRoute}
+              type="button"
+            >
+              保存
+            </button>
+            <button
+              className="h-7 rounded-md border border-white/[0.12] bg-white/[0.08] px-2 font-medium text-[11px] text-white transition-colors hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-45"
+              disabled={manualRouteLength === 0}
               onClick={onClearManualRoute}
               type="button"
             >
               清空
             </button>
+          </div>
+        </div>
+
+        <div className="border-white/10 border-t px-3 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="font-semibold text-[11px] text-white/80">已保存路线</div>
+            <div className="font-mono text-[10px] text-white/45">
+              {savedRoutes.length} / {savedRoutePointCount}
+            </div>
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-1">
+            <button
+              className="h-7 rounded-md border border-white/[0.12] bg-white/[0.08] px-2 font-medium text-[11px] text-white transition-colors hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-45"
+              disabled={savedRoutePointCount === 0}
+              onClick={onStartSavedRoutes}
+              type="button"
+            >
+              连续播放
+            </button>
+            <button
+              className="h-7 rounded-md border border-white/[0.12] bg-white/[0.08] px-2 font-medium text-[11px] text-white transition-colors hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-45"
+              disabled={savedRoutes.length === 0}
+              onClick={() => savedRoutes.at(-1) && onStartSavedRoute(savedRoutes.at(-1)!)}
+              type="button"
+            >
+              播放最新
+            </button>
+          </div>
+          <div className="mt-2 flex max-h-24 flex-col gap-1 overflow-auto pr-1">
+            {savedRoutes.length > 0 ? (
+              savedRoutes.map((route, index) => (
+                <div
+                  className="flex h-7 items-center rounded-md bg-white/[0.07] text-[11px] text-white/75 transition-colors hover:bg-white/[0.13] hover:text-white"
+                  key={route.id}
+                >
+                  <button
+                    className="flex min-w-0 flex-1 items-center justify-between px-2 text-left"
+                    onClick={() => onStartSavedRoute(route)}
+                    title={`${route.name} · ${route.points.length} 点`}
+                    type="button"
+                  >
+                    <span className="truncate">{route.name}</span>
+                    <span className="ml-2 font-mono text-[10px] text-white/40">
+                      {index + 1} · {route.points.length}
+                    </span>
+                  </button>
+                  <button
+                    aria-label="删除路线"
+                    className="h-7 w-7 shrink-0 text-white/35 transition-colors hover:text-white/80"
+                    onClick={() => onDeleteSavedRoute(route.id)}
+                    title="删除路线"
+                    type="button"
+                  >
+                    x
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="rounded-md bg-white/[0.06] px-2 py-2 text-[11px] text-white/45">
+                先规划路线，再保存为片段
+              </div>
+            )}
           </div>
         </div>
 
@@ -3505,14 +4526,6 @@ function FirstPersonMiniMap({
     lastRoutePointRef.current = null
   }, [routePlanning])
 
-  if (!(displayBounds && projection)) {
-    return (
-      <div className="flex h-[220px] items-center justify-center rounded-lg bg-slate-100 text-[11px] text-slate-500">
-        No map data
-      </div>
-    )
-  }
-
   const resetViewport = () => {
     setViewRange(MINIMAP_VIEW_RANGE_DEFAULT)
     setPanOffset({ x: 0, y: 0 })
@@ -3528,50 +4541,10 @@ function FirstPersonMiniMap({
     x: Math.max(6, Math.min(MINIMAP_WIDTH - 6, point.x)),
     y: Math.max(6, Math.min(MINIMAP_HEIGHT - 6, point.y)),
   })
-  const cameraPoint = pose ? clampProjectedPoint(projection.project(pose.x, pose.z)) : null
-  const cameraForwardTarget =
-    pose && navigationMode === 'fly' && flyCameraMode === 'focus-building'
-      ? navigationData.buildingFocusTarget
-      : null
-  const cameraForward = pose
-    ? clampProjectedPoint(
-        cameraForwardTarget
-          ? projection.project(cameraForwardTarget.x, cameraForwardTarget.z)
-          : projection.project(
-              pose.x - Math.sin(pose.yaw) * 0.85,
-              pose.z - Math.cos(pose.yaw) * 0.85,
-            ),
-      )
-    : null
-  const manualRoutePoints = manualRoute.map((point) => projection.project(point.x, point.z))
-  const compassCenterX = 32
-  const compassCenterY = MINIMAP_HEIGHT - 30
-  const compassRadius = 13
-  const compassDirections = [
-    { label: '北', vector: { x: 0, y: -1 }, primary: true },
-    { label: '东', vector: { x: 1, y: 0 }, primary: false },
-    { label: '南', vector: { x: 0, y: 1 }, primary: false },
-    { label: '西', vector: { x: -1, y: 0 }, primary: false },
-  ].map((direction) => {
-    const rotated = rotateMiniMapPoint(direction.vector, -navigationData.buildingRotation)
-    const length = Math.hypot(rotated.x, rotated.y) || 1
-    const unitX = rotated.x / length
-    const unitY = rotated.y / length
-
-    return {
-      ...direction,
-      innerX: compassCenterX + unitX * 4,
-      innerY: compassCenterY + unitY * 4,
-      outerX: compassCenterX + unitX * (compassRadius - 2),
-      outerY: compassCenterY + unitY * (compassRadius - 2),
-      labelX: compassCenterX + unitX * (compassRadius + 9),
-      labelY: compassCenterY + unitY * (compassRadius + 9),
-    }
-  })
 
   const appendRoutePointFromEvent = useCallback(
     (event: ReactPointerEvent<SVGSVGElement>, sampled: boolean) => {
-      if (!(routePlanning && svgRef.current)) return
+      if (!(routePlanning && projection && svgRef.current)) return
 
       const rect = svgRef.current.getBoundingClientRect()
       if (rect.width <= 0 || rect.height <= 0) return
@@ -3623,22 +4596,66 @@ function FirstPersonMiniMap({
     [panOffset.x, panOffset.y],
   )
 
-  const endPointerInteraction = useCallback(
-    (event: ReactPointerEvent<SVGSVGElement>) => {
-      if (pointerIdRef.current !== event.pointerId) return
+  const endPointerInteraction = useCallback((event: ReactPointerEvent<SVGSVGElement>) => {
+    if (pointerIdRef.current !== event.pointerId) return
 
-      pointerIdRef.current = null
-      pointerModeRef.current = null
-      panDragRef.current = null
-      lastRoutePointRef.current = null
-      setIsPanning(false)
+    pointerIdRef.current = null
+    pointerModeRef.current = null
+    panDragRef.current = null
+    lastRoutePointRef.current = null
+    setIsPanning(false)
 
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId)
-      }
-    },
-    [],
-  )
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }, [])
+
+  if (!(displayBounds && projection)) {
+    return (
+      <div className="flex h-[220px] items-center justify-center rounded-lg bg-slate-100 text-[11px] text-slate-500">
+        No map data
+      </div>
+    )
+  }
+
+  const cameraPoint = pose ? clampProjectedPoint(projection.project(pose.x, pose.z)) : null
+  const cameraForwardTarget =
+    pose && flyCameraMode === 'focus-building' ? navigationData.buildingFocusTarget : null
+  const cameraForward = pose
+    ? clampProjectedPoint(
+        cameraForwardTarget
+          ? projection.project(cameraForwardTarget.x, cameraForwardTarget.z)
+          : projection.project(
+              pose.x - Math.sin(pose.yaw) * 0.85,
+              pose.z - Math.cos(pose.yaw) * 0.85,
+            ),
+      )
+    : null
+  const manualRoutePoints = manualRoute.map((point) => projection.project(point.x, point.z))
+  const compassCenterX = 32
+  const compassCenterY = MINIMAP_HEIGHT - 30
+  const compassRadius = 13
+  const compassDirections = [
+    { label: '北', vector: { x: 0, y: -1 }, primary: true },
+    { label: '东', vector: { x: 1, y: 0 }, primary: false },
+    { label: '南', vector: { x: 0, y: 1 }, primary: false },
+    { label: '西', vector: { x: -1, y: 0 }, primary: false },
+  ].map((direction) => {
+    const rotated = rotateMiniMapPoint(direction.vector, -navigationData.buildingRotation)
+    const length = Math.hypot(rotated.x, rotated.y) || 1
+    const unitX = rotated.x / length
+    const unitY = rotated.y / length
+
+    return {
+      ...direction,
+      innerX: compassCenterX + unitX * 4,
+      innerY: compassCenterY + unitY * 4,
+      outerX: compassCenterX + unitX * (compassRadius - 2),
+      outerY: compassCenterY + unitY * (compassRadius - 2),
+      labelX: compassCenterX + unitX * (compassRadius + 9),
+      labelY: compassCenterY + unitY * (compassRadius + 9),
+    }
+  })
 
   return (
     <div className="relative overflow-hidden rounded-lg border border-white/12 bg-slate-100 shadow-inner">
@@ -3750,20 +4767,10 @@ function FirstPersonMiniMap({
         <rect fill="#f8fafc" height={MINIMAP_HEIGHT} width={MINIMAP_WIDTH} />
         <g clipPath={`url(#${gridId}-clip)`}>
           {minorGridPath ? (
-            <path
-              d={minorGridPath}
-              fill="none"
-              stroke="rgba(148,163,184,0.24)"
-              strokeWidth={1}
-            />
+            <path d={minorGridPath} fill="none" stroke="rgba(148,163,184,0.24)" strokeWidth={1} />
           ) : null}
           {majorGridPath ? (
-            <path
-              d={majorGridPath}
-              fill="none"
-              stroke="rgba(148,163,184,0.4)"
-              strokeWidth={1}
-            />
+            <path d={majorGridPath} fill="none" stroke="rgba(148,163,184,0.4)" strokeWidth={1} />
           ) : null}
 
           {navigationData.slabs.map((slab) => {

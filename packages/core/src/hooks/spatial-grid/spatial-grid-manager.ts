@@ -1,4 +1,4 @@
-import type { AnyNode, CeilingNode, ItemNode, SlabNode, WallNode } from '../../schema'
+import type { AnyNode, CeilingNode, ItemNode, SlabNode, TerrainNode, WallNode } from '../../schema'
 import { getScaledDimensions } from '../../schema'
 import { SpatialGrid } from './spatial-grid'
 import { WallSpatialGrid } from './wall-spatial-grid'
@@ -164,6 +164,38 @@ export function itemOverlapsPolygon(
   return false
 }
 
+function getTerrainTriangleHeightAt(
+  x: number,
+  z: number,
+  a: [number, number, number],
+  b: [number, number, number],
+  c: [number, number, number],
+): number | null {
+  const v0x = b[0] - a[0]
+  const v0z = b[2] - a[2]
+  const v1x = c[0] - a[0]
+  const v1z = c[2] - a[2]
+  const v2x = x - a[0]
+  const v2z = z - a[2]
+  const d00 = v0x * v0x + v0z * v0z
+  const d01 = v0x * v1x + v0z * v1z
+  const d11 = v1x * v1x + v1z * v1z
+  const d20 = v2x * v0x + v2z * v0z
+  const d21 = v2x * v1x + v2z * v1z
+  const denom = d00 * d11 - d01 * d01
+
+  if (Math.abs(denom) < 1e-9) return null
+
+  const v = (d11 * d20 - d01 * d21) / denom
+  const w = (d00 * d21 - d01 * d20) / denom
+  const u = 1 - v - w
+  const tolerance = 1e-6
+
+  if (u < -tolerance || v < -tolerance || w < -tolerance) return null
+
+  return u * a[1] + v * b[1] + w * c[1]
+}
+
 /**
  * Check if wall segment (a) is substantially on polygon edge segment (b).
  * Returns true only if BOTH endpoints of the wall are on or very close to the edge.
@@ -277,6 +309,7 @@ export class SpatialGridManager {
   private readonly wallGrids = new Map<string, WallSpatialGrid>() // levelId -> wall grid
   private readonly walls = new Map<string, WallNode>() // wallId -> wall data (for length calculations)
   private readonly slabsByLevel = new Map<string, Map<string, SlabNode>>() // levelId -> (slabId -> slab)
+  private readonly terrains = new Map<string, TerrainNode>() // terrainId -> terrain data
   private readonly ceilingGrids = new Map<string, SpatialGrid>() // ceilingId -> grid
   private readonly ceilings = new Map<string, CeilingNode>() // ceilingId -> ceiling data
   private readonly itemCeilingMap = new Map<string, string>() // itemId -> ceilingId (reverse lookup)
@@ -332,6 +365,8 @@ export class SpatialGridManager {
   handleNodeCreated(node: AnyNode, levelId: string) {
     if (node.type === 'slab') {
       this.getSlabMap(levelId).set(node.id, node as SlabNode)
+    } else if (node.type === 'terrain') {
+      this.terrains.set(node.id, node as TerrainNode)
     } else if (node.type === 'ceiling') {
       this.ceilings.set(node.id, node as CeilingNode)
     } else if (node.type === 'wall') {
@@ -389,6 +424,8 @@ export class SpatialGridManager {
   handleNodeUpdated(node: AnyNode, levelId: string) {
     if (node.type === 'slab') {
       this.getSlabMap(levelId).set(node.id, node as SlabNode)
+    } else if (node.type === 'terrain') {
+      this.terrains.set(node.id, node as TerrainNode)
     } else if (node.type === 'ceiling') {
       this.ceilings.set(node.id, node as CeilingNode)
     } else if (node.type === 'wall') {
@@ -452,6 +489,8 @@ export class SpatialGridManager {
   handleNodeDeleted(nodeId: string, nodeType: string, levelId: string) {
     if (nodeType === 'slab') {
       this.getSlabMap(levelId).delete(nodeId)
+    } else if (nodeType === 'terrain') {
+      this.terrains.delete(nodeId)
     } else if (nodeType === 'ceiling') {
       this.ceilings.delete(nodeId)
       this.ceilingGrids.delete(nodeId)
@@ -533,6 +572,37 @@ export class SpatialGridManager {
   }
 
   /**
+   * Get interpolated terrain elevation at a site-space point.
+   * Returns null when no terrain triangle covers the point.
+   */
+  getTerrainElevationAt(x: number, z: number): number | null {
+    let maxElevation: number | null = null
+
+    for (const terrain of this.terrains.values()) {
+      if (!terrain.visible) continue
+      const vertices = terrain.vertices
+      for (const [ia, ib, ic] of terrain.triangles) {
+        const a = vertices[ia]
+        const b = vertices[ib]
+        const c = vertices[ic]
+        if (!(a && b && c)) continue
+
+        const elevation = getTerrainTriangleHeightAt(x, z, a, b, c)
+        if (elevation === null) continue
+        maxElevation = maxElevation === null ? elevation : Math.max(maxElevation, elevation)
+      }
+    }
+
+    return maxElevation
+  }
+
+  getGroundElevationAt(levelId: string, x: number, z: number): number {
+    const slabElevation = this.getSlabElevationAt(levelId, x, z)
+    const terrainElevation = levelId === 'default' ? this.getTerrainElevationAt(x, z) : null
+    return Math.max(slabElevation, terrainElevation ?? 0)
+  }
+
+  /**
    * Get the total slab elevation at a given (x, z) position on a level.
    * Returns the highest slab elevation if the point is inside any slab polygon (but not in any holes), otherwise 0.
    */
@@ -605,6 +675,29 @@ export class SpatialGridManager {
       }
     }
     return maxElevation === Number.NEGATIVE_INFINITY ? 0 : maxElevation
+  }
+
+  getGroundElevationForItem(
+    levelId: string,
+    position: [number, number, number],
+    dimensions: [number, number, number],
+    rotation: [number, number, number],
+  ): number {
+    const slabElevation = this.getSlabElevationForItem(levelId, position, dimensions, rotation)
+    if (levelId !== 'default') return slabElevation
+
+    const terrainSamples = getItemFootprint(position, dimensions, rotation, 0.01)
+    terrainSamples.push([position[0], position[2]])
+
+    let terrainElevation: number | null = null
+    for (const [x, z] of terrainSamples) {
+      const sampleElevation = this.getTerrainElevationAt(x, z)
+      if (sampleElevation === null) continue
+      terrainElevation =
+        terrainElevation === null ? sampleElevation : Math.max(terrainElevation, sampleElevation)
+    }
+
+    return Math.max(slabElevation, terrainElevation ?? 0)
   }
 
   /**
@@ -707,6 +800,7 @@ export class SpatialGridManager {
     this.wallGrids.clear()
     this.walls.clear()
     this.slabsByLevel.clear()
+    this.terrains.clear()
     this.ceilingGrids.clear()
     this.ceilings.clear()
     this.itemCeilingMap.clear()

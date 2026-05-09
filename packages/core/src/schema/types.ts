@@ -1,4 +1,5 @@
 import z from 'zod'
+import { BeamNode } from './nodes/beam'
 import { BuildingNode } from './nodes/building'
 import { CeilingNode } from './nodes/ceiling'
 import { DoorNode } from './nodes/door'
@@ -7,6 +8,8 @@ import { FenceNode } from './nodes/fence'
 import { GuideNode } from './nodes/guide'
 import { ItemNode } from './nodes/item'
 import { LevelNode } from './nodes/level'
+import { LoftNode } from './nodes/loft'
+import { ProceduralTowerNode } from './nodes/procedural-tower'
 import { RoofNode } from './nodes/roof'
 import { RoofSegmentNode } from './nodes/roof-segment'
 import { ScanNode } from './nodes/scan'
@@ -17,6 +20,7 @@ import { SketchLineNode } from './nodes/sketch-line'
 import { SlabNode } from './nodes/slab'
 import { StairNode } from './nodes/stair'
 import { StairSegmentNode } from './nodes/stair-segment'
+import { TerrainNode } from './nodes/terrain'
 import { WallNode } from './nodes/wall'
 import { WindowNode } from './nodes/window'
 import { ZoneNode } from './nodes/zone'
@@ -25,6 +29,9 @@ export const AnyNode = z.discriminatedUnion('type', [
   SiteNode,
   BuildingNode,
   LevelNode,
+  BeamNode,
+  LoftNode,
+  ProceduralTowerNode,
   FeatureNode,
   WallNode,
   FenceNode,
@@ -36,6 +43,7 @@ export const AnyNode = z.discriminatedUnion('type', [
   RoofSegmentNode,
   StairNode,
   StairSegmentNode,
+  TerrainNode,
   ScanNode,
   GuideNode,
   SketchDimensionNode,

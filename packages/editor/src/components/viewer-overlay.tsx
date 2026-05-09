@@ -63,6 +63,9 @@ const wallModeConfig = {
 const getNodeName = (node: AnyNode): string => {
   if ('name' in node && node.name) return node.name
   if (node.type === 'wall') return 'Wall'
+  if (node.type === 'beam') return 'Beam'
+  if (node.type === 'loft') return 'Loft'
+  if (node.type === 'procedural-tower') return 'Procedural Tower'
   if (node.type === 'fence') return 'Fence'
   if (node.type === 'item') return (node as { asset: { name: string } }).asset?.name || 'Item'
   if (node.type === 'slab') return 'Slab'

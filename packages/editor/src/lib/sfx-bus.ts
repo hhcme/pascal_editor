@@ -14,9 +14,16 @@ type SFXEvents = {
   'sfx:structure-delete': undefined
   'sfx:shooter-start': undefined
   'sfx:shooter-fire': undefined
+  'sfx:shooter-pistol': undefined
+  'sfx:shooter-sniper': undefined
+  'sfx:shooter-knife': undefined
+  'sfx:shooter-grenade': undefined
+  'sfx:shooter-explosion': undefined
   'sfx:shooter-hit': undefined
   'sfx:shooter-kill': undefined
+  'sfx:shooter-combo': undefined
   'sfx:shooter-damage': undefined
+  'sfx:shooter-spawn-warning': undefined
 }
 
 /**
@@ -44,9 +51,16 @@ export function initSFXBus() {
   sfxEmitter.on('sfx:structure-delete', () => playSFX('structureDelete'))
   sfxEmitter.on('sfx:shooter-start', () => playSFX('shooterStart'))
   sfxEmitter.on('sfx:shooter-fire', () => playSFX('shooterFire'))
+  sfxEmitter.on('sfx:shooter-pistol', () => playSFX('shooterPistol'))
+  sfxEmitter.on('sfx:shooter-sniper', () => playSFX('shooterSniper'))
+  sfxEmitter.on('sfx:shooter-knife', () => playSFX('shooterKnife'))
+  sfxEmitter.on('sfx:shooter-grenade', () => playSFX('shooterGrenade'))
+  sfxEmitter.on('sfx:shooter-explosion', () => playSFX('shooterExplosion'))
   sfxEmitter.on('sfx:shooter-hit', () => playSFX('shooterHit'))
   sfxEmitter.on('sfx:shooter-kill', () => playSFX('shooterKill'))
+  sfxEmitter.on('sfx:shooter-combo', () => playSFX('shooterCombo'))
   sfxEmitter.on('sfx:shooter-damage', () => playSFX('shooterDamage'))
+  sfxEmitter.on('sfx:shooter-spawn-warning', () => playSFX('shooterSpawnWarning'))
 }
 
 /**

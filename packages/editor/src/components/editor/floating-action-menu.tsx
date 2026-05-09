@@ -19,10 +19,10 @@ import {
   WallNode,
   WindowNode,
 } from '@pascal-app/core'
-import { useViewer } from '@pascal-app/viewer'
+import { type CharacterMotion, useViewer } from '@pascal-app/viewer'
 import { Html } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
-import { Copy, MousePointer2, Move, Navigation, Trash2 } from 'lucide-react'
+import { Activity, Copy, Footprints, MousePointer2, Move, Navigation, Trash2, UsersRound } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { float } from 'three/tsl'
@@ -59,6 +59,20 @@ const CHARACTER_COMMAND_EVENT = 'editor:character-command'
 const FIRST_PERSON_JUMP_TO_POSE_EVENT = 'editor:first-person-jump-pose'
 const FIRST_PERSON_END_EVENT = 'editor:first-person-ended'
 
+const CHARACTER_MOTION_ACTIONS: Array<{ label: string; motion: CharacterMotion }> = [
+  { motion: 'idle', label: '站立' },
+  { motion: 'walk', label: '走' },
+  { motion: 'run', label: '跑' },
+  { motion: 'jump', label: '跳' },
+  { motion: 'sit', label: '坐' },
+  { motion: 'crouch', label: '蹲' },
+  { motion: 'lie', label: '躺' },
+  { motion: 'chat', label: '闲聊' },
+  { motion: 'swim', label: '游泳' },
+  { motion: 'drown', label: '挣扎求救' },
+  { motion: 'dead', label: '漂浮' },
+]
+
 type ManagedTransparencyState = {
   original: THREE.Material | THREE.Material[]
   transparent: THREE.Material | THREE.Material[]
@@ -70,8 +84,10 @@ type CharacterMenuState = {
   anchor: [number, number, number]
   eyeHeight: number
   id: string
+  motion?: CharacterMotion
   name?: string
   position: [number, number, number]
+  roam?: boolean
   yaw: number
 }
 
@@ -93,8 +109,10 @@ function detailIsCharacterRoamEvent(value: unknown): value is {
   anchor?: [number, number, number]
   eyeHeight: number
   id?: string
+  motion?: unknown
   name?: string
   position: [number, number, number]
+  roam?: unknown
   yaw: number
 } {
   if (!isRecord(value)) return false
@@ -113,6 +131,13 @@ function detailIsCharacterRoamEvent(value: unknown): value is {
 function detailIsCharacterMenuEvent(value: unknown): value is CharacterMenuState {
   if (!detailIsCharacterRoamEvent(value)) return false
   if (typeof value.id !== 'string') return false
+  if (
+    value.motion !== undefined &&
+    !CHARACTER_MOTION_ACTIONS.some((action) => action.motion === value.motion)
+  ) {
+    return false
+  }
+  if (value.roam !== undefined && typeof value.roam !== 'boolean') return false
   const anchor = value.anchor
   return (
     Array.isArray(anchor) &&
@@ -458,11 +483,14 @@ export function FloatingActionMenu() {
   }, [])
 
   const dispatchCharacterCommand = useCallback(
-    (command: 'delete' | 'duplicate' | 'roam' | 'select') => {
+    (
+      command: 'delete' | 'duplicate' | 'roam' | 'select' | 'set-all-roam' | 'set-motion' | 'set-roam',
+      options?: { motion?: CharacterMotion; roam?: boolean },
+    ) => {
       if (!characterMenu) return
       window.dispatchEvent(
         new CustomEvent(CHARACTER_COMMAND_EVENT, {
-          detail: { command, id: characterMenu.id },
+          detail: { command, id: characterMenu.id, motion: options?.motion, roam: options?.roam },
         }),
       )
       setCharacterMenu(null)
@@ -937,6 +965,44 @@ export function FloatingActionMenu() {
                   icon: <MousePointer2 className="h-4 w-4" />,
                   onClick: () => dispatchCharacterCommand('select'),
                 },
+                {
+                  id: 'character-motion',
+                  label: `动作：${
+                    CHARACTER_MOTION_ACTIONS.find((action) => action.motion === characterMenu.motion)?.label ??
+                    '站立'
+                  }`,
+                  icon: <Activity className="h-4 w-4" />,
+                  children: CHARACTER_MOTION_ACTIONS.map((action) => ({
+                    id: `character-motion-${action.motion}`,
+                    label: action.label,
+                    icon: <Activity className="h-4 w-4" />,
+                    active: characterMenu.motion === action.motion,
+                    onClick: () => dispatchCharacterCommand('set-motion', { motion: action.motion }),
+                  })),
+                },
+                {
+                  id: 'character-toggle-roam',
+                  label: characterMenu.roam ? '停止随意走动' : '随意走动',
+                  icon: <Footprints className="h-4 w-4" />,
+                  active: characterMenu.roam === true,
+                  onClick: () => dispatchCharacterCommand('set-roam', { roam: !characterMenu.roam }),
+                },
+                ...[
+                  {
+                    id: 'character-all-roam',
+                    label: '全部随意走动',
+                    icon: <UsersRound className="h-4 w-4" />,
+                    onClick: () => dispatchCharacterCommand('set-all-roam', { roam: true }),
+                  },
+                  {
+                    id: 'character-all-stop-roam',
+                    label: '全部停止走动',
+                    icon: <UsersRound className="h-4 w-4" />,
+                    onClick: () => dispatchCharacterCommand('set-all-roam', { roam: false }),
+                  },
+                ].map((action) => ({
+                  ...action,
+                })),
                 {
                   id: 'character-duplicate',
                   label: '复制人物',

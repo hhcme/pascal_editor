@@ -72,6 +72,7 @@ type EditorBootstrapPayload = {
   config: {
     language: 'zh-CN' | 'en'
     autosave: boolean
+    cameraWheelSpeed?: number
     hostMode: 'electron-webview'
   }
 }
@@ -1259,6 +1260,7 @@ export default function Home() {
       const bootstrap = await fetchBootstrap()
       bootstrapLoadedRef.current = true
       setAutoSaveEnabled(bootstrap.config.autosave)
+      useEditor.getState().setCameraWheelSpeed(Number(bootstrap.config.cameraWheelSpeed))
       return normalizeScene(bootstrap.scene)
     } catch (error) {
       bootstrapLoadedRef.current = false
@@ -1788,6 +1790,15 @@ export default function Home() {
         if (isViewMode(payload.viewMode)) {
           useEditor.getState().setViewMode(payload.viewMode)
         }
+        return
+      }
+
+      if (event.data.type === 'set-camera-wheel-speed') {
+        const payload =
+          event.data.payload && typeof event.data.payload === 'object'
+            ? (event.data.payload as { speed?: unknown })
+            : {}
+        useEditor.getState().setCameraWheelSpeed(Number(payload.speed))
         return
       }
 

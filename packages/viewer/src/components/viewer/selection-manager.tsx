@@ -54,6 +54,7 @@ type SelectableNodeType =
   | 'roof'
   | 'roof-segment'
   | 'sketch-line'
+  | 'terrain'
 
 // Expand polygon outward by a small amount to include items on edges
 const expandPolygon = (polygon: [number, number][], tolerance: number): [number, number][] => {
@@ -223,28 +224,42 @@ const getStrategy = (): SelectionStrategy | null => {
   // No building selected -> can select buildings
   if (!buildingId) {
     return {
-      types: ['building'],
-      handleClick: (node) => {
+      types: ['building', 'terrain'],
+      handleClick: (node, nativeEvent) => {
+        if (node.type === 'terrain') {
+          const { selectedIds } = useViewer.getState().selection
+          useViewer
+            .getState()
+            .setSelection({ selectedIds: computeNextIds(node, selectedIds, nativeEvent) })
+          return
+        }
         useViewer.getState().setSelection({ buildingId: (node as BuildingNode).id })
       },
       handleDeselect: () => {
         // Nothing to deselect at root level
       },
-      isValid: (node) => node.type === 'building',
+      isValid: (node) => node.type === 'building' || node.type === 'terrain',
     }
   }
 
   // Building selected, no level -> can select levels
   if (!levelId) {
     return {
-      types: ['level'],
-      handleClick: (node) => {
+      types: ['level', 'terrain'],
+      handleClick: (node, nativeEvent) => {
+        if (node.type === 'terrain') {
+          const { selectedIds } = useViewer.getState().selection
+          useViewer
+            .getState()
+            .setSelection({ selectedIds: computeNextIds(node, selectedIds, nativeEvent) })
+          return
+        }
         useViewer.getState().setSelection({ levelId: (node as LevelNode).id })
       },
       handleDeselect: () => {
         useViewer.getState().setSelection({ buildingId: null })
       },
-      isValid: (node) => node.type === 'level',
+      isValid: (node) => node.type === 'level' || node.type === 'terrain',
     }
   }
 
@@ -253,8 +268,16 @@ const getStrategy = (): SelectionStrategy | null => {
   // after placement without forcing the user to drill into the containing room.
   if (!zoneId) {
     return {
-      types: ['zone', 'item'],
+      types: ['zone', 'item', 'terrain'],
       handleClick: (node, nativeEvent) => {
+        if (node.type === 'terrain') {
+          const { selectedIds } = useViewer.getState().selection
+          useViewer
+            .getState()
+            .setSelection({ selectedIds: computeNextIds(node, selectedIds, nativeEvent) })
+          return
+        }
+
         if (node.type === 'item') {
           const { selectedIds } = useViewer.getState().selection
           useViewer
@@ -275,6 +298,7 @@ const getStrategy = (): SelectionStrategy | null => {
       },
       isValid: (node) =>
         (node.type === 'zone' && node.parentId === levelId) ||
+        node.type === 'terrain' ||
         (node.type === 'item' && isPersonItem(node as ItemNode) && isNodeOnLevel(node, levelId)),
     }
   }
@@ -293,9 +317,18 @@ const getStrategy = (): SelectionStrategy | null => {
       'sketch-line',
       'window',
       'door',
+      'terrain',
     ],
     handleClick: (node, nativeEvent) => {
       let nodeToSelect = node
+      if (node.type === 'terrain') {
+        const { selectedIds } = useViewer.getState().selection
+        useViewer
+          .getState()
+          .setSelection({ selectedIds: computeNextIds(node, selectedIds, nativeEvent) })
+        return
+      }
+
       if (node.type === 'roof-segment' && node.parentId) {
         const parentNode = useScene.getState().nodes[node.parentId as AnyNodeId]
         if (parentNode && parentNode.type === 'roof') {
@@ -330,8 +363,10 @@ const getStrategy = (): SelectionStrategy | null => {
         'sketch-line',
         'window',
         'door',
+        'terrain',
       ]
       if (!validTypes.includes(node.type)) return false
+      if (node.type === 'terrain') return true
       return isNodeInZone(node, levelId, zoneId)
     },
   }
@@ -392,6 +427,7 @@ export const SelectionManager = () => {
       'sketch-line',
       'window',
       'door',
+      'terrain',
     ]
     for (const type of allTypes) {
       emitter.on(`${type}:enter`, onEnter)

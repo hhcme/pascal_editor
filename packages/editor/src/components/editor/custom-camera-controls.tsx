@@ -4,7 +4,7 @@ import { type CameraControlEvent, emitter, sceneRegistry, useScene } from '@pasc
 import { useViewer, ZONE_LAYER } from '@pascal-app/viewer'
 import { CameraControls, CameraControlsImpl } from '@react-three/drei'
 import { useThree } from '@react-three/fiber'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Box3, type Object3D, Raycaster, Vector2, Vector3 } from 'three'
 import { EDITOR_LAYER } from '../../lib/constants'
 import useEditor from '../../store/use-editor'
@@ -23,8 +23,13 @@ const DEFAULT_MAX_POLAR_ANGLE = Math.PI / 2 - 0.1
 const DEBUG_MAX_POLAR_ANGLE = Math.PI - 0.05
 const SIDE_VIEW_POLAR_ANGLE = Math.PI / 2 - 0.12
 const LEFT_CAMERA_DRAG_THRESHOLD_PX = 4
+const EDITOR_MAX_CAMERA_DISTANCE = 1000
 const TRI_VIEW_INTERACTIVE_AREA = { x: 0.5, y: 0, width: 0.5, height: 0.5 }
 const FULL_INTERACTIVE_AREA = { x: 0, y: 0, width: 1, height: 1 }
+const DEFAULT_SCENE_DIAGONAL = 40
+const MIN_ADAPTIVE_WHEEL_SPEED = 0.7
+const MAX_ADAPTIVE_WHEEL_SPEED = 4.5
+const SCENE_DIAGONAL_TO_WHEEL_SPEED = 120
 
 const EDITOR_INTERACTION_NODE_TYPES = [
   'site',
@@ -161,6 +166,50 @@ function getEditorOrbitCenter(out: Vector3) {
   return [out.x, out.y, out.z].every(Number.isFinite)
 }
 
+function getEditorSceneBounds(out: Box3) {
+  out.makeEmpty()
+
+  const scene = useScene.getState()
+  let hasRootBounds = false
+
+  for (const nodeId of scene.rootNodeIds) {
+    const object = sceneRegistry.nodes.get(String(nodeId))
+    if (!object || !isVisibleInHierarchy(object)) continue
+
+    tempSceneObjectBox.setFromObject(object)
+    if (tempSceneObjectBox.isEmpty()) continue
+
+    out.union(tempSceneObjectBox)
+    hasRootBounds = true
+  }
+
+  if (hasRootBounds) return true
+
+  for (const object of sceneRegistry.nodes.values()) {
+    if (!isVisibleInHierarchy(object)) continue
+
+    tempSceneObjectBox.setFromObject(object)
+    if (!tempSceneObjectBox.isEmpty()) {
+      out.union(tempSceneObjectBox)
+    }
+  }
+
+  return !out.isEmpty()
+}
+
+function getEditorSceneDiagonal() {
+  if (!getEditorSceneBounds(tempSceneBounds)) return DEFAULT_SCENE_DIAGONAL
+
+  tempSceneBounds.getSize(tempSize)
+  const diagonal = tempSize.length()
+
+  return Number.isFinite(diagonal) && diagonal > 0 ? diagonal : DEFAULT_SCENE_DIAGONAL
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
+}
+
 export const CustomCameraControls = () => {
   const controls = useRef<CameraControlsImpl>(null!)
   const pointer = useRef(new Vector2())
@@ -175,8 +224,10 @@ export const CustomCameraControls = () => {
   const currentLevelId = selection.levelId
   const firstLoad = useRef(true)
   const lastSceneLoadSignature = useRef<string | null>(null)
+  const [sceneDiagonal, setSceneDiagonal] = useState(DEFAULT_SCENE_DIAGONAL)
   const maxPolarAngle =
     !isPreviewMode && allowUndergroundCamera ? DEBUG_MAX_POLAR_ANGLE : DEFAULT_MAX_POLAR_ANGLE
+  const cameraWheelSpeed = useEditor((s) => s.cameraWheelSpeed)
   const projectId = useViewer((state) => state.projectId)
   const sceneLoadSignature = useScene(
     (state) => `${projectId ?? 'local'}::${state.rootNodeIds.join('|')}`,
@@ -186,6 +237,44 @@ export const CustomCameraControls = () => {
   const raycaster = useThree((state) => state.raycaster)
   const scene = useThree((state) => state.scene)
   const gl = useThree((state) => state.gl)
+  const sceneWheelSpeed = clampNumber(
+    sceneDiagonal / SCENE_DIAGONAL_TO_WHEEL_SPEED,
+    MIN_ADAPTIVE_WHEEL_SPEED,
+    MAX_ADAPTIVE_WHEEL_SPEED,
+  )
+  const effectiveWheelSpeed = sceneWheelSpeed * cameraWheelSpeed
+  const maxCameraDistance = Math.max(EDITOR_MAX_CAMERA_DISTANCE, sceneDiagonal * 3)
+
+  useEffect(() => {
+    let cancelled = false
+    let attempts = 0
+
+    const updateSceneDiagonal = () => {
+      if (cancelled) return
+
+      const diagonal = getEditorSceneDiagonal()
+      setSceneDiagonal(diagonal)
+
+      attempts += 1
+      if (attempts < 6) {
+        requestAnimationFrame(updateSceneDiagonal)
+      }
+    }
+
+    requestAnimationFrame(updateSceneDiagonal)
+
+    return () => {
+      cancelled = true
+    }
+  }, [sceneLoadSignature])
+
+  useEffect(() => {
+    if (!controls.current) return
+
+    controls.current.dollySpeed = effectiveWheelSpeed
+    controls.current.maxDistance = maxCameraDistance
+  }, [effectiveWheelSpeed, maxCameraDistance])
+
   useEffect(() => {
     camera.layers.enable(EDITOR_LAYER)
     raycaster.layers.enable(EDITOR_LAYER)
@@ -831,7 +920,8 @@ export const CustomCameraControls = () => {
     <CameraControls
       dollyToCursor
       makeDefault
-      maxDistance={100}
+      dollySpeed={effectiveWheelSpeed}
+      maxDistance={maxCameraDistance}
       maxPolarAngle={maxPolarAngle}
       minDistance={10}
       minPolarAngle={0}
