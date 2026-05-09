@@ -72,7 +72,14 @@ export {
   type WeatherOption,
   type WeatherState,
 } from './lib/weather'
-export type { ExportSceneRequest } from './store/use-viewer'
+export type {
+  CharacterActorState,
+  CharacterMotion,
+  CharacterPersonState,
+  ExportSceneRequest,
+  SectionPlaneAxis,
+  SectionPlaneState,
+} from './store/use-viewer'
 export { default as useViewer } from './store/use-viewer'
 export { InteractiveSystem } from './systems/interactive/interactive-system'
 export { snapLevelsToTruePositions } from './systems/level/level-utils'

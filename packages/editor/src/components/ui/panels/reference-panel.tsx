@@ -28,6 +28,7 @@ import {
   getSelectedGuideDetectionCandidates,
 } from '../../../lib/guide-detection'
 import { useEditorLanguage } from '../../../hooks/use-editor-language'
+import { cn } from '../../../lib/utils'
 import { useDeliveryStore } from '../../../store/use-delivery'
 import useEditor from '../../../store/use-editor'
 import { ActionButton, ActionGroup } from '../controls/action-button'
@@ -215,9 +216,11 @@ export function ReferencePanel() {
   const clearDetectionRegionDraft = useDeliveryStore((s) => s.clearDetectionRegionDraft)
   const clearLockPrompt = useDeliveryStore((s) => s.clearLockPrompt)
   const detectionCandidates = useDeliveryStore((s) => s.detectionCandidates)
+  const hoveredDetectionCandidateId = useDeliveryStore((s) => s.hoveredDetectionCandidateId)
   const setDetectionCandidates = useDeliveryStore((s) => s.setDetectionCandidates)
   const setDetectionWallSelected = useDeliveryStore((s) => s.setDetectionWallSelected)
   const setDetectionOpeningSelected = useDeliveryStore((s) => s.setDetectionOpeningSelected)
+  const setHoveredDetectionCandidateId = useDeliveryStore((s) => s.setHoveredDetectionCandidateId)
   const setAllDetectionCandidatesSelected = useDeliveryStore(
     (s) => s.setAllDetectionCandidatesSelected,
   )
@@ -309,6 +312,8 @@ export function ReferencePanel() {
   const selectedGuideCandidates = guideCandidates
     ? getSelectedGuideDetectionCandidates(guideCandidates)
     : null
+  const selectedWallCount = selectedGuideCandidates?.walls.length ?? 0
+  const selectedOpeningCount = selectedGuideCandidates?.openings.length ?? 0
   const selectedWallIds = new Set(
     guideCandidates?.selectedWallIds ?? guideCandidates?.walls.map((wall) => wall.id) ?? [],
   )
@@ -506,24 +511,21 @@ export function ReferencePanel() {
                   {copy.doorsAndWindows(doorCount, windowCount)}
                 </div>
                 <div className="mt-2 rounded bg-muted/45 px-2 py-1 text-muted-foreground">
-                  {copy.selectedDetectionSummary(
-                    selectedGuideCandidates?.walls.length ?? 0,
-                    selectedGuideCandidates?.openings.length ?? 0,
-                  )}
+                  {copy.selectedDetectionSummary(selectedWallCount, selectedOpeningCount)}
                 </div>
               </div>
 
               <ActionGroup className="pt-1">
                 <ActionButton
-                  label={copy.applyWalls}
+                  label={`${copy.applyWalls} ${selectedWallCount}`}
                   onClick={handleApplyDetectedWalls}
-                  disabled={!selectedGuideCandidates?.walls.length}
+                  disabled={!selectedWallCount}
                 />
                 <ActionButton
-                  label={copy.applyOpenings}
+                  label={`${copy.applyOpenings} ${selectedOpeningCount}`}
                   onClick={handleApplyDetectedOpenings}
                   disabled={
-                    !selectedGuideCandidates?.openings.length ||
+                    !selectedOpeningCount ||
                     !guideCandidates.appliedWallIds ||
                     Object.keys(guideCandidates.appliedWallIds).length === 0
                   }
@@ -554,11 +556,23 @@ export function ReferencePanel() {
                     const selectedOpenings = wallOpenings.filter((opening) =>
                       selectedOpeningIds.has(opening.id),
                     )
+                    const wallLength = Math.hypot(
+                      wall.end[0] - wall.start[0],
+                      wall.end[1] - wall.start[1],
+                    )
+                    const isWallHovered =
+                      hoveredDetectionCandidateId === wall.id ||
+                      wallOpenings.some((opening) => opening.id === hoveredDetectionCandidateId)
 
                     return (
                       <div
-                        className="rounded border border-border/50 bg-background/70 px-2 py-1.5"
                         key={wall.id}
+                        className={cn(
+                          'rounded border border-border/50 bg-background/70 px-2 py-1.5 transition-colors',
+                          isWallHovered && 'border-primary/45 bg-primary/5',
+                        )}
+                        onMouseEnter={() => setHoveredDetectionCandidateId(wall.id)}
+                        onMouseLeave={() => setHoveredDetectionCandidateId(null)}
                       >
                         <label className="flex items-center gap-2 text-foreground">
                           <input
@@ -570,6 +584,7 @@ export function ReferencePanel() {
                             type="checkbox"
                           />
                           <span className="font-medium">Wall {index + 1}</span>
+                          <span className="text-muted-foreground">{wallLength.toFixed(2)} m</span>
                           <span className="ml-auto text-muted-foreground">
                             {wallOpenings.length
                               ? `${selectedOpenings.length}/${wallOpenings.length}`
@@ -579,26 +594,41 @@ export function ReferencePanel() {
 
                         {wallOpenings.length ? (
                           <div className="mt-1 grid gap-1 pl-5">
-                            {wallOpenings.map((opening) => (
-                              <label
-                                className="flex items-center gap-2 text-muted-foreground"
-                                key={opening.id}
-                              >
-                                <input
-                                  checked={selectedOpeningIds.has(opening.id)}
-                                  className="h-3.5 w-3.5 accent-primary"
-                                  disabled={!selectedWall}
-                                  onChange={(event) =>
-                                    setDetectionOpeningSelected(opening.id, event.target.checked)
-                                  }
-                                  type="checkbox"
-                                />
-                                <DoorOpen className="h-3.5 w-3.5" />
-                                <span>
-                                  {opening.kind} · {opening.width.toFixed(2)} m
-                                </span>
-                              </label>
-                            ))}
+                            {wallOpenings.map((opening) => {
+                              const isOpeningHovered = hoveredDetectionCandidateId === opening.id
+
+                              return (
+                                <label
+                                  className={cn(
+                                    'flex items-center gap-2 rounded px-1 py-0.5 text-muted-foreground transition-colors',
+                                    isOpeningHovered && 'bg-primary/10 text-foreground',
+                                  )}
+                                  key={opening.id}
+                                  onMouseEnter={(event) => {
+                                    event.stopPropagation()
+                                    setHoveredDetectionCandidateId(opening.id)
+                                  }}
+                                  onMouseLeave={(event) => {
+                                    event.stopPropagation()
+                                    setHoveredDetectionCandidateId(wall.id)
+                                  }}
+                                >
+                                  <input
+                                    checked={selectedOpeningIds.has(opening.id)}
+                                    className="h-3.5 w-3.5 accent-primary"
+                                    disabled={!selectedWall}
+                                    onChange={(event) =>
+                                      setDetectionOpeningSelected(opening.id, event.target.checked)
+                                    }
+                                    type="checkbox"
+                                  />
+                                  <DoorOpen className="h-3.5 w-3.5" />
+                                  <span>
+                                    {opening.kind} · {opening.width.toFixed(2)} m
+                                  </span>
+                                </label>
+                              )
+                            })}
                           </div>
                         ) : null}
                       </div>

@@ -51,6 +51,68 @@ type ProjectViewerPreferences = {
   sunStudy?: SunStudyState
 }
 
+export type CharacterMotion = 'idle' | 'walk' | 'run' | 'crouch' | 'jump'
+
+export type CharacterPersonState = {
+  id: string
+  name: string
+  enabled: boolean
+  motion: CharacterMotion
+  speed: number
+  showBones: boolean
+  position: [number, number, number]
+  color: string
+}
+
+export type CharacterActorState = {
+  enabled: boolean
+  motion: CharacterMotion
+  speed: number
+  showBones: boolean
+  position: [number, number, number]
+  count: number
+  people: CharacterPersonState[]
+  selectedPersonId: string
+}
+
+export type SectionPlaneAxis = 'x' | 'y' | 'z'
+
+export type SectionPlaneState = {
+  enabled: boolean
+  axis: SectionPlaneAxis
+  position: number
+  inverted: boolean
+}
+
+const DEFAULT_SECTION_PLANE_STATE: SectionPlaneState = {
+  enabled: false,
+  axis: 'y',
+  position: 1.5,
+  inverted: false,
+}
+
+const DEFAULT_CHARACTER_ACTOR_STATE: CharacterActorState = {
+  enabled: false,
+  motion: 'idle',
+  speed: 1,
+  showBones: true,
+  position: [0, 0, 0],
+  count: 1,
+  people: [
+    {
+      id: 'character-1',
+      name: '角色 1',
+      enabled: true,
+      motion: 'idle',
+      speed: 1,
+      showBones: true,
+      position: [0, 0, 0],
+      color: '#4c6fff',
+    },
+  ],
+  selectedPersonId: 'character-1',
+}
+
 export type ExportSceneRequest =
   | 'glb'
   | 'stl'
@@ -87,6 +149,10 @@ type ViewerState = {
   wallMode: 'up' | 'cutaway' | 'down'
   setWallMode: (mode: 'up' | 'cutaway' | 'down') => void
 
+  sectionPlane: SectionPlaneState
+  setSectionPlane: (updates: Partial<SectionPlaneState>) => void
+  resetSectionPlane: () => void
+
   showScans: boolean
   setShowScans: (show: boolean) => void
 
@@ -115,6 +181,9 @@ type ViewerState = {
   setWeatherWindDirection: (directionDeg: number) => void
   setWeatherWindSpeed: (speed: number) => void
   setWeatherSoundEnabled: (enabled: boolean) => void
+
+  characterActor: CharacterActorState
+  setCharacterActor: (updates: Partial<CharacterActorState>) => void
 
   projectId: string | null
   setProjectId: (id: string | null) => void
@@ -180,6 +249,75 @@ function withProjectSunStudy(
   }
 }
 
+const CHARACTER_COLORS = ['#4c6fff', '#22c55e', '#f59e0b', '#ec4899', '#14b8a6', '#8b5cf6']
+
+function createCharacterPerson(index: number, position: [number, number, number]): CharacterPersonState {
+  return {
+    id: `character-${index + 1}`,
+    name: `角色 ${index + 1}`,
+    enabled: true,
+    motion: 'idle',
+    speed: 1,
+    showBones: true,
+    position: [position[0] + index * 0.55, position[1], position[2]],
+    color: CHARACTER_COLORS[index % CHARACTER_COLORS.length] ?? '#4c6fff',
+  }
+}
+
+function normalizeCharacterActorState(
+  current: CharacterActorState,
+  updates: Partial<CharacterActorState>,
+): CharacterActorState {
+  const selectedPersonId = updates.selectedPersonId ?? current.selectedPersonId
+  const requestedCount = Math.max(1, Math.min(24, Math.round(updates.count ?? current.count ?? 1)))
+  const basePosition = updates.position ?? current.position ?? [0, 0, 0]
+  let people = [...(updates.people ?? current.people ?? [])]
+
+  if (people.length === 0) {
+    people = [createCharacterPerson(0, basePosition)]
+  }
+
+  while (people.length < requestedCount) {
+    people.push(createCharacterPerson(people.length, basePosition))
+  }
+  people = people.slice(0, requestedCount)
+
+  const resolvedSelectedId = people.some((person) => person.id === selectedPersonId)
+    ? selectedPersonId
+    : people[0]?.id ?? 'character-1'
+
+  const selectedUpdates: Partial<CharacterPersonState> = {}
+  if (updates.enabled !== undefined) selectedUpdates.enabled = updates.enabled
+  if (updates.motion !== undefined) selectedUpdates.motion = updates.motion
+  if (updates.speed !== undefined) selectedUpdates.speed = updates.speed
+  if (updates.showBones !== undefined) selectedUpdates.showBones = updates.showBones
+  if (updates.position !== undefined) selectedUpdates.position = updates.position
+
+  people = people.map((person) =>
+    person.id === resolvedSelectedId
+      ? {
+          ...person,
+          ...selectedUpdates,
+        }
+      : person,
+  )
+
+  const selectedPerson = people.find((person) => person.id === resolvedSelectedId) ?? people[0]!
+
+  return {
+    ...current,
+    ...updates,
+    count: requestedCount,
+    enabled: updates.enabled ?? current.enabled,
+    motion: selectedPerson.motion,
+    speed: selectedPerson.speed,
+    showBones: selectedPerson.showBones,
+    position: selectedPerson.position,
+    people,
+    selectedPersonId: resolvedSelectedId,
+  }
+}
+
 const useViewer = create<ViewerState>()(
   persist(
     (set) => ({
@@ -207,6 +345,16 @@ const useViewer = create<ViewerState>()(
 
       wallMode: 'up',
       setWallMode: (mode) => set({ wallMode: mode }),
+
+      sectionPlane: DEFAULT_SECTION_PLANE_STATE,
+      setSectionPlane: (updates) =>
+        set((state) => ({
+          sectionPlane: {
+            ...state.sectionPlane,
+            ...updates,
+          },
+        })),
+      resetSectionPlane: () => set({ sectionPlane: DEFAULT_SECTION_PLANE_STATE }),
 
       showScans: true,
       setShowScans: (show) =>
@@ -387,6 +535,12 @@ const useViewer = create<ViewerState>()(
           },
         })),
 
+      characterActor: DEFAULT_CHARACTER_ACTOR_STATE,
+      setCharacterActor: (updates) =>
+        set((state) => ({
+          characterActor: normalizeCharacterActorState(state.characterActor, updates),
+        })),
+
       projectId: null,
       setProjectId: (id) =>
         set((state) => {
@@ -456,10 +610,12 @@ const useViewer = create<ViewerState>()(
         unit: state.unit,
         levelMode: state.levelMode,
         wallMode: state.wallMode,
+        sectionPlane: state.sectionPlane,
         projectPreferences: state.projectPreferences,
         showCompass: state.showCompass,
         sunStudy: state.sunStudy,
         weather: state.weather,
+        characterActor: state.characterActor,
       }),
     },
   ),

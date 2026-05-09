@@ -1,6 +1,16 @@
 import { type AnyNodeId, type ItemNode, useScene } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
-import Image from 'next/image'
+import {
+  Bath,
+  CookingPot,
+  DoorOpen,
+  Lamp,
+  Plug,
+  RectangleHorizontal,
+  Sofa,
+  TreePine,
+  type LucideIcon,
+} from 'lucide-react'
 import { memo, useCallback, useEffect, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import useEditor from './../../../../../store/use-editor'
@@ -8,15 +18,15 @@ import { InlineRenameInput } from './inline-rename-input'
 import { focusTreeNode, handleTreeSelection, TreeNode, TreeNodeWrapper } from './tree-node'
 import { TreeNodeActions } from './tree-node-actions'
 
-const CATEGORY_ICONS: Record<string, string> = {
-  door: '/icons/door.png',
-  window: '/icons/window.png',
-  furniture: '/icons/couch.png',
-  lighting: '/icons/environment.png',
-  appliance: '/icons/appliance.png',
-  kitchen: '/icons/kitchen.png',
-  bathroom: '/icons/bathroom.png',
-  outdoor: '/icons/tree.png',
+const CATEGORY_ICONS: Record<string, LucideIcon> = {
+  door: DoorOpen,
+  window: RectangleHorizontal,
+  furniture: Sofa,
+  lighting: Lamp,
+  appliance: Plug,
+  kitchen: CookingPot,
+  bathroom: Bath,
+  outdoor: TreePine,
 }
 
 interface ItemTreeNodeProps {
@@ -84,7 +94,7 @@ export const ItemTreeNode = memo(function ItemTreeNode({
   const handleStartEditing = useCallback(() => setIsEditing(true), [])
   const handleStopEditing = useCallback(() => setIsEditing(false), [])
 
-  const iconSrc = CATEGORY_ICONS[asset?.category ?? ''] || '/icons/couch.png'
+  const Icon = CATEGORY_ICONS[asset?.category ?? ''] || Sofa
   const defaultName = asset?.name || 'Item'
   const hasChildren = children.length > 0
 
@@ -94,7 +104,7 @@ export const ItemTreeNode = memo(function ItemTreeNode({
       depth={depth}
       expanded={expanded}
       hasChildren={hasChildren}
-      icon={<Image alt="" className="object-contain" height={14} src={iconSrc} width={14} />}
+      icon={<Icon aria-hidden="true" className="h-3.5 w-3.5 stroke-[1.9]" />}
       isHovered={isHovered}
       isLast={isLast}
       isSelected={isSelected}

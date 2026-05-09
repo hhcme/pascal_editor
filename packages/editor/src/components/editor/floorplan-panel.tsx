@@ -5,8 +5,8 @@ import {
   type AnyNode,
   type AnyNodeId,
   type BuildingNode,
-  CeilingNode as CeilingNodeSchema,
   type CeilingNode,
+  CeilingNode as CeilingNodeSchema,
   calculateLevelMiters,
   DoorNode,
   emitter,
@@ -26,7 +26,6 @@ import {
   normalizeWallCurveOffset,
   type Point2D,
   type SiteNode,
-  sampleSketchCircleCenterline,
   type SketchCircleNode,
   type SketchDimensionNode,
   type SketchLineNode,
@@ -35,6 +34,7 @@ import {
   StairNode as StairNodeSchema,
   type StairSegmentNode,
   StairSegmentNode as StairSegmentNodeSchema,
+  sampleSketchCircleCenterline,
   useLiveTransforms,
   useScene,
   type WallNode,
@@ -58,26 +58,26 @@ import { createPortal, flushSync } from 'react-dom'
 import { useShallow } from 'zustand/react/shallow'
 import { type EditorLanguage, useEditorLanguage } from '../../hooks/use-editor-language'
 import { markToolCancelConsumed } from '../../hooks/use-keyboard'
-import { type PerimeterGuide, getPerimeterGuidesForNode } from '../../lib/measurement'
+import { getPerimeterGuidesForNode, type PerimeterGuide } from '../../lib/measurement'
 import { sfxEmitter } from '../../lib/sfx-bus'
 import { cn } from '../../lib/utils'
 import { isZoneLabelHidden } from '../../lib/zone-label-visibility'
 import { type GuideDetectionCandidates, useDeliveryStore } from '../../store/use-delivery'
 import useEditor, {
-  isSketchStructureTool,
   type FloorplanSelectionTool,
+  isSketchStructureTool,
 } from '../../store/use-editor'
 import {
   createFenceOnCurrentLevel,
-  snapFenceDraftPoint,
   type FencePlanPoint,
+  snapFenceDraftPoint,
 } from '../tools/fence/fence-drafting'
 import { snapToHalf } from '../tools/item/placement-math'
 import { buildRemoveSketchCircleConstraintReferencesPlan } from '../tools/sketch/sketch-circle-constraints'
 import { collectSketchDistanceDimensionIdsReferencingEntities } from '../tools/sketch/sketch-distance-dimensions'
+import { detectClosedSketchProfiles, isSketchLineLongEnough } from '../tools/sketch/sketch-geometry'
 import { buildRemoveSketchLineConstraintReferencesPlan } from '../tools/sketch/sketch-line-constraints'
 import { buildRemoveSketchLineTangentReferencesPlan } from '../tools/sketch/sketch-line-tangent'
-import { detectClosedSketchProfiles, isSketchLineLongEnough } from '../tools/sketch/sketch-geometry'
 import {
   DEFAULT_STAIR_ATTACHMENT_SIDE,
   DEFAULT_STAIR_FILL_TO_FLOOR,
@@ -135,9 +135,8 @@ import {
 } from '../tools/wall/wall-sketch'
 import { furnishTools } from '../ui/action-menu/furnish-tools'
 import { tools as structureTools } from '../ui/action-menu/structure-tools'
-
-import { PALETTE_COLORS } from '../ui/primitives/color-dot'
 import { Button } from '../ui/primitives/button'
+import { PALETTE_COLORS } from '../ui/primitives/color-dot'
 import { ContextMenu, ContextMenuTrigger } from '../ui/primitives/context-menu'
 import {
   Dialog,
@@ -149,21 +148,15 @@ import {
 } from '../ui/primitives/dialog'
 import { Input } from '../ui/primitives/input'
 import {
-  type FloorplanSketchLineEntry,
-  useFloorplanSketchActions,
-} from './floorplan/sketch-actions'
-import { useFloorplanSketchEdit } from './floorplan/sketch-edit'
+  getDistanceToWallSegment,
+  toPoint2D,
+  toWallPlanPoint,
+} from './floorplan/floorplan-geometry'
 import {
   type FloorplanSketchCircleEntry,
   getSketchContextHitAtPoint as resolveSketchContextHitAtPoint,
 } from './floorplan/floorplan-sketch-context'
 import { useFloorplanSketchContextActions } from './floorplan/floorplan-sketch-context-actions'
-import {
-  getDistanceToSketchPolyline,
-  getDistanceToWallSegment,
-  toPoint2D,
-  toWallPlanPoint,
-} from './floorplan/floorplan-geometry'
 import {
   FloorplanActionMenuLayer,
   FloorplanSketchContextMenuContent,
@@ -171,13 +164,18 @@ import {
   type SketchContextTool,
 } from './floorplan/floorplan-sketch-menus'
 import {
+  type FloorplanSketchLineEntry,
+  useFloorplanSketchActions,
+} from './floorplan/sketch-actions'
+import { FloorplanSketchCommandBar } from './floorplan/sketch-command-bar'
+import { useFloorplanSketchEdit } from './floorplan/sketch-edit'
+import {
   FloorplanSketchCircleLayer,
   FloorplanSketchDistanceDimensionLayer,
   FloorplanSketchEditLayer,
   FloorplanSketchLayer,
   FloorplanSketchProfileLayer,
 } from './floorplan/sketch-layer'
-import { FloorplanSketchCommandBar } from './floorplan/sketch-command-bar'
 import { useFloorplanSketchState } from './floorplan/sketch-state'
 import type { NodeActionMenuExtraAction } from './node-action-menu'
 
@@ -736,6 +734,24 @@ function subtractSvgPoints(point: SvgPoint, origin: SvgPoint): WallPlanPoint {
   return [point.x - origin.x, point.y - origin.y]
 }
 
+function flipGuideImageLocalPoint([x, y]: WallPlanPoint): WallPlanPoint {
+  return [-x, -y]
+}
+
+function getGuideDisplayBoundsFromImageBounds(bounds: {
+  height: number
+  width: number
+  x: number
+  y: number
+}) {
+  return {
+    x: -(bounds.x + bounds.width),
+    y: -(bounds.y + bounds.height),
+    width: bounds.width,
+    height: bounds.height,
+  }
+}
+
 function midpointBetweenSvgPoints(start: SvgPoint, end: SvgPoint): SvgPoint {
   return {
     x: (start.x + end.x) / 2,
@@ -769,13 +785,13 @@ function getGuideLocalPointFromSvgPoint(
   const width = getGuideWidth(guide.scale)
   const height = getGuideHeight(width, aspectRatio)
   const centerSvg = getGuideCenterSvgPoint(guide)
-  const localPoint = rotateVector(subtractSvgPoints(svgPoint, centerSvg), guide.rotation[1])
+  const displayLocalPoint = rotateVector(subtractSvgPoints(svgPoint, centerSvg), guide.rotation[1])
 
-  if (Math.abs(localPoint[0]) > width / 2 || Math.abs(localPoint[1]) > height / 2) {
+  if (Math.abs(displayLocalPoint[0]) > width / 2 || Math.abs(displayLocalPoint[1]) > height / 2) {
     return null
   }
 
-  return localPoint
+  return flipGuideImageLocalPoint(displayLocalPoint)
 }
 
 function getGuideClampedLocalPointFromSvgPoint(
@@ -789,9 +805,12 @@ function getGuideClampedLocalPointFromSvgPoint(
   const width = getGuideWidth(guide.scale)
   const height = getGuideHeight(width, aspectRatio)
   const centerSvg = getGuideCenterSvgPoint(guide)
-  const localPoint = rotateVector(subtractSvgPoints(svgPoint, centerSvg), guide.rotation[1])
+  const displayLocalPoint = rotateVector(subtractSvgPoints(svgPoint, centerSvg), guide.rotation[1])
 
-  return [clamp(localPoint[0], -width / 2, width / 2), clamp(localPoint[1], -height / 2, height / 2)]
+  return flipGuideImageLocalPoint([
+    clamp(displayLocalPoint[0], -width / 2, width / 2),
+    clamp(displayLocalPoint[1], -height / 2, height / 2),
+  ])
 }
 
 function getGuideDetectionRegionFromLocalBounds(
@@ -3187,11 +3206,11 @@ function FloorplanGuideImage({
               ? 'crosshair'
               : isDetectionRegionActive
                 ? 'crosshair'
-              : isSelected && activeInteractionMode === 'translate'
-                ? 'grabbing'
-                : isSelected && !guide.locked
-                  ? 'grab'
-                  : 'pointer',
+                : isSelected && activeInteractionMode === 'translate'
+                  ? 'grabbing'
+                  : isSelected && !guide.locked
+                    ? 'grab'
+                    : 'pointer',
           }}
           width={planWidth}
           x={-planWidth / 2}
@@ -3203,6 +3222,7 @@ function FloorplanGuideImage({
         href={resolvedUrl}
         pointerEvents="none"
         preserveAspectRatio="none"
+        transform="rotate(180)"
         width={planWidth}
         x={-planWidth / 2}
         y={-planHeight / 2}
@@ -3510,7 +3530,8 @@ function FloorplanGuideCalibrationOverlay({
   const centerX = toSvgX(guide.position[0])
   const centerY = toSvgY(guide.position[2])
   const rotationDeg = (-guide.rotation[1] * 180) / Math.PI
-  const labelPoint = points[points.length - 1]!
+  const displayPoints = points.map(flipGuideImageLocalPoint)
+  const labelPoint = displayPoints[displayPoints.length - 1]!
   const label =
     guide.calibration && points.length >= 2
       ? `${guide.calibration.distance.toFixed(2)} m`
@@ -3538,13 +3559,13 @@ function FloorplanGuideCalibrationOverlay({
           strokeDasharray="0.12 0.08"
           strokeWidth="0.04"
           vectorEffect="non-scaling-stroke"
-          x1={points[0]?.[0]}
-          x2={points[1]?.[0]}
-          y1={points[0]?.[1]}
-          y2={points[1]?.[1]}
+          x1={displayPoints[0]?.[0]}
+          x2={displayPoints[1]?.[0]}
+          y1={displayPoints[0]?.[1]}
+          y2={displayPoints[1]?.[1]}
         />
       ) : null}
-      {points.map((point, index) => (
+      {displayPoints.map((point, index) => (
         <circle
           cx={point[0]}
           cy={point[1]}
@@ -3602,12 +3623,8 @@ function FloorplanGuideDetectionRegionOverlay({
       ? getGuideDetectionRegionLocalBounds(
           guide,
           dimensions,
-          getGuideDetectionRegionFromLocalBounds(
-            guide,
-            dimensions,
-            draft.start,
-            draft.end,
-          ) ?? undefined,
+          getGuideDetectionRegionFromLocalBounds(guide, dimensions, draft.start, draft.end) ??
+            undefined,
         )
       : getGuideDetectionRegionLocalBounds(guide, dimensions, guide.detectionRegion)
 
@@ -3619,20 +3636,24 @@ function FloorplanGuideDetectionRegionOverlay({
   const centerY = toSvgY(guide.position[2])
   const rotationDeg = (-guide.rotation[1] * 180) / Math.PI
   const isDraft = draft?.guideId === guide.id
+  const displayBounds = getGuideDisplayBoundsFromImageBounds(localBounds)
 
   return (
-    <g data-delivery-role="guide-detection-region" transform={`translate(${centerX} ${centerY}) rotate(${rotationDeg})`}>
+    <g
+      data-delivery-role="guide-detection-region"
+      transform={`translate(${centerX} ${centerY}) rotate(${rotationDeg})`}
+    >
       <rect
         fill={isDraft ? 'rgba(37, 99, 235, 0.08)' : 'rgba(14, 165, 233, 0.06)'}
-        height={localBounds.height}
+        height={displayBounds.height}
         pointerEvents="none"
         stroke={isDraft ? '#2563eb' : '#0284c7'}
         strokeDasharray={isDraft ? '0.14 0.08' : '0.1 0.06'}
         strokeWidth="0.04"
         vectorEffect="non-scaling-stroke"
-        width={localBounds.width}
-        x={localBounds.x}
-        y={localBounds.y}
+        width={displayBounds.width}
+        x={displayBounds.x}
+        y={displayBounds.y}
       />
       <text
         dominantBaseline="hanging"
@@ -3647,8 +3668,8 @@ function FloorplanGuideDetectionRegionOverlay({
         strokeLinejoin="round"
         strokeWidth={FLOORPLAN_MEASUREMENT_LABEL_STROKE_WIDTH}
         textAnchor="start"
-        x={localBounds.x}
-        y={localBounds.y - FLOORPLAN_GUIDE_HANDLE_SIZE * 0.8}
+        x={displayBounds.x}
+        y={displayBounds.y - FLOORPLAN_GUIDE_HANDLE_SIZE * 0.8}
       >
         {isDraft ? activeLabel : label}
       </text>
@@ -3663,6 +3684,10 @@ const FloorplanGuideDetectionOverlay = memo(function FloorplanGuideDetectionOver
 }) {
   const setDetectionWallSelected = useDeliveryStore((state) => state.setDetectionWallSelected)
   const setDetectionOpeningSelected = useDeliveryStore((state) => state.setDetectionOpeningSelected)
+  const hoveredDetectionCandidateId = useDeliveryStore((state) => state.hoveredDetectionCandidateId)
+  const setHoveredDetectionCandidateId = useDeliveryStore(
+    (state) => state.setHoveredDetectionCandidateId,
+  )
   const wallById = new Map(candidates.walls.map((wall) => [wall.id, wall] as const))
   const selectedWallIds = new Set(
     candidates.selectedWallIds ?? candidates.walls.map((wall) => wall.id),
@@ -3676,14 +3701,20 @@ const FloorplanGuideDetectionOverlay = memo(function FloorplanGuideDetectionOver
       {candidates.walls.map((wall) => {
         const isApplied = Boolean(candidates.appliedWallIds?.[wall.id])
         const isSelected = selectedWallIds.has(wall.id)
+        const isHovered =
+          hoveredDetectionCandidateId === wall.id ||
+          candidates.openings.some(
+            (opening) =>
+              opening.id === hoveredDetectionCandidateId && opening.wallCandidateId === wall.id,
+          )
 
         return (
           <g key={wall.id}>
             <line
-              opacity={isSelected ? 0.2 : 0.08}
+              opacity={isHovered ? 0.32 : isSelected ? 0.2 : 0.08}
               pointerEvents="none"
               stroke={isApplied ? '#16a34a' : '#f97316'}
-              strokeWidth="0.24"
+              strokeWidth={isHovered ? '0.32' : '0.24'}
               vectorEffect="non-scaling-stroke"
               x1={toSvgX(wall.start[0])}
               x2={toSvgX(wall.end[0])}
@@ -3696,12 +3727,14 @@ const FloorplanGuideDetectionOverlay = memo(function FloorplanGuideDetectionOver
                 event.stopPropagation()
                 setDetectionWallSelected(wall.id, !isSelected)
               }}
-              opacity={isSelected ? 1 : 0.32}
+              onPointerEnter={() => setHoveredDetectionCandidateId(wall.id)}
+              onPointerLeave={() => setHoveredDetectionCandidateId(null)}
+              opacity={isHovered ? 1 : isSelected ? 1 : 0.32}
               pointerEvents="stroke"
               stroke={isApplied ? '#16a34a' : '#f97316'}
               strokeDasharray={isApplied || isSelected ? undefined : '0.12 0.08'}
               strokeLinecap="round"
-              strokeWidth="0.08"
+              strokeWidth={isHovered ? '0.12' : '0.08'}
               style={{ cursor: 'pointer' }}
               vectorEffect="non-scaling-stroke"
               x1={toSvgX(wall.start[0])}
@@ -3719,6 +3752,7 @@ const FloorplanGuideDetectionOverlay = memo(function FloorplanGuideDetectionOver
 
         const isWallSelected = selectedWallIds.has(opening.wallCandidateId)
         const isSelected = isWallSelected && selectedOpeningIds.has(opening.id)
+        const isHovered = hoveredDetectionCandidateId === opening.id
         const angle = Math.atan2(wall.end[1] - wall.start[1], wall.end[0] - wall.start[0])
         const polygon = getRotatedRectanglePolygon(
           { x: opening.center[0], y: opening.center[1] },
@@ -3738,7 +3772,7 @@ const FloorplanGuideDetectionOverlay = memo(function FloorplanGuideDetectionOver
         return (
           <g
             key={opening.id}
-            opacity={isSelected ? 1 : 0.28}
+            opacity={isHovered ? 1 : isSelected ? 1 : 0.28}
             onClick={(event) => {
               event.preventDefault()
               event.stopPropagation()
@@ -3746,6 +3780,8 @@ const FloorplanGuideDetectionOverlay = memo(function FloorplanGuideDetectionOver
                 setDetectionOpeningSelected(opening.id, !isSelected)
               }
             }}
+            onPointerEnter={() => setHoveredDetectionCandidateId(opening.id)}
+            onPointerLeave={() => setHoveredDetectionCandidateId(null)}
             pointerEvents={isWallSelected ? 'all' : 'none'}
             style={{ cursor: isWallSelected ? 'pointer' : 'default' }}
           >
@@ -3754,15 +3790,15 @@ const FloorplanGuideDetectionOverlay = memo(function FloorplanGuideDetectionOver
               points={formatPolygonPoints(polygon)}
               stroke={strokeColor}
               strokeDasharray={isSelected ? undefined : '0.08 0.06'}
-              strokeWidth="0.05"
+              strokeWidth={isHovered ? '0.08' : '0.05'}
               vectorEffect="non-scaling-stroke"
             />
             <circle
               cx={center.x}
               cy={center.y}
               fill={strokeColor}
-              opacity={isSelected ? 0.92 : 0.45}
-              r="0.11"
+              opacity={isHovered ? 1 : isSelected ? 0.92 : 0.45}
+              r={isHovered ? '0.14' : '0.11'}
               stroke="#ffffff"
               strokeWidth="0.025"
               vectorEffect="non-scaling-stroke"
@@ -5954,9 +5990,28 @@ const FloorplanGuideCalibrationDialog = memo(function FloorplanGuideCalibrationD
   onOpenChange: (open: boolean) => void
   onSubmit: () => void
 }) {
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    const frame = requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    })
+
+    return () => cancelAnimationFrame(frame)
+  }, [open])
+
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="sm:max-w-sm" showCloseButton={false}>
+      <DialogContent
+        className="sm:max-w-sm"
+        onOpenAutoFocus={(event) => event.preventDefault()}
+        showCloseButton={false}
+      >
         <DialogHeader>
           <DialogTitle>{copy.title}</DialogTitle>
           <DialogDescription>{copy.description}</DialogDescription>
@@ -5981,6 +6036,7 @@ const FloorplanGuideCalibrationDialog = memo(function FloorplanGuideCalibrationD
               onChange={(event) => onChange(event.currentTarget.value)}
               onFocus={(event) => event.currentTarget.select()}
               placeholder="1.00"
+              ref={inputRef}
               step="0.01"
               type="number"
               value={inputValue}
@@ -6067,6 +6123,8 @@ export function FloorplanPanel() {
   const wallEditOperation = useEditor((state) => state.wallEditOperation)
   const setWallEditOperation = useEditor((state) => state.setWallEditOperation)
   const showSketchRelations = useEditor((state) => state.showSketchRelations)
+  const setSketchPlane = useEditor((state) => state.setSketchPlane)
+  const sketchPlane = useEditor((state) => state.sketchPlane)
   const deleteNode = useScene((state) => state.deleteNode)
   const updateNode = useScene((state) => state.updateNode)
   const levelNode = useScene((state) =>
@@ -6493,6 +6551,20 @@ export function FloorplanPanel() {
     }
     return selectedGuide.calibration?.points ? [...selectedGuide.calibration.points] : []
   }, [calibrationDraft, selectedGuide])
+  useEffect(() => {
+    if (!calibrationDraft) {
+      return
+    }
+
+    setMode('select')
+    setTool(null)
+    setFloorplanSelectionTool('click')
+    setFloorplanMarqueeState(null)
+    setWallEditNumericInput(null)
+    setGuideDetectionRegionDraft(null)
+    guideDetectionRegionInteractionRef.current = null
+    clearDetectionRegionDraft()
+  }, [calibrationDraft, clearDetectionRegionDraft, setFloorplanSelectionTool, setMode, setTool])
   useEffect(() => {
     if (calibrationDraft && calibrationDraft.guideId !== selectedGuideId) {
       clearCalibrationDraft()
@@ -9876,10 +9948,7 @@ export function FloorplanPanel() {
   useEffect(() => {
     const handleWindowPointerMove = (event: PointerEvent) => {
       const detectionRegionInteraction = guideDetectionRegionInteractionRef.current
-      if (
-        detectionRegionInteraction &&
-        event.pointerId === detectionRegionInteraction.pointerId
-      ) {
+      if (detectionRegionInteraction && event.pointerId === detectionRegionInteraction.pointerId) {
         event.preventDefault()
 
         const guide = guideById.get(detectionRegionInteraction.guideId)
@@ -10023,10 +10092,7 @@ export function FloorplanPanel() {
 
     const commitGuideInteraction = (event: PointerEvent) => {
       const detectionRegionInteraction = guideDetectionRegionInteractionRef.current
-      if (
-        detectionRegionInteraction &&
-        event.pointerId === detectionRegionInteraction.pointerId
-      ) {
+      if (detectionRegionInteraction && event.pointerId === detectionRegionInteraction.pointerId) {
         event.preventDefault()
 
         const guide = guideById.get(detectionRegionInteraction.guideId)
@@ -10100,10 +10166,7 @@ export function FloorplanPanel() {
 
     const cancelGuideInteraction = (event: PointerEvent) => {
       const detectionRegionInteraction = guideDetectionRegionInteractionRef.current
-      if (
-        detectionRegionInteraction &&
-        event.pointerId === detectionRegionInteraction.pointerId
-      ) {
+      if (detectionRegionInteraction && event.pointerId === detectionRegionInteraction.pointerId) {
         clearDetectionRegionDraft()
         clearGuideDetectionRegionInteraction()
         return
@@ -11761,7 +11824,16 @@ export function FloorplanPanel() {
     setSelection({ selectedIds: [] })
     setMode('select')
     setTool(null)
-  }, [clearDraft, resetSketchOperations, setMode, setSelection, setTool, setWallSketchSnapResult])
+    setSketchPlane(null)
+  }, [
+    clearDraft,
+    resetSketchOperations,
+    setMode,
+    setSelection,
+    setSketchPlane,
+    setTool,
+    setWallSketchSnapResult,
+  ])
 
   const isSketchWorkbenchActive = useMemo(
     () =>
@@ -14591,6 +14663,7 @@ export function FloorplanPanel() {
                 onCancelDraft={handleCancelSketchToolbarDraft}
                 onCommitDraft={commitSketchContextDraft}
                 onExitSketch={handleExitSketchWorkbench}
+                sketchPlane={sketchPlane}
                 sketchCircleActions={sketchCircleActionMenuExtraActions}
                 sketchLineActions={sketchLineActionMenuExtraActions}
               />

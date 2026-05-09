@@ -57,6 +57,7 @@ type DeliveryState = {
   detectionRegionDraftGuideId: GuideNode['id'] | null
   lockPromptGuideId: GuideNode['id'] | null
   detectionCandidates: GuideDetectionCandidates | null
+  hoveredDetectionCandidateId: string | null
   overlays: DeliveryOverlayOptions
   clearCalibrationDraft: () => void
   clearCalibrationPrompt: () => void
@@ -69,6 +70,7 @@ type DeliveryState = {
   setDetectionCandidates: (candidates: GuideDetectionCandidates | null) => void
   setDetectionOpeningSelected: (openingId: string, selected: boolean) => void
   setDetectionWallSelected: (wallId: string, selected: boolean) => void
+  setHoveredDetectionCandidateId: (candidateId: string | null) => void
   setAllDetectionCandidatesSelected: (selected: boolean) => void
   setOverlays: (overlays: Partial<DeliveryOverlayOptions>) => void
   startDetectionRegionDraft: (guideId: GuideNode['id']) => void
@@ -99,6 +101,7 @@ export const useDeliveryStore = create<DeliveryState>()((set) => ({
   detectionRegionDraftGuideId: null,
   lockPromptGuideId: null,
   detectionCandidates: null,
+  hoveredDetectionCandidateId: null,
   setOverlays: (overlays) =>
     set((state) => ({
       overlays: {
@@ -150,7 +153,10 @@ export const useDeliveryStore = create<DeliveryState>()((set) => ({
     }),
   clearLockPrompt: () => set({ lockPromptGuideId: null }),
   setDetectionCandidates: (detectionCandidates) =>
-    set({ detectionCandidates: normalizeDetectionCandidates(detectionCandidates) }),
+    set({
+      detectionCandidates: normalizeDetectionCandidates(detectionCandidates),
+      hoveredDetectionCandidateId: null,
+    }),
   setDetectionWallSelected: (wallId, selected) =>
     set((state) => {
       if (!state.detectionCandidates) {
@@ -236,5 +242,8 @@ export const useDeliveryStore = create<DeliveryState>()((set) => ({
         },
       }
     }),
-  clearDetectionCandidates: () => set({ detectionCandidates: null }),
+  setHoveredDetectionCandidateId: (hoveredDetectionCandidateId) =>
+    set({ hoveredDetectionCandidateId }),
+  clearDetectionCandidates: () =>
+    set({ detectionCandidates: null, hoveredDetectionCandidateId: null }),
 }))

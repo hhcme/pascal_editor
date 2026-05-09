@@ -46,6 +46,9 @@ const STRUCTURE_BOUNDS_MARGIN_RATIO = 0.018
 const STRUCTURE_BOUNDS_MIN_SPAN_RATIO = 0.16
 const WALL_CONNECTION_GAP_TOLERANCE_PX = 8
 const WALL_CONNECTION_CENTER_TOLERANCE_PX = 8
+const SECONDARY_WALL_COMPONENT_MIN_SCORE_RATIO = 0.18
+const SECONDARY_SINGLE_WALL_COMPONENT_MIN_SCORE_RATIO = 0.35
+const SECONDARY_WALL_COMPONENT_MIN_MEMBER_COUNT = 2
 const MIN_OPENING_EDGE_BUFFER_PX = 8
 const MIN_OPENING_FLANK_SUPPORT_PX = 10
 const OPENING_SUPPORT_RATIO = 0.46
@@ -308,7 +311,7 @@ function imagePointToWorldPlan(
   const rotatedX = localX * cos - localY * sin
   const rotatedY = localX * sin + localY * cos
 
-  return [guide.position[0] - rotatedX, guide.position[2] - rotatedY]
+  return [guide.position[0] + rotatedX, guide.position[2] + rotatedY]
 }
 
 function pxToPlanLength(
@@ -854,14 +857,16 @@ function areRasterWallsConnected(left: RasterWallCandidate, right: RasterWallCan
   )
 }
 
-export function filterDisconnectedRasterWalls(rasterCandidates: RasterWallCandidate[]) {
+export function filterDisconnectedRasterWalls(
+  rasterCandidates: RasterWallCandidate[],
+  retainSecondaryComponents = true,
+) {
   if (rasterCandidates.length <= 1) {
     return rasterCandidates
   }
 
   const visited = new Set<number>()
-  let bestComponent: number[] = []
-  let bestScore = -1
+  const components: Array<{ indexes: number[]; score: number }> = []
 
   for (let startIndex = 0; startIndex < rasterCandidates.length; startIndex += 1) {
     if (visited.has(startIndex)) {
@@ -898,13 +903,31 @@ export function filterDisconnectedRasterWalls(rasterCandidates: RasterWallCandid
       0,
     )
 
-    if (componentScore > bestScore) {
-      bestScore = componentScore
-      bestComponent = component
+    components.push({ indexes: component, score: componentScore })
+  }
+
+  const bestScore = Math.max(...components.map((component) => component.score))
+  const keepIndexes = new Set<number>()
+
+  for (const component of components) {
+    const isPrimaryComponent = component.score === bestScore
+    const isSupportedSecondaryComponent =
+      component.indexes.length >= SECONDARY_WALL_COMPONENT_MIN_MEMBER_COUNT &&
+      component.score >= bestScore * SECONDARY_WALL_COMPONENT_MIN_SCORE_RATIO
+    const isStrongSingleWallComponent =
+      component.indexes.length === 1 &&
+      component.score >= bestScore * SECONDARY_SINGLE_WALL_COMPONENT_MIN_SCORE_RATIO
+
+    if (
+      isPrimaryComponent ||
+      (retainSecondaryComponents && (isSupportedSecondaryComponent || isStrongSingleWallComponent))
+    ) {
+      for (const index of component.indexes) {
+        keepIndexes.add(index)
+      }
     }
   }
 
-  const keepIndexes = new Set(bestComponent)
   return rasterCandidates.filter((_, index) => keepIndexes.has(index))
 }
 
@@ -1112,6 +1135,7 @@ function sampleRasterWallCandidates(
       : sampledCandidates
   const rasterWalls = filterDisconnectedRasterWalls(
     dedupeRasterWallCandidates(thicknessFilteredCandidates),
+    true,
   )
 
   return {

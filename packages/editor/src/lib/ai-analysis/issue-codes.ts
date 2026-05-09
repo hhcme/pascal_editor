@@ -25,6 +25,7 @@ export const AI_ANALYSIS_NEGATIVE_PATTERN_CODES = [
   'TOILET_EXPOSED_TO_PUBLIC_VIEW',
   'PRIVATE_ROOM_TRAVERSED',
   'DOOR_SWING_COLLISION',
+  'BASIC_FURNITURE_MISSING',
   'BEDROOM_FURNITURE_IMPOSSIBLE',
   'KITCHEN_WORKFLOW_BROKEN',
   'DINING_PULL_OUT_BLOCKED',
@@ -235,6 +236,13 @@ export const AI_ANALYSIS_ISSUE_CODE_DEFINITIONS = {
     severity: 'error',
     category: 'negative-pattern',
     summary: 'Door swing conflicts with another door, fixture, or furniture zone.',
+  },
+  BASIC_FURNITURE_MISSING: {
+    code: 'BASIC_FURNITURE_MISSING',
+    scope: 'room',
+    severity: 'warning',
+    category: 'quality',
+    summary: 'Room is missing the minimum furniture or fixtures required for daily living.',
   },
   BEDROOM_FURNITURE_IMPOSSIBLE: {
     code: 'BEDROOM_FURNITURE_IMPOSSIBLE',

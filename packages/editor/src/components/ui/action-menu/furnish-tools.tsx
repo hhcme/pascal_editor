@@ -1,12 +1,24 @@
 'use client'
 
-import NextImage from 'next/image'
+import {
+  Bath,
+  CookingPot,
+  Lamp,
+  PawPrint,
+  Plug,
+  Sofa,
+  Sprout,
+  TreePine,
+  Users,
+  type LucideIcon,
+} from 'lucide-react'
 import { cn } from './../../../lib/utils'
 import useEditor, { type CatalogCategory } from './../../../store/use-editor'
 import { ActionButton } from './action-button'
 
 export type FurnishToolConfig = {
   id: 'item'
+  Icon: LucideIcon
   iconSrc: string
   label: string
   catalogCategory: CatalogCategory
@@ -16,54 +28,63 @@ export type FurnishToolConfig = {
 export const furnishTools: FurnishToolConfig[] = [
   {
     id: 'item',
+    Icon: Sofa,
     iconSrc: '/icons/couch.png',
     label: 'Furniture',
     catalogCategory: 'furniture',
   },
   {
     id: 'item',
+    Icon: Users,
     iconSrc: '/icons/people.svg',
     label: 'People',
     catalogCategory: 'people',
   },
   {
     id: 'item',
+    Icon: Sprout,
     iconSrc: '/icons/plants.svg',
     label: 'Plants',
     catalogCategory: 'plants',
   },
   {
     id: 'item',
+    Icon: PawPrint,
     iconSrc: '/icons/animal.svg',
     label: 'Animals',
     catalogCategory: 'animals',
   },
   {
     id: 'item',
+    Icon: Lamp,
     iconSrc: '/icons/environment.png',
     label: 'Lighting',
     catalogCategory: 'lighting',
   },
   {
     id: 'item',
+    Icon: Plug,
     iconSrc: '/icons/appliance.png',
     label: 'Appliance',
     catalogCategory: 'appliance',
   },
   {
     id: 'item',
+    Icon: CookingPot,
     iconSrc: '/icons/kitchen.png',
     label: 'Kitchen',
     catalogCategory: 'kitchen',
   },
   {
     id: 'item',
+    Icon: Bath,
     iconSrc: '/icons/bathroom.png',
     label: 'Bathroom',
     catalogCategory: 'bathroom',
   },
   {
     id: 'item',
+    Icon: TreePine,
     iconSrc: '/icons/tree.png',
     label: 'Outdoor',
     catalogCategory: 'outdoor',
@@ -88,6 +109,7 @@ export function FurnishTools() {
         // For item tools with catalog category, check both tool and category match
         const isActive =
           mode === 'build' && activeTool === 'item' && catalogCategory === tool.catalogCategory
+        const Icon = tool.Icon
 
         return (
           <ActionButton
@@ -111,12 +133,12 @@ export function FurnishTools() {
             size="icon"
             variant="ghost"
           >
-            <NextImage
-              alt={tool.label}
-              className="h-7 w-7 object-contain"
-              height={28}
-              src={tool.iconSrc}
-              width={28}
+            <Icon
+              aria-hidden="true"
+              className={cn(
+                'h-5 w-5 stroke-[1.9] transition-colors duration-200',
+                isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground',
+              )}
             />
           </ActionButton>
         )

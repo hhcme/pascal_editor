@@ -1,5 +1,6 @@
 'use client'
 
+import { Layers, Settings } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
 import {
   Tooltip,
@@ -20,19 +21,19 @@ interface IconRailProps {
   className?: string
 }
 
-const sitePanel: { id: PanelId; iconSrc: string; label: string } = {
+const sitePanel: { id: PanelId; icon: ReactNode; label: string } = {
   id: 'site',
-  iconSrc: '/icons/level.png',
+  icon: <Layers aria-hidden="true" className="h-5 w-5 stroke-[1.9]" />,
   label: 'Site',
 }
 
-const settingsPanel: { id: PanelId; iconSrc: string; label: string } = {
+const settingsPanel: { id: PanelId; icon: ReactNode; label: string } = {
   id: 'settings',
-  iconSrc: '/icons/settings.png',
+  icon: <Settings aria-hidden="true" className="h-5 w-5 stroke-[1.9]" />,
   label: 'Settings',
 }
 
-const panels: { id: PanelId; iconSrc: string; label: string }[] = [sitePanel, settingsPanel]
+const panels: { id: PanelId; icon: ReactNode; label: string }[] = [sitePanel, settingsPanel]
 
 export function IconRail({
   activePanel,
@@ -68,14 +69,14 @@ export function IconRail({
                 onClick={() => onPanelChange(panel.id)}
                 type="button"
               >
-                <img
-                  alt={panel.label}
+                <span
                   className={cn(
-                    'h-6 w-6 object-contain transition-all',
-                    !isActive && 'opacity-50 saturate-0',
+                    'flex h-6 w-6 items-center justify-center transition-all',
+                    isActive ? 'text-primary' : 'text-muted-foreground opacity-65',
                   )}
-                  src={panel.iconSrc}
-                />
+                >
+                  {panel.icon}
+                </span>
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">{panel.label}</TooltipContent>
@@ -126,14 +127,14 @@ export function IconRail({
                 onClick={() => onPanelChange(panel.id)}
                 type="button"
               >
-                <img
-                  alt={panel.label}
+                <span
                   className={cn(
-                    'h-6 w-6 object-contain transition-all',
-                    !isActive && 'opacity-50 saturate-0',
+                    'flex h-6 w-6 items-center justify-center transition-all',
+                    isActive ? 'text-primary' : 'text-muted-foreground opacity-65',
                   )}
-                  src={panel.iconSrc}
-                />
+                >
+                  {panel.icon}
+                </span>
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">{panel.label}</TooltipContent>

@@ -58,7 +58,7 @@ export function PanelWrapper({
   const { mode: panelSurfaceMode, isPinned = false, onPinnedChange } =
     useContext(PanelSurfaceModeContext)
   const isDocked = panelSurfaceMode === 'docked'
-  const canPinPanel = isDocked && onPinnedChange
+  const canPinPanel = Boolean(onPinnedChange)
   const pinLabel = isPinned ? 'Unpin inspector' : 'Pin inspector'
 
   return (

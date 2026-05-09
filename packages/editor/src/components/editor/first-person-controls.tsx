@@ -27,17 +27,18 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react'
 import { Euler, Plane, Raycaster, Vector2, Vector3 } from 'three'
 import { cn } from '../../lib/utils'
 import useEditor, {
-  MAX_FIRST_PERSON_SPEED,
-  MIN_FIRST_PERSON_SPEED,
   type FirstPersonEyeHeightPreset,
   type FirstPersonFlyCameraMode,
   type FirstPersonNavigationMode,
   MAX_FIRST_PERSON_FLY_CLEARANCE,
+  MAX_FIRST_PERSON_SPEED,
   MIN_FIRST_PERSON_FLY_CLEARANCE,
+  MIN_FIRST_PERSON_SPEED,
   normalizeFirstPersonFlyClearance,
   normalizeFirstPersonSpeed,
 } from '../../store/use-editor'
@@ -47,6 +48,12 @@ import {
   shouldAppendRouteSample,
 } from './first-person-flight-utils'
 import { type PathPoint, planWalkPath } from './first-person-pathfinding'
+import {
+  dispatchFirstPersonShooterCommand,
+  dispatchFirstPersonShooterShot,
+  getFirstPersonShooterStateSnapshot,
+  subscribeFirstPersonShooterState,
+} from './first-person-shooter-utils'
 
 const EYE_HEIGHT_CONFIG: Record<FirstPersonEyeHeightPreset, { label: string; height: number }> = {
   adult: { label: 'Adult', height: 1.65 },
@@ -97,6 +104,27 @@ const TOUR_STATUS_EVENT = 'editor:first-person-tour-status'
 const VIRTUAL_MOVE_EVENT = 'editor:first-person-virtual-move'
 const ROUTE_PLANNING_EVENT = 'editor:first-person-route-planning'
 const ROUTE_POINT_EVENT = 'editor:first-person-route-point'
+const FIRST_PERSON_END_EVENT = 'editor:first-person-ended'
+const FIRST_PERSON_CURSOR_STYLE_ID = 'editor-first-person-cursor-style'
+
+function hideFirstPersonSystemCursor() {
+  if (typeof document === 'undefined') return
+  if (document.getElementById(FIRST_PERSON_CURSOR_STYLE_ID)) return
+
+  const cursorStyle = document.createElement('style')
+  cursorStyle.id = FIRST_PERSON_CURSOR_STYLE_ID
+  cursorStyle.textContent = `
+    *, *::before, *::after {
+      cursor: none !important;
+    }
+  `
+  document.head.appendChild(cursorStyle)
+}
+
+function showFirstPersonSystemCursor() {
+  if (typeof document === 'undefined') return
+  document.getElementById(FIRST_PERSON_CURSOR_STYLE_ID)?.remove()
+}
 
 function toFiniteNumber(value: unknown, fallback: number) {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
@@ -1385,6 +1413,12 @@ export const FirstPersonControls = () => {
   const eyeHeightPreset = useEditor((s) => s.firstPersonEyeHeightPreset)
   const flyClearance = useEditor((s) => s.firstPersonFlyClearance)
   const flyCameraMode = useEditor((s) => s.firstPersonFlyCameraMode)
+  const shooterState = useSyncExternalStore(
+    subscribeFirstPersonShooterState,
+    getFirstPersonShooterStateSnapshot,
+    getFirstPersonShooterStateSnapshot,
+  )
+  const shooterCanFire = shooterState.active && !shooterState.gameOver
 
   const keysRef = useRef<Set<string>>(new Set())
   const virtualMoveRef = useRef<VirtualMove>({ x: 0, z: 0 })
@@ -1396,7 +1430,6 @@ export const FirstPersonControls = () => {
   const yawRef = useRef(0)
   const pitchRef = useRef(0)
   const isLookingRef = useRef(false)
-  const lookPointerIdRef = useRef<number | null>(null)
   const initializedRef = useRef(false)
   const poseElapsedRef = useRef(0)
   const previousNavigationModeRef = useRef(navigationMode)
@@ -1485,6 +1518,17 @@ export const FirstPersonControls = () => {
       new CustomEvent(LOOK_STATUS_EVENT, { detail: { active, engaged: active } }),
     )
   }, [])
+
+  useEffect(() => {
+    if (!shooterCanFire) return
+
+    setMouseLookActive(true)
+    hideFirstPersonSystemCursor()
+
+    return () => {
+      showFirstPersonSystemCursor()
+    }
+  }, [setMouseLookActive, shooterCanFire])
 
   const startTourRoute = useCallback(
     (routeTargets: FirstPersonPose[]) => {
@@ -1765,48 +1809,73 @@ export const FirstPersonControls = () => {
     }
   }, [startTourRoute])
 
-  // Pointer lock and event handlers
+  // First-person event handlers. Pointer Lock is disabled in the desktop webview because
+  // Electron 33 crashes the renderer on requestPointerLock(); fullscreen + hidden cursor is
+  // the stable fallback for walkthrough mouse-look.
   useEffect(() => {
     const canvas = gl.domElement
 
-    const handlePointerDown = (event: PointerEvent) => {
-      if (event.button !== 0 && event.button !== 2) return
+    const requestWalkthroughFullscreen = () => {
+      if (document.fullscreenElement) return
+      try {
+        void document.documentElement.requestFullscreen?.().catch(() => {
+          // Fullscreen is best-effort; mouse-look still works inside the app window.
+        })
+      } catch {
+        // Ignore browser fullscreen denial.
+      }
+    }
+
+    const exitWalkthroughFullscreen = () => {
+      if (!document.fullscreenElement) return
+      try {
+        void document.exitFullscreen?.().catch(() => {
+          // Ignore fullscreen teardown races.
+        })
+      } catch {
+        // Ignore browser fullscreen teardown denial.
+      }
+    }
+
+    const deactivateMouseLook = () => {
+      setMouseLookActive(false)
+      showFirstPersonSystemCursor()
+      exitWalkthroughFullscreen()
+    }
+
+    const handleCanvasClick = (event: MouseEvent) => {
+      if (event.button !== 0) return
+
+      const currentShooterState = getFirstPersonShooterStateSnapshot()
+      if (currentShooterState.active && !currentShooterState.gameOver) {
+        event.preventDefault()
+        event.stopPropagation()
+        setMouseLookActive(true)
+        hideFirstPersonSystemCursor()
+        dispatchFirstPersonShooterShot()
+        return
+      }
+
+      if (isLookingRef.current) return
       event.preventDefault()
       event.stopPropagation()
-      lookPointerIdRef.current = event.pointerId
       setMouseLookActive(true)
-
-      try {
-        canvas.setPointerCapture(event.pointerId)
-      } catch {
-        // Pointer capture can fail if the browser already released this pointer.
-      }
-    }
-
-    const handlePointerUp = (event: PointerEvent) => {
-      if (lookPointerIdRef.current !== event.pointerId) return
-      event.preventDefault()
-      event.stopPropagation()
-      lookPointerIdRef.current = null
-      setMouseLookActive(false)
-
-      try {
-        canvas.releasePointerCapture(event.pointerId)
-      } catch {
-        // Ignore release races during teardown or window focus changes.
-      }
-    }
-
-    const handlePointerCancel = (event: PointerEvent) => {
-      if (lookPointerIdRef.current !== event.pointerId) return
-      lookPointerIdRef.current = null
-      setMouseLookActive(false)
+      hideFirstPersonSystemCursor()
+      requestWalkthroughFullscreen()
     }
 
     const handleCanvasDoubleClick = (event: MouseEvent) => {
       if (event.button !== 0) return
       event.preventDefault()
       event.stopPropagation()
+
+      const currentShooterState = getFirstPersonShooterStateSnapshot()
+      if (currentShooterState.active && !currentShooterState.gameOver) {
+        setMouseLookActive(true)
+        hideFirstPersonSystemCursor()
+        return
+      }
+
       teleportToCanvasPoint(event)
     }
 
@@ -1815,8 +1884,8 @@ export const FirstPersonControls = () => {
       event.stopPropagation()
     }
 
-    const handlePointerMove = (event: PointerEvent) => {
-      if (!isLookingRef.current || lookPointerIdRef.current !== event.pointerId) return
+    const handleMouseMove = (event: MouseEvent) => {
+      if (!isLookingRef.current) return
       event.preventDefault()
       event.stopPropagation()
 
@@ -1842,7 +1911,10 @@ export const FirstPersonControls = () => {
       if (code === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
-        exitPointerLockSafely(canvas)
+        if (isLookingRef.current) {
+          deactivateMouseLook()
+          return
+        }
         useEditor.getState().setFirstPersonMode(false)
         return
       }
@@ -1869,10 +1941,8 @@ export const FirstPersonControls = () => {
       keysRef.current.clear()
     }
 
-    canvas.addEventListener('pointerdown', handlePointerDown, true)
-    canvas.addEventListener('pointerup', handlePointerUp, true)
-    canvas.addEventListener('pointercancel', handlePointerCancel, true)
-    canvas.addEventListener('pointermove', handlePointerMove, true)
+    document.addEventListener('mousemove', handleMouseMove, true)
+    canvas.addEventListener('click', handleCanvasClick, true)
     canvas.addEventListener('dblclick', handleCanvasDoubleClick)
     canvas.addEventListener('contextmenu', handleContextMenu)
     canvas.addEventListener('wheel', handleWheel, { passive: false })
@@ -1881,19 +1951,17 @@ export const FirstPersonControls = () => {
     window.addEventListener('blur', clearKeys)
 
     return () => {
-      lookPointerIdRef.current = null
-      setMouseLookActive(false)
-      canvas.removeEventListener('pointerdown', handlePointerDown, true)
-      canvas.removeEventListener('pointerup', handlePointerUp, true)
-      canvas.removeEventListener('pointercancel', handlePointerCancel, true)
-      canvas.removeEventListener('pointermove', handlePointerMove, true)
+      deactivateMouseLook()
+      document.removeEventListener('mousemove', handleMouseMove, true)
+      canvas.removeEventListener('click', handleCanvasClick, true)
       canvas.removeEventListener('dblclick', handleCanvasDoubleClick)
       canvas.removeEventListener('contextmenu', handleContextMenu)
       canvas.removeEventListener('wheel', handleWheel)
       document.removeEventListener('keydown', handleKeyDown, true)
       document.removeEventListener('keyup', handleKeyUp)
       window.removeEventListener('blur', clearKeys)
-      exitPointerLockSafely(canvas)
+      dispatchFirstPersonShooterCommand('stop')
+      window.dispatchEvent(new CustomEvent(FIRST_PERSON_END_EVENT))
       clearKeys()
     }
   }, [gl, setMouseLookActive, setNavigationMode, setSpeed, teleportToCanvasPoint])
@@ -2211,6 +2279,11 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
   const lookStatus = useMouseLookStatus()
   const pose = useFirstPersonPose()
   const tourStatus = useFirstPersonTourStatus()
+  const shooterState = useSyncExternalStore(
+    subscribeFirstPersonShooterState,
+    getFirstPersonShooterStateSnapshot,
+    getFirstPersonShooterStateSnapshot,
+  )
   const bookmarkStorageKey = useMemo(
     () => getBookmarkStorageKey(buildingId, activeLevelId),
     [activeLevelId, buildingId],
@@ -2290,6 +2363,7 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
 
   const handleExit = useCallback(() => {
     exitPointerLockSafely()
+    dispatchFirstPersonShooterCommand('stop')
     onExit()
   }, [onExit])
 
@@ -2475,43 +2549,98 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
     () => `Speed ${formatFirstPersonSpeed(speed)}`,
     [speed],
   )
+  const shooterHealthPercent =
+    shooterState.maxHealth > 0 ? (shooterState.health / shooterState.maxHealth) * 100 : 0
+  const shooterReticleTone =
+    shooterState.lastShotHit === true
+      ? 'border-emerald-300 bg-emerald-300'
+      : shooterState.lastShotHit === false
+        ? 'border-rose-300 bg-rose-300'
+        : 'border-white/80 bg-white/80'
+
+  const startShooter = useCallback(() => {
+    dispatchFirstPersonShooterCommand('start')
+  }, [])
+
+  const stopShooter = useCallback(() => {
+    dispatchFirstPersonShooterCommand('stop')
+  }, [])
+
+  const restartShooter = useCallback(() => {
+    dispatchFirstPersonShooterCommand('restart')
+  }, [])
 
   return (
     <>
       {!presentationMode ? (
-        lookStatus.engaged ? (
+        <>
           <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center">
-            <div className="relative h-6 w-6">
+            <div
+              className={cn(
+                'relative h-12 w-12 transition-transform duration-75',
+                shooterState.lastShotHit === true && 'scale-110',
+              )}
+            >
               <div
                 className={cn(
-                  'absolute top-1/2 left-0 h-px w-full -translate-y-1/2 shadow-[0_0_6px_rgba(0,0,0,0.45)] transition-colors',
-                  lookStatus.active ? 'bg-white/80' : 'bg-white/55',
+                  'absolute top-1/2 left-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border shadow-[0_0_10px_rgba(0,0,0,0.55)] transition-colors',
+                  shooterReticleTone,
+                  !lookStatus.active && 'opacity-65',
                 )}
               />
               <div
                 className={cn(
-                  'absolute top-0 left-1/2 h-full w-px -translate-x-1/2 shadow-[0_0_6px_rgba(0,0,0,0.45)] transition-colors',
-                  lookStatus.active ? 'bg-white/80' : 'bg-white/55',
+                  'absolute top-1/2 left-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full shadow-[0_0_8px_rgba(0,0,0,0.6)] transition-colors',
+                  shooterReticleTone,
+                )}
+              />
+              <div
+                className={cn(
+                  'absolute top-0 left-1/2 h-3.5 w-px -translate-x-1/2 shadow-[0_0_8px_rgba(0,0,0,0.5)] transition-colors',
+                  shooterReticleTone,
+                  !lookStatus.active && 'opacity-65',
+                )}
+              />
+              <div
+                className={cn(
+                  'absolute bottom-0 left-1/2 h-3.5 w-px -translate-x-1/2 shadow-[0_0_8px_rgba(0,0,0,0.5)] transition-colors',
+                  shooterReticleTone,
+                  !lookStatus.active && 'opacity-65',
+                )}
+              />
+              <div
+                className={cn(
+                  'absolute top-1/2 left-0 h-px w-3.5 -translate-y-1/2 shadow-[0_0_8px_rgba(0,0,0,0.5)] transition-colors',
+                  shooterReticleTone,
+                  !lookStatus.active && 'opacity-65',
+                )}
+              />
+              <div
+                className={cn(
+                  'absolute top-1/2 right-0 h-px w-3.5 -translate-y-1/2 shadow-[0_0_8px_rgba(0,0,0,0.5)] transition-colors',
+                  shooterReticleTone,
+                  !lookStatus.active && 'opacity-65',
                 )}
               />
             </div>
           </div>
-        ) : (
-          <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center px-4">
-            <div className="max-w-[360px] rounded-lg border border-white/15 bg-slate-950/75 px-4 py-3 text-center text-white shadow-xl backdrop-blur-md">
-              <div className="font-semibold text-sm">
-                {routePlanning ? '规划航线中' : 'Drag canvas to look around'}
-              </div>
-              <div className="mt-1 text-white/70 text-xs">
-                {routePlanning
-                  ? navigationMode === 'fly'
-                    ? '双击场景添加航点，或在右侧 2D 图上单击/拖拽画线'
-                    : '双击地面添加点位，或在右侧 2D 图上单击加点'
-                  : 'Double-click floor to move there'}
+          {routePlanning || !lookStatus.active ? (
+            <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center px-4">
+              <div className="max-w-[360px] rounded-lg border border-white/15 bg-slate-950/75 px-4 py-3 text-center text-white shadow-xl backdrop-blur-md">
+                <div className="font-semibold text-sm">
+                  {routePlanning ? '规划航线中' : '点击画面开始漫游'}
+                </div>
+                <div className="mt-1 text-white/70 text-xs">
+                  {routePlanning
+                    ? navigationMode === 'fly'
+                      ? '双击场景添加航点，或在右侧 2D 图上单击/拖拽画线'
+                      : '双击地面添加点位，或在右侧 2D 图上单击加点'
+                    : '移动鼠标转动视角，按 Esc 退出漫游'}
+                </div>
               </div>
             </div>
-          </div>
-        )
+          ) : null}
+        </>
       ) : (
         <PresentationControls
           onExitPresentation={() => setPresentationMode(false)}
@@ -2521,10 +2650,85 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
       )}
 
       {!presentationMode ? (
-        <div className="fixed top-4 left-4 z-50 pointer-events-none">
+        <div className="fixed top-4 left-4 z-50 flex flex-col gap-2 pointer-events-none">
           <div className="rounded-lg border border-white/15 bg-slate-950/70 px-3 py-2 text-white shadow-lg backdrop-blur-md">
             <div className="font-semibold text-xs">Walkthrough</div>
             <div className="mt-0.5 text-[11px] text-white/70">{modeLabel}</div>
+          </div>
+          <div className="w-56 rounded-lg border border-white/15 bg-slate-950/70 px-3 py-2 text-white shadow-lg backdrop-blur-md">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="font-semibold text-xs">Shooter</div>
+                <div className="mt-0.5 text-[11px] text-white/70">
+                  {shooterState.active
+                    ? shooterState.gameOver
+                      ? 'Game over'
+                      : 'Battle running'
+                    : 'Ready'}
+                </div>
+              </div>
+              {shooterState.active ? (
+                <button
+                  className="pointer-events-auto h-8 rounded-md border border-white/[0.12] bg-white/[0.08] px-2.5 font-medium text-[11px] text-white transition-colors hover:bg-white/[0.14]"
+                  onClick={stopShooter}
+                  type="button"
+                >
+                  结束
+                </button>
+              ) : (
+                <button
+                  className="pointer-events-auto h-8 rounded-md border border-emerald-300/30 bg-emerald-400/15 px-2.5 font-medium text-[11px] text-emerald-50 transition-colors hover:bg-emerald-400/25"
+                  onClick={startShooter}
+                  type="button"
+                >
+                  开始战斗
+                </button>
+              )}
+            </div>
+            {shooterState.active ? (
+              <div className="mt-2 space-y-2">
+                <div>
+                  <div className="mb-1 flex items-center justify-between text-[10px] text-white/65">
+                    <span>生命</span>
+                    <span>
+                      {shooterState.health}/{shooterState.maxHealth}
+                    </span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-white/12">
+                    <div
+                      className={cn(
+                        'h-full rounded-full transition-all',
+                        shooterHealthPercent > 50
+                          ? 'bg-emerald-400'
+                          : shooterHealthPercent > 25
+                            ? 'bg-amber-300'
+                            : 'bg-rose-400',
+                      )}
+                      style={{ width: `${Math.max(0, Math.min(100, shooterHealthPercent))}%` }}
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-1 text-center">
+                  <ShooterStat label="分数" value={shooterState.score} />
+                  <ShooterStat label="击杀" value={shooterState.kills} />
+                  <ShooterStat label="怪物" value={shooterState.monsterCount} />
+                </div>
+                {shooterState.lastScoreAward > 0 ? (
+                  <div className="rounded-md border border-emerald-300/25 bg-emerald-400/10 px-2 py-1 text-center font-mono text-[11px] text-emerald-100">
+                    +{shooterState.lastScoreAward} 积分
+                  </div>
+                ) : null}
+                {shooterState.gameOver ? (
+                  <button
+                    className="pointer-events-auto h-8 w-full rounded-md border border-white/[0.12] bg-white/[0.1] font-medium text-[11px] text-white transition-colors hover:bg-white/[0.16]"
+                    onClick={restartShooter}
+                    type="button"
+                  >
+                    重开
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -2626,6 +2830,15 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
         </div>
       ) : null}
     </>
+  )
+}
+
+function ShooterStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md border border-white/[0.1] bg-white/[0.06] px-1.5 py-1">
+      <div className="font-mono text-[12px] leading-none text-white">{value}</div>
+      <div className="mt-0.5 text-[9px] text-white/55">{label}</div>
+    </div>
   )
 }
 

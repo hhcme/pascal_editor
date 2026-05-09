@@ -8,7 +8,7 @@ import {
   useScene,
 } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
-import { ChevronDown, Plus, Trash2 } from 'lucide-react'
+import { Box, ChevronDown, ImageIcon, Plus, Trash2 } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { cn } from '../../../lib/utils'
@@ -146,11 +146,7 @@ function GuidesControl() {
           variant="ghost"
         >
           <div className="relative">
-            <img
-              alt="Guides"
-              className="h-[28px] w-[28px] object-contain"
-              src="/icons/floorplan.png"
-            />
+            <ImageIcon aria-hidden="true" className="h-5 w-5 stroke-[1.9]" />
             <span className="absolute -right-1.5 -bottom-1 min-w-[14px] rounded-full bg-primary/15 px-[3px] text-center font-medium text-[9px] text-primary leading-[14px]">
               {guides.length}
             </span>
@@ -188,7 +184,7 @@ function GuidesControl() {
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-background/80">
-              <img alt="" className="h-4 w-4 object-contain" src="/icons/floorplan.png" />
+              <ImageIcon aria-hidden="true" className="h-4 w-4 stroke-[1.9]" />
             </span>
             <div className="min-w-0 flex-1">
               <p className="font-medium text-foreground text-sm">Guide images</p>
@@ -209,11 +205,7 @@ function GuidesControl() {
                   key={guide.id}
                 >
                   <div className="flex min-w-0 items-center gap-2">
-                    <img
-                      alt=""
-                      className="h-3.5 w-3.5 shrink-0 object-contain opacity-70"
-                      src="/icons/floorplan.png"
-                    />
+                    <ImageIcon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 opacity-70" />
                     <p className="truncate font-medium text-foreground text-sm">
                       {guide.name || `Guide image ${index + 1}`}
                     </p>
@@ -286,7 +278,7 @@ function ScansControl() {
           variant="ghost"
         >
           <div className="relative">
-            <img alt="Scans" className="h-[28px] w-[28px] object-contain" src="/icons/mesh.png" />
+            <Box aria-hidden="true" className="h-5 w-5 stroke-[1.9]" />
             <span className="absolute -right-1.5 -bottom-1 min-w-[14px] rounded-full bg-primary/15 px-[3px] text-center font-medium text-[9px] text-primary leading-[14px]">
               {scans.length}
             </span>
@@ -324,7 +316,7 @@ function ScansControl() {
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-background/80">
-              <img alt="" className="h-4 w-4 object-contain" src="/icons/mesh.png" />
+              <Box aria-hidden="true" className="h-4 w-4 stroke-[1.9]" />
             </span>
             <div className="min-w-0 flex-1">
               <p className="font-medium text-foreground text-sm">Scans</p>
@@ -345,11 +337,7 @@ function ScansControl() {
                   key={scan.id}
                 >
                   <div className="flex min-w-0 items-center gap-2">
-                    <img
-                      alt=""
-                      className="h-3.5 w-3.5 shrink-0 object-contain opacity-70"
-                      src="/icons/mesh.png"
-                    />
+                    <Box aria-hidden="true" className="h-3.5 w-3.5 shrink-0 opacity-70" />
                     <p className="truncate font-medium text-foreground text-sm">
                       {scan.name || `Scan ${index + 1}`}
                     </p>

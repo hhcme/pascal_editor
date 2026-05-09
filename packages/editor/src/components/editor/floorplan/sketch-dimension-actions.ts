@@ -8,14 +8,23 @@ import type {
   SketchLineNode,
 } from '@pascal-app/core'
 import { SketchDimensionNode as SketchDimensionNodeSchema, useScene } from '@pascal-app/core'
-import { useCallback, type Dispatch, type SetStateAction } from 'react'
+import { type Dispatch, type SetStateAction, useCallback } from 'react'
 import { sfxEmitter } from '../../../lib/sfx-bus'
+import useEditor from '../../../store/use-editor'
 import {
-  buildSetSketchCircleCenterPlan,
   buildSetSketchCircleArcLengthPlan,
+  buildSetSketchCircleCenterPlan,
   buildSetSketchCircleRadiusPlan,
   type SketchCircleEditResult,
 } from '../../tools/sketch/sketch-circle-constraints'
+import {
+  getSketchCircleDimensionDisplay,
+  getSketchCircleDisplayedDimensionMode,
+  getSketchCircleDisplayedDimensionValue,
+  getSketchLineAngleDimensionMode,
+  getSketchLineDisplayedAngleDegrees,
+  getSketchLineLengthDimensionMode,
+} from '../../tools/sketch/sketch-dimensions'
 import {
   areSketchDimensionReferencesEqual,
   buildSetSketchDistanceDimensionValuePlan,
@@ -23,14 +32,6 @@ import {
   getSketchDistanceMeasurementFailureReason,
   resolveSketchDistanceMeasurement,
 } from '../../tools/sketch/sketch-distance-dimensions'
-import {
-  getSketchLineAngleDimensionMode,
-  getSketchLineDisplayedAngleDegrees,
-  getSketchCircleDimensionDisplay,
-  getSketchCircleDisplayedDimensionMode,
-  getSketchCircleDisplayedDimensionValue,
-  getSketchLineLengthDimensionMode,
-} from '../../tools/sketch/sketch-dimensions'
 import {
   buildSetSketchLineAnglePlan,
   buildSetSketchLineLengthPlan,
@@ -45,6 +46,21 @@ import {
   type UnitSystem,
 } from './sketch-action-helpers'
 import type { SketchDimensionInputState, SketchDistanceDimensionDraft } from './sketch-state'
+
+function getActiveSketchPlaneMetadata(): Record<string, unknown> {
+  const plane = useEditor.getState().sketchPlane
+  if (!plane) {
+    return {}
+  }
+
+  return {
+    sketchPlane: {
+      kind: plane.kind,
+      targetNodeId: plane.targetNodeId,
+      elevation: plane.elevation,
+    },
+  }
+}
 
 type UseFloorplanSketchDimensionActionsArgs = {
   levelId: string | null
@@ -116,10 +132,7 @@ export function useFloorplanSketchDimensionActions({
   )
 
   const openSketchDistanceDimensionInput = useCallback(
-    (
-      target: SketchDimensionNode,
-      position?: SketchDimensionInputState['position'],
-    ) => {
+    (target: SketchDimensionNode, position?: SketchDimensionInputState['position']) => {
       setSketchDistanceDimensionDraft(null)
 
       const measurementResult = resolveSketchDistanceMeasurement({
@@ -223,6 +236,7 @@ export function useFloorplanSketchDimensionActions({
         name: `草图距离 ${sketchDimensionCount + 1}`,
         start: sketchDistanceDimensionDraft.start,
         end: reference,
+        metadata: getActiveSketchPlaneMetadata(),
       })
 
       createNode(sketchDimension, levelId as AnyNodeId)

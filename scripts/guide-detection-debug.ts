@@ -29,6 +29,8 @@ type PixelPoint = {
   y: number
 }
 
+type DebugRunSummary = Awaited<ReturnType<typeof debugOne>>
+
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const workspaceRoot = resolve(scriptDir, '..')
 const defaultInput = join(workspaceRoot, 'packages/editor/fixtures/guide-detection/mlstructfp')
@@ -233,6 +235,10 @@ function blendPixel(png: PNG, x: number, y: number, color: [number, number, numb
   png.data[offset + 3] = 255
 }
 
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
+}
+
 function fillRect(
   png: PNG,
   minX: number,
@@ -315,6 +321,7 @@ function toJsonSummary(
   snapshot: GuideDetectionDebugSnapshot,
   source: string,
   calibration: { expectedWallRects: number | null; guideScale: number; pixelsPerMeter: number | null },
+  quality: DebugQuality,
 ) {
   return {
     source,
@@ -332,9 +339,154 @@ function toJsonSummary(
       acc[opening.kind] = (acc[opening.kind] ?? 0) + 1
       return acc
     }, {}),
+    quality,
     candidates: snapshot.candidates,
     rasterWalls: snapshot.rasterWalls,
   }
+}
+
+type DebugQuality = {
+  flags: string[]
+  score: number
+  wallRecallEstimate: number | null
+}
+
+function evaluateDebugQuality(input: {
+  expectedWallRects: number | null
+  mode: GuideDetectionDebugSnapshot['detectionMode']
+  openings: number
+  rasterWalls: number
+  walls: number
+}): DebugQuality {
+  const flags: string[] = []
+  const wallRecallEstimate =
+    input.expectedWallRects && input.expectedWallRects > 0
+      ? Number((input.walls / input.expectedWallRects).toFixed(3))
+      : null
+
+  if (input.walls === 0) {
+    flags.push('zero-walls')
+  }
+  if (input.openings === 0) {
+    flags.push('zero-openings')
+  }
+  if (wallRecallEstimate !== null && wallRecallEstimate < 0.25) {
+    flags.push('low-wall-recall')
+  }
+  if (input.mode === 'thin-line' && input.walls <= 4) {
+    flags.push('thin-line-underfit')
+  }
+  if (input.rasterWalls > 90) {
+    flags.push('many-wall-candidates')
+  }
+
+  let score = 100
+  score -= flags.includes('zero-walls') ? 60 : 0
+  score -= flags.includes('zero-openings') ? 12 : 0
+  score -= flags.includes('thin-line-underfit') ? 18 : 0
+  score -= flags.includes('many-wall-candidates') ? 15 : 0
+  if (wallRecallEstimate !== null) {
+    score -= Math.max(0, Math.round((0.45 - wallRecallEstimate) * 100))
+  }
+
+  return {
+    flags,
+    score: clampNumber(score, 0, 100),
+    wallRecallEstimate,
+  }
+}
+
+function htmlEscape(value: string) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+}
+
+function buildReportHtml(
+  summaries: DebugRunSummary[],
+  stats: ReturnType<typeof summarizeRuns>,
+  outRoot: string,
+) {
+  const rows = [...summaries].sort((left, right) => left.quality.score - right.quality.score)
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Guide Detection Debug Report</title>
+  <style>
+    body { margin: 0; background: #f8fafc; color: #0f172a; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    header { position: sticky; top: 0; z-index: 2; border-bottom: 1px solid #e2e8f0; background: rgba(248,250,252,0.94); padding: 16px 20px; backdrop-filter: blur(10px); }
+    h1 { margin: 0 0 8px; font-size: 18px; }
+    .stats { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; color: #475569; }
+    .stat { border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; padding: 6px 8px; }
+    main { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; padding: 14px; }
+    article { overflow: hidden; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,0.04); }
+    article.bad { border-color: #fecaca; }
+    article.warn { border-color: #fed7aa; }
+    .meta { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; }
+    .source { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 700; }
+    .metrics { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px; color: #475569; }
+    .pill { border-radius: 999px; background: #f1f5f9; padding: 2px 7px; }
+    .flag { background: #fee2e2; color: #991b1b; }
+    .images { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #e2e8f0; }
+    .images figure { margin: 0; background: #fff; }
+    .images img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: #fff; }
+    .images figcaption { padding: 5px 7px; color: #64748b; font-size: 10px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Guide Detection Debug Report</h1>
+    <div class="stats">
+      ${Object.entries(stats)
+        .map(([key, value]) => `<span class="stat">${htmlEscape(key)}: ${htmlEscape(String(value))}</span>`)
+        .join('\n      ')}
+    </div>
+  </header>
+  <main>
+    ${rows
+      .map((summary) => {
+        const outputPath = summary.output ? resolve(workspaceRoot, summary.output) : null
+        const relOutput = outputPath ? relative(outRoot, outputPath).replaceAll('\\', '/') : null
+        const articleClass =
+          summary.quality.score < 50 ? 'bad' : summary.quality.score < 75 ? 'warn' : ''
+        const imageBlock = relOutput
+          ? `<div class="images">
+              <figure><img src="${htmlEscape(relOutput)}/overlay.png" /><figcaption>overlay</figcaption></figure>
+              <figure><img src="${htmlEscape(relOutput)}/wall-mask.png" /><figcaption>wall mask</figcaption></figure>
+            </div>`
+          : ''
+
+        return `<article class="${articleClass}">
+          <div class="meta">
+            <div class="source">${htmlEscape(summary.source)}</div>
+            <div class="metrics">
+              <span class="pill">score ${summary.quality.score}</span>
+              <span class="pill">${summary.mode}</span>
+              <span class="pill">${summary.walls} walls</span>
+              <span class="pill">${summary.openings} openings</span>
+              ${
+                summary.quality.wallRecallEstimate === null
+                  ? ''
+                  : `<span class="pill">wall recall est. ${summary.quality.wallRecallEstimate}</span>`
+              }
+              ${summary.quality.flags
+                .map((flag) => `<span class="pill flag">${htmlEscape(flag)}</span>`)
+                .join('')}
+            </div>
+          </div>
+          ${imageBlock}
+        </article>`
+      })
+      .join('\n    ')}
+  </main>
+</body>
+</html>
+`
 }
 
 async function loadDatasetHints(input: string): Promise<DatasetHints> {
@@ -398,6 +550,13 @@ async function debugOne(
     },
     {},
   )
+  const quality = evaluateDebugQuality({
+    expectedWallRects,
+    mode: snapshot.detectionMode,
+    openings: snapshot.candidates.openings.length,
+    rasterWalls: snapshot.rasterWalls.length,
+    walls: snapshot.candidates.walls.length,
+  })
   const name = relative(workspaceRoot, inputPath)
     .replace(/\.(jpe?g|png)$/i, '')
     .replace(/[^a-zA-Z0-9._-]+/g, '__')
@@ -421,7 +580,7 @@ async function debugOne(
           guideScale,
           expectedWallRects,
           pixelsPerMeter: pixelsPerMeter ?? null,
-        }),
+        }, quality),
         null,
         2,
       )}\n`,
@@ -440,11 +599,13 @@ async function debugOne(
     doors: openingsByKind.door ?? 0,
     windows: openingsByKind.window ?? 0,
     rasterWalls: snapshot.rasterWalls.length,
+    quality,
   }
 }
 
 function summarizeRuns(
   summaries: Array<{
+    quality: DebugQuality
     mode: GuideDetectionDebugSnapshot['detectionMode']
     openings: number
     doors: number
@@ -462,6 +623,7 @@ function summarizeRuns(
   const doorTotal = summaries.reduce((sum, summary) => sum + summary.doors, 0)
   const windowTotal = summaries.reduce((sum, summary) => sum + summary.windows, 0)
   const rasterWallTotal = summaries.reduce((sum, summary) => sum + summary.rasterWalls, 0)
+  const scoreTotal = summaries.reduce((sum, summary) => sum + summary.quality.score, 0)
 
   return {
     total,
@@ -469,6 +631,8 @@ function summarizeRuns(
     thinLine,
     zeroWallImages: summaries.filter((summary) => summary.walls === 0).length,
     zeroOpeningImages: summaries.filter((summary) => summary.openings === 0).length,
+    flaggedImages: summaries.filter((summary) => summary.quality.flags.length > 0).length,
+    avgQualityScore: Number((scoreTotal / safeTotal).toFixed(2)),
     avgWalls: Number((wallTotal / safeTotal).toFixed(2)),
     avgOpenings: Number((openingTotal / safeTotal).toFixed(2)),
     avgDoors: Number((doorTotal / safeTotal).toFixed(2)),
@@ -492,9 +656,13 @@ async function main() {
   }
 
   await writeFile(join(options.out, 'summary.json'), `${JSON.stringify(summaries, null, 2)}\n`)
-  await writeFile(join(options.out, 'stats.json'), `${JSON.stringify(summarizeRuns(summaries), null, 2)}\n`)
+  const stats = summarizeRuns(summaries)
+  await writeFile(join(options.out, 'stats.json'), `${JSON.stringify(stats, null, 2)}\n`)
+  if (!options.summaryOnly) {
+    await writeFile(join(options.out, 'report.html'), buildReportHtml(summaries, stats, options.out))
+  }
   console.table(summaries)
-  console.table([summarizeRuns(summaries)])
+  console.table([stats])
   console.log(`Guide detection debug output: ${relative(workspaceRoot, options.out)}`)
 }
 

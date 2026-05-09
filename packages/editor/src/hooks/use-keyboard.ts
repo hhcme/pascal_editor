@@ -67,9 +67,10 @@ export const useKeyboard = ({ isVersionPreviewMode = false } = {}) => {
           '2': 'area',
           '3': 'volume',
           '4': 'clearance',
-          '5': 'angle',
-          '6': 'perimeter',
-          '7': 'grid',
+          '5': 'bounds',
+          '6': 'angle',
+          '7': 'perimeter',
+          '8': 'grid',
         } as const
         const nextMeasurementMode =
           measurementModeByKey[e.key as keyof typeof measurementModeByKey] ?? null

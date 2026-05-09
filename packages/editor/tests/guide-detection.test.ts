@@ -162,6 +162,39 @@ describe('guide detection application', () => {
     expect(candidates.walls).toHaveLength(4)
   })
 
+  test('keeps strong disconnected thin-line wall groups for vector floorplan masks', () => {
+    const imageData = makeWhiteImageData(180, 100)
+
+    for (let x = 20; x <= 80; x += 1) {
+      setDarkPixel(imageData, x, 15)
+      setDarkPixel(imageData, x, 70)
+    }
+    for (let y = 15; y <= 70; y += 1) {
+      setDarkPixel(imageData, 20, y)
+      setDarkPixel(imageData, 80, y)
+    }
+
+    for (let x = 105; x <= 155; x += 1) {
+      setDarkPixel(imageData, x, 20)
+      setDarkPixel(imageData, x, 72)
+    }
+    for (let y = 20; y <= 72; y += 1) {
+      setDarkPixel(imageData, 105, y)
+      setDarkPixel(imageData, 155, y)
+    }
+
+    const guide = {
+      id: 'thin-line-disconnected-guide',
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: 1,
+      type: 'guide',
+    } as never
+    const candidates = detectGuideCandidatesFromImageData(guide, imageData)
+
+    expect(candidates.walls.length).toBeGreaterThanOrEqual(7)
+  })
+
   test('detects a door-sized void inside a thin-line wall candidate', () => {
     const imageData = makeWhiteImageData(100, 40)
 
@@ -185,6 +218,31 @@ describe('guide detection application', () => {
     expect(candidates.walls).toHaveLength(1)
     expect(candidates.openings).toHaveLength(1)
     expect(candidates.openings[0]?.kind).toBe('door')
+  })
+
+  test('maps detected image pixels into the same orientation as the 3D guide plane', () => {
+    const imageData = makeWhiteImageData(100, 100)
+
+    for (let y = 12; y <= 17; y += 1) {
+      for (let x = 10; x <= 40; x += 1) {
+        setDarkPixel(imageData, x, y)
+      }
+    }
+
+    const guide = {
+      id: 'orientation-guide',
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: 1,
+      type: 'guide',
+    } as never
+    const candidates = detectGuideCandidatesFromImageData(guide, imageData)
+
+    expect(candidates.walls).toHaveLength(1)
+    expect(candidates.walls[0]?.start[0]).toBeLessThan(0)
+    expect(candidates.walls[0]?.start[1]).toBeLessThan(0)
+    expect(candidates.walls[0]?.end[0]).toBeLessThan(0)
+    expect(candidates.walls[0]?.end[1]).toBeLessThan(0)
   })
 
   test('converts a persisted detection region into the expected pixel crop window', () => {
@@ -307,6 +365,94 @@ describe('guide detection application', () => {
       'main-right',
       'main-bottom',
     ])
+  })
+
+  test('keeps meaningful secondary wall components inside the main plan body', () => {
+    const filtered = filterDisconnectedRasterWalls([
+      {
+        axis: 'horizontal',
+        band: { end: 44, start: 40 },
+        id: 'main-top',
+        segment: { end: 120, start: 30 },
+      },
+      {
+        axis: 'vertical',
+        band: { end: 64, start: 58 },
+        id: 'main-right',
+        segment: { end: 100, start: 20 },
+      },
+      {
+        axis: 'horizontal',
+        band: { end: 104, start: 100 },
+        id: 'main-bottom',
+        segment: { end: 120, start: 30 },
+      },
+      {
+        axis: 'horizontal',
+        band: { end: 74, start: 70 },
+        id: 'secondary-room-top',
+        segment: { end: 72, start: 34 },
+      },
+      {
+        axis: 'vertical',
+        band: { end: 72, start: 68 },
+        id: 'secondary-room-side',
+        segment: { end: 100, start: 70 },
+      },
+      {
+        axis: 'horizontal',
+        band: { end: 12, start: 8 },
+        id: 'single-dimension-line',
+        segment: { end: 42, start: 4 },
+      },
+    ])
+
+    expect(filtered.map((candidate) => candidate.id)).toEqual([
+      'main-top',
+      'main-right',
+      'main-bottom',
+      'secondary-room-top',
+      'secondary-room-side',
+    ])
+  })
+
+  test('can restrict thin-line detection to the primary connected wall component', () => {
+    const candidates = [
+      {
+        axis: 'horizontal',
+        band: { end: 44, start: 40 },
+        id: 'main-top',
+        segment: { end: 120, start: 30 },
+      },
+      {
+        axis: 'vertical',
+        band: { end: 64, start: 58 },
+        id: 'main-right',
+        segment: { end: 100, start: 20 },
+      },
+      {
+        axis: 'horizontal',
+        band: { end: 104, start: 100 },
+        id: 'main-bottom',
+        segment: { end: 120, start: 30 },
+      },
+      {
+        axis: 'horizontal',
+        band: { end: 74, start: 70 },
+        id: 'secondary-noisy-line',
+        segment: { end: 188, start: 150 },
+      },
+      {
+        axis: 'vertical',
+        band: { end: 188, start: 184 },
+        id: 'secondary-noisy-side',
+        segment: { end: 100, start: 70 },
+      },
+    ] satisfies Parameters<typeof filterDisconnectedRasterWalls>[0]
+
+    expect(
+      filterDisconnectedRasterWalls(candidates, false).map((candidate) => candidate.id),
+    ).toEqual(['main-top', 'main-right', 'main-bottom'])
   })
 
   test('focuses structure bounds on the main floorplan body instead of detached dimension lines', () => {

@@ -16,6 +16,58 @@ function extractIdPrefix(id: string): string {
   return underscoreIndex === -1 ? 'node' : id.slice(0, underscoreIndex)
 }
 
+function remapIdList(ids: readonly string[], idMap: ReadonlyMap<string, string>) {
+  return ids.map((id) => idMap.get(id) ?? id).filter((id): id is string => typeof id === 'string')
+}
+
+function remapFeatureDefinitionReferences(node: AnyNode, idMap: ReadonlyMap<string, string>) {
+  if (node.type !== 'feature' || !node.definition) return
+
+  for (const step of node.definition.steps) {
+    step.references = step.references.map((reference) => ({
+      ...reference,
+      id: idMap.get(reference.id) ?? reference.id,
+    }))
+
+    if ('profile' in step) {
+      step.profile.lineIds = remapIdList(step.profile.lineIds, idMap) as typeof step.profile.lineIds
+    }
+
+    if ('profiles' in step) {
+      step.profiles = step.profiles.map((profile) => ({
+        ...profile,
+        lineIds: remapIdList(profile.lineIds, idMap) as typeof profile.lineIds,
+      }))
+    }
+
+    if ('pathLineIds' in step) {
+      step.pathLineIds = remapIdList(step.pathLineIds, idMap) as typeof step.pathLineIds
+    }
+
+    if ('guideLineIds' in step) {
+      step.guideLineIds = remapIdList(step.guideLineIds, idMap) as typeof step.guideLineIds
+    }
+
+    if ('revolveAxisLineId' in step && step.revolveAxisLineId) {
+      step.revolveAxisLineId = (idMap.get(step.revolveAxisLineId) ??
+        step.revolveAxisLineId) as typeof step.revolveAxisLineId
+    }
+
+    if ('targetIds' in step) {
+      step.targetIds = remapIdList(step.targetIds, idMap) as typeof step.targetIds
+    }
+
+    if ('sourceStepIds' in step) {
+      step.sourceStepIds = remapIdList(step.sourceStepIds, idMap) as typeof step.sourceStepIds
+    }
+  }
+
+  node.definition.bodies = node.definition.bodies.map((body) => ({
+    ...body,
+    sourceStepIds: remapIdList(body.sourceStepIds, idMap) as typeof body.sourceStepIds,
+  }))
+}
+
 /**
  * Deep clones a scene graph with all node IDs regenerated while preserving
  * parent-child relationships and other internal references.
@@ -74,6 +126,33 @@ export function cloneSceneGraph(sceneGraph: SceneGraph): SceneGraph {
       ;(clonedNode as Record<string, unknown>).wallId = idMap.get(clonedNode.wallId) as
         | string
         | undefined
+    }
+
+    if (clonedNode.type === 'feature') {
+      clonedNode.revolveAxisLineId = clonedNode.revolveAxisLineId
+        ? ((idMap.get(clonedNode.revolveAxisLineId) ?? clonedNode.revolveAxisLineId) as
+            | typeof clonedNode.revolveAxisLineId
+            | undefined)
+        : undefined
+      clonedNode.profile.lineIds = clonedNode.profile.lineIds
+        .map((lineId) => idMap.get(lineId) ?? lineId)
+        .filter(
+          (lineId): lineId is (typeof clonedNode.profile.lineIds)[number] =>
+            typeof lineId === 'string',
+        )
+      clonedNode.cuts = clonedNode.cuts.map((cut) => ({
+        ...cut,
+        profile: {
+          ...cut.profile,
+          lineIds: cut.profile.lineIds
+            .map((lineId) => idMap.get(lineId) ?? lineId)
+            .filter(
+              (lineId): lineId is (typeof cut.profile.lineIds)[number] =>
+                typeof lineId === 'string',
+          ),
+        },
+      }))
+      remapFeatureDefinitionReferences(clonedNode, idMap)
     }
 
     clonedNodes[newId] = clonedNode
@@ -218,6 +297,32 @@ export function cloneLevelSubtree(
     // Remap wallId (doors/windows attached to walls)
     if ('wallId' in cloned && typeof cloned.wallId === 'string') {
       ;(cloned as Record<string, unknown>).wallId = idMap.get(cloned.wallId) ?? cloned.wallId
+    }
+
+    if (cloned.type === 'feature') {
+      cloned.revolveAxisLineId = cloned.revolveAxisLineId
+        ? ((idMap.get(cloned.revolveAxisLineId) ?? cloned.revolveAxisLineId) as
+            | typeof cloned.revolveAxisLineId
+            | undefined)
+        : undefined
+      cloned.profile.lineIds = cloned.profile.lineIds
+        .map((lineId) => idMap.get(lineId) ?? lineId)
+        .filter(
+          (lineId): lineId is (typeof cloned.profile.lineIds)[number] => typeof lineId === 'string',
+        )
+      cloned.cuts = cloned.cuts.map((cut) => ({
+        ...cut,
+        profile: {
+          ...cut.profile,
+          lineIds: cut.profile.lineIds
+            .map((lineId) => idMap.get(lineId) ?? lineId)
+            .filter(
+              (lineId): lineId is (typeof cut.profile.lineIds)[number] =>
+                typeof lineId === 'string',
+          ),
+        },
+      }))
+      remapFeatureDefinitionReferences(cloned, idMap)
     }
 
     clonedNodes.push(cloned)

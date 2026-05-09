@@ -49,12 +49,14 @@ import { EDITOR_LAYER } from './../../lib/constants'
 import { exportFilters, saveBlobExport } from '../../lib/export'
 import {
   type AngleSummary,
+  type BoundsSummary,
   type ClearanceSummary,
   formatLength,
   type GridGuide,
   type GridSummary,
   getAngleComparisonSummaryForSelection,
   getAngleSummaryForNode,
+  getBoundsSummaryForNode,
   getClearanceSummaryForNode,
   getGridMeasurementGuidesForSelection,
   getGridMeasurementSummaryForSelection,
@@ -174,6 +176,7 @@ const MEASUREMENT_MODE_LABELS: Record<MeasurementMode, string> = {
   area: '面积',
   volume: '体积',
   clearance: '净空',
+  bounds: '包围盒',
   angle: '角度',
   perimeter: '周长',
   grid: '轴网',
@@ -931,6 +934,7 @@ function normalizePinnedRecord(value: unknown): PinnedMeasurementRecord | null {
     (kind === 'area' ||
       kind === 'volume' ||
       kind === 'clearance' ||
+      kind === 'bounds' ||
       kind === 'angle' ||
       kind === 'perimeter') &&
     typeof candidate.nodeId === 'string'
@@ -1179,7 +1183,9 @@ function formatSelectionSummaryText(summary: MeasurementSummary) {
   return `${summary.targetLabel} / ${summary.primaryLabel} ${summary.formattedValue} / ${formatMetricSummaryText(summary.metrics)}${summary.approximate ? ' / 近似值' : ''}`
 }
 
-function formatMetricSummaryCardText(summary: ClearanceSummary | AngleSummary | PerimeterSummary) {
+function formatMetricSummaryCardText(
+  summary: ClearanceSummary | BoundsSummary | AngleSummary | PerimeterSummary,
+) {
   return `${summary.targetLabel} / ${summary.primaryLabel} ${summary.formattedValue} / ${formatMetricSummaryText(summary.metrics)}${summary.approximate ? ' / 近似值' : ''}`
 }
 
@@ -1418,6 +1424,187 @@ function LinearMeasurementGuide({
   )
 }
 
+function getBoundsMetricValue(summary: BoundsSummary, id: BoundsSummary['metrics'][number]['id']): string {
+  const metricValue = summary.metrics.find((metric) => metric.id === id)?.formattedValue
+  if (metricValue) {
+    return metricValue
+  }
+
+  const fallbackParts = summary.formattedValue.split(' × ')
+  if (id === 'width') {
+    return fallbackParts[0] ?? summary.formattedValue
+  }
+  if (id === 'depth') {
+    return fallbackParts[1] ?? summary.formattedValue
+  }
+  if (id === 'height') {
+    return fallbackParts[2] ?? summary.formattedValue
+  }
+  return summary.formattedValue
+}
+
+function BoundsDimensionGuide({
+  start,
+  end,
+  labelPosition,
+  label,
+  value,
+  color,
+  shadowColor,
+  opacity = 1,
+}: {
+  start: Vec3
+  end: Vec3
+  labelPosition: Vec3
+  label: string
+  value: string
+  color: string
+  shadowColor: string
+  opacity?: number
+}) {
+  const edgeCenter: Vec3 = [
+    (start[0] + end[0]) / 2,
+    (start[1] + end[1]) / 2,
+    (start[2] + end[2]) / 2,
+  ]
+
+  return (
+    <group>
+      <MeasurementBar
+        color={color}
+        end={end}
+        opacity={opacity}
+        start={start}
+        thickness={BAR_THICKNESS * 1.55}
+      />
+      <MeasurementBar
+        color={color}
+        end={labelPosition}
+        opacity={Math.min(opacity, 0.68)}
+        start={edgeCenter}
+        thickness={BAR_THICKNESS * 0.72}
+      />
+      <MeasurementPoint color={color} opacity={opacity} position={start} />
+      <MeasurementPoint color={color} opacity={opacity} position={end} />
+      <MeasurementPoint color={color} opacity={Math.min(opacity, 0.78)} position={edgeCenter} />
+      <MeasurementLabel
+        color={color}
+        opacity={opacity}
+        position={labelPosition}
+        primary={value}
+        secondary={label}
+        shadowColor={shadowColor}
+      />
+    </group>
+  )
+}
+
+function BoundsBoxVisual({
+  summary,
+  color,
+  shadowColor,
+  opacity = 0.88,
+  showDimensions = false,
+}: {
+  summary: BoundsSummary
+  color: string
+  shadowColor: string
+  opacity?: number
+  showDimensions?: boolean
+}) {
+  const { min, max, size } = summary.bounds
+  const [minX, minY, minZ] = min
+  const [maxX, maxY, maxZ] = max
+  const [width, height, depth] = size
+  const maxSize = Math.max(width, height, depth)
+  const offset = Math.max(0.24, maxSize * 0.08)
+  const boxCorners: Vec3[] = [
+    [minX, minY, minZ],
+    [maxX, minY, minZ],
+    [maxX, minY, maxZ],
+    [minX, minY, maxZ],
+    [minX, maxY, minZ],
+    [maxX, maxY, minZ],
+    [maxX, maxY, maxZ],
+    [minX, maxY, maxZ],
+  ]
+  const edgePairs: Array<[number, number]> = [
+    [0, 1],
+    [1, 2],
+    [2, 3],
+    [3, 0],
+    [4, 5],
+    [5, 6],
+    [6, 7],
+    [7, 4],
+    [0, 4],
+    [1, 5],
+    [2, 6],
+    [3, 7],
+  ]
+  const widthLabelPosition: Vec3 = [
+    (minX + maxX) / 2,
+    maxY + offset * 0.6 + LABEL_LIFT,
+    minZ - offset,
+  ]
+  const depthLabelPosition: Vec3 = [
+    maxX + offset,
+    maxY + offset * 0.45 + LABEL_LIFT,
+    (minZ + maxZ) / 2,
+  ]
+  const heightLabelPosition: Vec3 = [
+    maxX + offset,
+    (minY + maxY) / 2 + LABEL_LIFT,
+    maxZ + offset,
+  ]
+
+  return (
+    <group>
+      {edgePairs.map(([startIndex, endIndex]) => (
+        <MeasurementBar
+          color={color}
+          end={boxCorners[endIndex]!}
+          key={`${summary.nodeId}:bounds-edge:${startIndex}:${endIndex}`}
+          opacity={opacity}
+          start={boxCorners[startIndex]!}
+          thickness={BAR_THICKNESS * 1.1}
+        />
+      ))}
+      {showDimensions ? (
+        <>
+          <BoundsDimensionGuide
+            color={color}
+            end={[maxX, maxY, minZ]}
+            label="宽度 X"
+            labelPosition={widthLabelPosition}
+            shadowColor={shadowColor}
+            start={[minX, maxY, minZ]}
+            value={getBoundsMetricValue(summary, 'width')}
+          />
+          <BoundsDimensionGuide
+            color={color}
+            end={[maxX, maxY, maxZ]}
+            label="深度 Z"
+            labelPosition={depthLabelPosition}
+            shadowColor={shadowColor}
+            start={[maxX, maxY, minZ]}
+            value={getBoundsMetricValue(summary, 'depth')}
+          />
+          <BoundsDimensionGuide
+            color={color}
+            end={[maxX, maxY, maxZ]}
+            label="高度 Y"
+            labelPosition={heightLabelPosition}
+            shadowColor={shadowColor}
+            start={[maxX, minY, maxZ]}
+            value={getBoundsMetricValue(summary, 'height')}
+          />
+        </>
+      ) : null}
+    </group>
+  )
+}
+
 function useMeasurementSceneData() {
   const measurementMode = useEditor((state) => state.measurementMode)
   const selection = useViewer((state) => state.selection)
@@ -1467,6 +1654,14 @@ function useMeasurementSceneData() {
     () => getNodeMeasurementSelectionTarget(nodes, selection),
     [nodes, selection],
   )
+  const currentBoundsTarget = useMemo(
+    () => getNodeMeasurementSelectionTarget(nodes, selection),
+    [nodes, selection],
+  )
+  const currentBoundsSummary = useMemo(() => {
+    if (measurementMode !== 'bounds' || !currentBoundsTarget.node) return null
+    return getBoundsSummaryForNode(currentBoundsTarget.node, nodes, unit, formatOptions)
+  }, [currentBoundsTarget.node, formatOptions, measurementMode, nodes, unit])
   const currentPerimeterSummary = useMemo(() => {
     if (measurementMode !== 'perimeter' || !currentPerimeterTarget.node) return null
     return getPerimeterSummaryForNode(currentPerimeterTarget.node, nodes, unit, formatOptions)
@@ -1505,6 +1700,18 @@ function useMeasurementSceneData() {
         : false,
     [currentPerimeterTarget.node, pinnedRecords],
   )
+  const isCurrentBoundsPinned = useMemo(
+    () =>
+      currentBoundsTarget.node
+        ? pinnedRecords.some(
+            (record) =>
+              record.kind === 'bounds' &&
+              'nodeId' in record &&
+              record.nodeId === currentBoundsTarget.node?.id,
+          )
+        : false,
+    [currentBoundsTarget.node, pinnedRecords],
+  )
   const isCurrentGridPinned = useMemo(
     () =>
       normalizedCurrentGridIds.length >= 2 &&
@@ -1522,6 +1729,7 @@ function useMeasurementSceneData() {
       pinnedRecords.flatMap((record) => {
         if (
           record.kind === 'clearance' ||
+          record.kind === 'bounds' ||
           record.kind === 'angle' ||
           record.kind === 'perimeter' ||
           record.kind === 'grid'
@@ -1548,6 +1756,22 @@ function useMeasurementSceneData() {
         if (!node) return []
 
         const summary = getClearanceSummaryForNode(node, nodes, unit, formatOptions)
+        if (!summary) return []
+
+        return [{ record, summary }]
+      }),
+    [formatOptions, nodes, pinnedRecords, unit],
+  )
+
+  const pinnedBoundsSummaries = useMemo(
+    () =>
+      pinnedRecords.flatMap((record) => {
+        if (record.kind !== 'bounds') return []
+
+        const node = nodes[record.nodeId]
+        if (!node) return []
+
+        const summary = getBoundsSummaryForNode(node, nodes, unit, formatOptions)
         if (!summary) return []
 
         return [{ record, summary }]
@@ -1638,6 +1862,7 @@ function useMeasurementSceneData() {
     currentAngleComparisonSummary,
     currentGridSummary,
     currentGridGuides,
+    currentBoundsSummary,
     currentPerimeterSummary,
     visiblePerimeterGuides,
     activePerimeterGuideId,
@@ -1645,8 +1870,10 @@ function useMeasurementSceneData() {
     gridGuideLabelLifts,
     isCurrentGridPinned,
     isCurrentPerimeterPinned,
+    isCurrentBoundsPinned,
     pinnedSummaries,
     pinnedClearanceSummaries,
+    pinnedBoundsSummaries,
     pinnedAngleSummaries,
     pinnedPerimeterSummaries,
     pinnedGridSummaries,
@@ -1695,6 +1922,17 @@ function buildMeasurementExportRows(sceneData: ReturnType<typeof useMeasurementS
     rows.push({
       scope: 'saved',
       category: 'clearance',
+      label: `${summary.targetLabel} · ${summary.primaryLabel}`,
+      value: summary.formattedValue,
+      details: formatMetricSummaryText(summary.metrics),
+      approximate: summary.approximate,
+    })
+  }
+
+  for (const { summary } of sceneData.pinnedBoundsSummaries) {
+    rows.push({
+      scope: 'saved',
+      category: 'bounds',
       label: `${summary.targetLabel} · ${summary.primaryLabel}`,
       value: summary.formattedValue,
       details: formatMetricSummaryText(summary.metrics),
@@ -1770,6 +2008,20 @@ function buildMeasurementExportRows(sceneData: ReturnType<typeof useMeasurementS
       value: sceneData.currentAngleComparisonSummary.formattedValue,
       details: formatMetricSummaryText(sceneData.currentAngleComparisonSummary.metrics),
       approximate: sceneData.currentAngleComparisonSummary.approximate,
+    })
+  }
+
+  if (
+    sceneData.measurementMode === 'bounds' &&
+    sceneData.currentBoundsSummary
+  ) {
+    rows.push({
+      scope: 'current',
+      category: 'bounds',
+      label: `${sceneData.currentBoundsSummary.targetLabel} · ${sceneData.currentBoundsSummary.primaryLabel}`,
+      value: sceneData.currentBoundsSummary.formattedValue,
+      details: formatMetricSummaryText(sceneData.currentBoundsSummary.metrics),
+      approximate: sceneData.currentBoundsSummary.approximate,
     })
   }
 
@@ -1875,6 +2127,68 @@ function buildMeasurementLabelEntries(sceneData: ReturnType<typeof useMeasuremen
       color: '#2563eb',
       opacity: 0.72,
     })
+  }
+
+  for (const { summary } of sceneData.pinnedBoundsSummaries) {
+    labels.push({
+      position: summary.anchor,
+      primary: summary.formattedValue,
+      secondary: `${summary.targetLabel} · ${summary.primaryLabel}`,
+      color: '#4f46e5',
+      opacity: 0.72,
+    })
+  }
+
+  if (
+    sceneData.measurementMode === 'bounds' &&
+    sceneData.currentBoundsSummary
+  ) {
+    const { min, max, size } = sceneData.currentBoundsSummary.bounds
+    const [minX, minY, minZ] = min
+    const [maxX, maxY, maxZ] = max
+    const offset = Math.max(0.24, Math.max(...size) * 0.08)
+    const widthLabelPosition: Vec3 = [
+      (minX + maxX) / 2,
+      maxY + offset * 0.6 + LABEL_LIFT,
+      minZ - offset,
+    ]
+    const depthLabelPosition: Vec3 = [
+      maxX + offset,
+      maxY + offset * 0.45 + LABEL_LIFT,
+      (minZ + maxZ) / 2,
+    ]
+    const heightLabelPosition: Vec3 = [
+      maxX + offset,
+      (minY + maxY) / 2 + LABEL_LIFT,
+      maxZ + offset,
+    ]
+
+    labels.push({
+      position: sceneData.currentBoundsSummary.anchor,
+      primary: sceneData.currentBoundsSummary.formattedValue,
+      secondary: `${sceneData.currentBoundsSummary.targetLabel} · ${sceneData.currentBoundsSummary.primaryLabel}`,
+      color: '#4f46e5',
+    })
+    labels.push(
+      {
+        position: widthLabelPosition,
+        primary: getBoundsMetricValue(sceneData.currentBoundsSummary, 'width'),
+        secondary: '宽度 X',
+        color: '#4f46e5',
+      },
+      {
+        position: depthLabelPosition,
+        primary: getBoundsMetricValue(sceneData.currentBoundsSummary, 'depth'),
+        secondary: '深度 Z',
+        color: '#4f46e5',
+      },
+      {
+        position: heightLabelPosition,
+        primary: getBoundsMetricValue(sceneData.currentBoundsSummary, 'height'),
+        secondary: '高度 Y',
+        color: '#4f46e5',
+      },
+    )
   }
 
   for (const { summary } of sceneData.pinnedAngleSummaries) {
@@ -2164,6 +2478,36 @@ function MeasurementScene() {
           shadowColor={sceneData.shadowColor}
         />
       ))}
+
+      {sceneData.pinnedBoundsSummaries.map(({ record, summary }) => (
+        <group key={record.id}>
+          <BoundsBoxVisual
+            color="#4f46e5"
+            opacity={0.34}
+            shadowColor={sceneData.shadowColor}
+            summary={summary}
+          />
+          <MeasurementLabel
+            color="#4f46e5"
+            opacity={0.72}
+            position={summary.anchor}
+            primary={summary.formattedValue}
+            secondary={`${summary.targetLabel} · ${summary.primaryLabel}`}
+            shadowColor={sceneData.shadowColor}
+          />
+        </group>
+      ))}
+
+      {sceneData.measurementMode === 'bounds' &&
+      sceneData.currentBoundsSummary ? (
+        <BoundsBoxVisual
+          color="#4f46e5"
+          opacity={0.92}
+          shadowColor={sceneData.shadowColor}
+          showDimensions
+          summary={sceneData.currentBoundsSummary}
+        />
+      ) : null}
 
       {sceneData.pinnedAngleSummaries.map(({ record, summary }) => (
         <MeasurementLabel
@@ -2610,13 +2954,14 @@ function MeasurementModeTabs({
     { id: 'area', label: '面积', icon: Square },
     { id: 'volume', label: '体积', icon: Box },
     { id: 'clearance', label: '净空', icon: ArrowUpDown },
+    { id: 'bounds', label: '包围盒', icon: Box },
     { id: 'angle', label: '角度', icon: DraftingCompass },
     { id: 'perimeter', label: '周长', icon: ArrowLeftRight },
     { id: 'grid', label: '轴网', icon: Grid3X3 },
   ]
 
   return (
-    <div className="grid grid-cols-7 gap-1 rounded-xl bg-muted/60 p-1">
+    <div className="grid grid-cols-4 gap-1 rounded-xl bg-muted/60 p-1">
       {tabs.map((tab) => {
         const Icon = tab.icon
         const active = activeMode === tab.id
@@ -3119,6 +3464,184 @@ function SelectionMeasurementPanel({
                   </button>
                   <button
                     aria-label="删除测量记录"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    onClick={() => removePinnedMeasurement(record.id)}
+                    type="button"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+function BoundsMeasurementPanel() {
+  const selection = useViewer((state) => state.selection)
+  const unit = useViewer((state) => state.unit)
+  const nodes = useScene((state) => state.nodes as Record<string, AnyNode>)
+  const formatOptions = useMeasurementFormatOptions()
+  const pinnedRecords = useMeasurementModeStore((state) => state.pinnedRecords)
+  const pinMeasurement = useMeasurementModeStore((state) => state.pinMeasurement)
+  const removePinnedMeasurement = useMeasurementModeStore((state) => state.removePinnedMeasurement)
+  const clearPinnedMeasurements = useMeasurementModeStore((state) => state.clearPinnedMeasurements)
+  const { copiedKey, copyText } = useCopyFeedback()
+
+  const target = useMemo(
+    () => getNodeMeasurementSelectionTarget(nodes, selection),
+    [nodes, selection],
+  )
+  const currentSummary = useMemo(() => {
+    if (!target.node) return null
+    return getBoundsSummaryForNode(target.node, nodes, unit, formatOptions)
+  }, [formatOptions, nodes, target.node, unit])
+  const modeRecords = useMemo(
+    () =>
+      pinnedRecords
+        .filter(
+          (record): record is NodePinnedMeasurementRecord =>
+            'nodeId' in record && record.kind === 'bounds',
+        )
+        .flatMap((record) => {
+          const node = nodes[record.nodeId]
+          if (!node) return []
+
+          const summary = getBoundsSummaryForNode(node, nodes, unit, formatOptions)
+          if (!summary) return []
+
+          return [{ record, summary }]
+        }),
+    [formatOptions, nodes, pinnedRecords, unit],
+  )
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl border border-border/70 bg-muted/30 p-3">
+        {target.reason === 'multi' ? (
+          <>
+            <div className="font-medium text-sm">暂不支持多选包围盒</div>
+            <div className="mt-1 text-[11px] text-muted-foreground">
+              先只选中一个对象、楼层、区域或建筑，再查看当前对象的包围盒尺寸。
+            </div>
+          </>
+        ) : currentSummary ? (
+          <>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] text-muted-foreground">
+                  {currentSummary.targetLabel} · {currentSummary.primaryLabel}
+                </div>
+                <div className="mt-1 font-semibold text-lg">{currentSummary.formattedValue}</div>
+              </div>
+              {currentSummary.approximate ? (
+                <span className="rounded-full bg-amber-500/15 px-2 py-1 font-medium text-[10px] text-amber-700">
+                  近似值
+                </span>
+              ) : null}
+            </div>
+            <div className="mt-2 text-[11px] text-muted-foreground">
+              {currentSummary.description}
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {currentSummary.metrics.map((metric) => (
+                <div
+                  className="rounded-lg bg-background/80 px-2.5 py-2"
+                  key={`${currentSummary.nodeId}:${metric.id}`}
+                >
+                  <div className="text-[10px] text-muted-foreground">{metric.label}</div>
+                  <div className="mt-1 font-semibold text-sm">{metric.formattedValue}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : target.node ? (
+          <>
+            <div className="font-medium text-sm">当前对象暂不支持包围盒测量</div>
+            <div className="mt-1 text-[11px] text-muted-foreground">
+              试试选择已经在 3D 场景中渲染出来的墙体、楼板、区域、门窗、家具或楼层。
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="font-medium text-sm">先选中一个对象再看包围盒</div>
+            <div className="mt-1 text-[11px] text-muted-foreground">
+              可以直接在 3D 里点选，也可以从左侧树中选择楼层、区域或构件。
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <CopyButton
+          copied={copiedKey === 'bounds:current'}
+          disabled={!currentSummary}
+          onClick={() => {
+            if (currentSummary) {
+              void copyText('bounds:current', formatMetricSummaryCardText(currentSummary))
+            }
+          }}
+        />
+        <button
+          className="rounded-lg border border-border/70 px-3 py-1.5 font-medium text-xs transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={!currentSummary}
+          onClick={() => {
+            if (currentSummary) {
+              pinMeasurement('bounds', currentSummary.nodeId)
+            }
+          }}
+          type="button"
+        >
+          记录当前
+        </button>
+        <button
+          className="rounded-lg border border-border/70 px-3 py-1.5 font-medium text-xs transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={modeRecords.length === 0}
+          onClick={() => clearPinnedMeasurements('bounds')}
+          type="button"
+        >
+          清空包围盒
+        </button>
+      </div>
+
+      <div className="space-y-2">
+        {modeRecords.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-border/70 px-3 py-4 text-center text-muted-foreground text-xs">
+            还没有包围盒记录
+          </div>
+        ) : (
+          modeRecords
+            .slice()
+            .reverse()
+            .map(({ record, summary }) => (
+              <div
+                className="flex items-start justify-between gap-3 rounded-xl border border-border/70 bg-background/90 px-3 py-2.5"
+                key={record.id}
+              >
+                <div className="min-w-0">
+                  <div className="font-semibold text-sm">{summary.formattedValue}</div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">
+                    {summary.targetLabel} · {summary.primaryLabel}
+                    {summary.approximate ? ' · 近似值' : ''}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    aria-label="复制包围盒记录"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    onClick={() => void copyText(record.id, formatMetricSummaryCardText(summary))}
+                    type="button"
+                  >
+                    {copiedKey === record.id ? (
+                      <Check className="h-4 w-4" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
+                  </button>
+                  <button
+                    aria-label="删除包围盒记录"
                     className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                     onClick={() => removePinnedMeasurement(record.id)}
                     type="button"
@@ -4173,6 +4696,22 @@ function MeasurementHistoryPanel() {
         continue
       }
 
+      if (record.kind === 'bounds') {
+        const summary = getBoundsSummaryForNode(node, nodes, unit, formatOptions)
+        if (!summary) continue
+
+        entries.push({
+          id: record.id,
+          createdAt: record.createdAt,
+          mode: 'bounds',
+          label: summary.targetLabel,
+          value: summary.formattedValue,
+          details: `包围盒 · ${summary.primaryLabel}${summary.approximate ? ' · 近似值' : ''}`,
+          nodeId: summary.nodeId,
+        })
+        continue
+      }
+
       if (record.kind === 'angle') {
         const summary = getAngleSummaryForNode(node, nodes, formatOptions)
         if (!summary) continue
@@ -4305,6 +4844,8 @@ export function MeasurementModeOverlay() {
           ? Box
           : measurementMode === 'clearance'
             ? ArrowUpDown
+            : measurementMode === 'bounds'
+              ? Box
             : measurementMode === 'angle'
               ? DraftingCompass
               : measurementMode === 'perimeter'
@@ -4421,6 +4962,8 @@ function MeasurementModePanelBody({ measurementMode }: { measurementMode: Measur
         <SelectionMeasurementPanel mode="volume" />
       ) : measurementMode === 'clearance' ? (
         <ClearanceMeasurementPanel />
+      ) : measurementMode === 'bounds' ? (
+        <BoundsMeasurementPanel />
       ) : measurementMode === 'angle' ? (
         <AngleMeasurementPanel />
       ) : measurementMode === 'grid' ? (
@@ -4494,16 +5037,18 @@ function MeasurementModePanelBody({ measurementMode }: { measurementMode: Measur
       <div className="flex items-center justify-between border-border/60 border-t pt-3">
         <div className="text-[11px] text-muted-foreground">
           {measurementMode === 'distance'
-            ? 'Esc 关闭模式，1-7 切测量模式，F/H/V/P 切自由/水平/垂直/路径测距'
+            ? 'Esc 关闭模式，1-8 切测量模式，F/H/V/P 切自由/水平/垂直/路径测距'
             : measurementMode === 'clearance'
-              ? 'Esc 关闭模式，1-7 切测量模式，选中对象后查看层高链、梁下净高、女儿墙高、离地和四向净距'
+              ? 'Esc 关闭模式，1-8 切测量模式，选中对象后查看层高链、梁下净高、女儿墙高、离地和四向净距'
+              : measurementMode === 'bounds'
+                ? 'Esc 关闭模式，1-8 切测量模式，选中对象后查看世界轴对齐包围盒尺寸、中心点和空间对角线'
               : measurementMode === 'angle'
-                ? 'Esc 关闭模式，1-7 切测量模式，单选看对象角度/坡向，多选两个墙体或围栏可看夹角'
+                ? 'Esc 关闭模式，1-8 切测量模式，单选看对象角度/坡向，多选两个墙体或围栏可看夹角'
                 : measurementMode === 'grid'
-                  ? 'Esc 关闭模式，1-7 切测量模式，多选两条以上近似平行的墙体、围栏或草图线可看轴距、总跨度和分跨'
+                  ? 'Esc 关闭模式，1-8 切测量模式，多选两条以上近似平行的墙体、围栏或草图线可看轴距、总跨度和分跨'
                   : measurementMode === 'perimeter'
-                    ? 'Esc 关闭模式，1-7 切测量模式，选中对象后查看周长、面宽、进深和退距，并在场景中显示辅助线与基准边'
-                    : 'Esc 关闭模式，1-7 切测量模式，选中对象后可记录和复制当前结果'}
+                    ? 'Esc 关闭模式，1-8 切测量模式，选中对象后查看周长、面宽、进深和退距，并在场景中显示辅助线与基准边'
+                    : 'Esc 关闭模式，1-8 切测量模式，选中对象后可记录和复制当前结果'}
         </div>
         <button
           className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-muted-foreground text-xs transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"

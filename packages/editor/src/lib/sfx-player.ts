@@ -65,6 +65,40 @@ export const SFX: Record<string, SFXConfig> = {
     volumeRange: [0.9, 1.0],
     panJitter: 0.15,
   },
+  shooterStart: {
+    src: '/audios/sfx/structure_build.mp3',
+    rateRange: [1.08, 1.18],
+    volumeRange: [0.75, 0.9],
+    minIntervalMs: 200,
+  },
+  shooterFire: {
+    src: '/audios/sfx/item_rotate.mp3',
+    rateRange: [1.7, 1.95],
+    volumeRange: [0.78, 0.95],
+    minIntervalMs: 90,
+    panJitter: 0.08,
+  },
+  shooterHit: {
+    src: '/audios/sfx/item_pick.mp3',
+    rateRange: [0.72, 0.86],
+    volumeRange: [0.86, 1.0],
+    minIntervalMs: 70,
+    panJitter: 0.12,
+  },
+  shooterKill: {
+    src: '/audios/sfx/structure_delete.mp3',
+    rateRange: [0.82, 0.94],
+    volumeRange: [0.9, 1.0],
+    minIntervalMs: 120,
+    panJitter: 0.16,
+  },
+  shooterDamage: {
+    src: '/audios/sfx/item_delete.mp3',
+    rateRange: [0.72, 0.82],
+    volumeRange: [0.95, 1.0],
+    minIntervalMs: 220,
+    panJitter: 0.1,
+  },
   snapshotCapture: {
     // Shutter should sound consistent, no variation.
     src: '/audios/sfx/snapshot_capture.mp3',

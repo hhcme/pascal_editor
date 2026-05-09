@@ -21,8 +21,8 @@ import {
 } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
 import { Html } from '@react-three/drei'
-import { useFrame } from '@react-three/fiber'
-import { Move } from 'lucide-react'
+import { useFrame, useThree } from '@react-three/fiber'
+import { Copy, MousePointer2, Move, Navigation, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { float } from 'three/tsl'
@@ -53,6 +53,11 @@ const ACTION_MENU_TRANSPARENT_METADATA_KEY = 'actionMenuTransparent'
 const MANAGED_TRANSPARENCY_STATE_KEY = '__actionMenuTransparencyState'
 const TRANSPARENT_OPACITY = 0.22
 const transparentOpacityNode = float(TRANSPARENT_OPACITY)
+const CHARACTER_ROAM_EVENT = 'editor:character-roam-request'
+const CHARACTER_MENU_EVENT = 'editor:character-menu-request'
+const CHARACTER_COMMAND_EVENT = 'editor:character-command'
+const FIRST_PERSON_JUMP_TO_POSE_EVENT = 'editor:first-person-jump-pose'
+const FIRST_PERSON_END_EVENT = 'editor:first-person-ended'
 
 type ManagedTransparencyState = {
   original: THREE.Material | THREE.Material[]
@@ -60,6 +65,15 @@ type ManagedTransparencyState = {
 }
 
 type ActionMenuAnchor = [number, number, number]
+
+type CharacterMenuState = {
+  anchor: [number, number, number]
+  eyeHeight: number
+  id: string
+  name?: string
+  position: [number, number, number]
+  yaw: number
+}
 
 type ManagedMesh = THREE.Mesh & {
   userData: THREE.Mesh['userData'] & {
@@ -73,6 +87,38 @@ function preventNativeContextMenu(event: NodeEvent) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function detailIsCharacterRoamEvent(value: unknown): value is {
+  anchor?: [number, number, number]
+  eyeHeight: number
+  id?: string
+  name?: string
+  position: [number, number, number]
+  yaw: number
+} {
+  if (!isRecord(value)) return false
+  const position = value.position
+  return (
+    Array.isArray(position) &&
+    position.length >= 3 &&
+    position.every((entry) => typeof entry === 'number' && Number.isFinite(entry)) &&
+    typeof value.yaw === 'number' &&
+    Number.isFinite(value.yaw) &&
+    typeof value.eyeHeight === 'number' &&
+    Number.isFinite(value.eyeHeight)
+  )
+}
+
+function detailIsCharacterMenuEvent(value: unknown): value is CharacterMenuState {
+  if (!detailIsCharacterRoamEvent(value)) return false
+  if (typeof value.id !== 'string') return false
+  const anchor = value.anchor
+  return (
+    Array.isArray(anchor) &&
+    anchor.length >= 3 &&
+    anchor.every((entry) => typeof entry === 'number' && Number.isFinite(entry))
+  )
 }
 
 function isNodeTransparentFromActionMenu(node: AnyNode | null | undefined): boolean {
@@ -198,6 +244,26 @@ function resolveActionMenuNode(node: AnyNode): AnyNode | null {
   return ALLOWED_TYPE_SET.has(node.type) ? node : null
 }
 
+function isPersonItemNode(node: AnyNode | null | undefined): node is ItemNode {
+  if (node?.type !== 'item') return false
+
+  const assetId = node.asset.id.toLowerCase()
+  const category = node.asset.category.toLowerCase()
+  const tags = node.asset.tags?.map((tag) => tag.toLowerCase()) ?? []
+
+  return (
+    assetId.startsWith('person-') ||
+    category === 'people' ||
+    tags.includes('person') ||
+    tags.includes('people') ||
+    tags.includes('human')
+  )
+}
+
+function getFirstPersonPresetForPerson(node: ItemNode): 'adult' | 'child' {
+  return node.asset.id.toLowerCase().includes('child') ? 'child' : 'adult'
+}
+
 export function FloatingActionMenu() {
   const selectedIds = useViewer((s) => s.selection.selectedIds)
   const updateNode = useScene((s) => s.updateNode)
@@ -209,6 +275,7 @@ export function FloatingActionMenu() {
   const setCurvingWall = useEditor((s) => s.setCurvingWall)
   const setSelection = useViewer((s) => s.setSelection)
   const setEditingHole = useEditor((s) => s.setEditingHole)
+  const camera = useThree((state) => state.camera)
   const canUndo = useStore(useScene.temporal, (state) => state.pastStates.length > 0)
   const canRedo = useStore(useScene.temporal, (state) => state.futureStates.length > 0)
   const canShowAll = useScene((state) =>
@@ -218,9 +285,11 @@ export function FloatingActionMenu() {
   const groupRef = useRef<THREE.Group>(null)
   const startEndpointGroupRef = useRef<THREE.Group>(null)
   const endEndpointGroupRef = useRef<THREE.Group>(null)
+  const characterMenuOpenedAtRef = useRef(0)
   const [altPressed, setAltPressed] = useState(false)
   const [actionMenuNodeId, setActionMenuNodeId] = useState<AnyNodeId | null>(null)
   const [actionMenuAnchor, setActionMenuAnchor] = useState<ActionMenuAnchor | null>(null)
+  const [characterMenu, setCharacterMenu] = useState<CharacterMenuState | null>(null)
   const transparentNodeIdKey = useScene((s) =>
     Object.values(s.nodes)
       .filter((sceneNode) => ALLOWED_TYPE_SET.has(sceneNode.type))
@@ -247,6 +316,79 @@ export function FloatingActionMenu() {
     !movingWallEndpoint
   const shouldShowActionMenu = canRenderSelectionOverlays && actionMenuNodeId === selectedId
 
+  const enterCharacterRoam = useCallback(
+    (detail: { eyeHeight: number; position: [number, number, number]; yaw: number }) => {
+      const jumpToCharacterPose = () => {
+        window.dispatchEvent(
+          new CustomEvent(FIRST_PERSON_JUMP_TO_POSE_EVENT, {
+            detail: {
+              x: detail.position[0],
+              y: detail.position[1] + detail.eyeHeight,
+              z: detail.position[2],
+              yaw: detail.yaw,
+              pitch: 0,
+              mode: 'walk',
+              eyeHeight: detail.eyeHeight,
+              arrivalMode: 'instant',
+            },
+          }),
+        )
+      }
+
+      camera.position.set(
+        detail.position[0],
+        detail.position[1] + detail.eyeHeight,
+        detail.position[2],
+      )
+      camera.quaternion.setFromEuler(new THREE.Euler(0, detail.yaw, 0, 'YXZ'))
+      useEditor
+        .getState()
+        .setFirstPersonEyeHeightPreset(detail.eyeHeight < 1.4 ? 'child' : 'adult')
+      useEditor.getState().setFirstPersonMode(true)
+      requestAnimationFrame(jumpToCharacterPose)
+      window.setTimeout(jumpToCharacterPose, 60)
+      window.setTimeout(jumpToCharacterPose, 180)
+      setActionMenuNodeId(null)
+      setActionMenuAnchor(null)
+      setCharacterMenu(null)
+    },
+    [camera],
+  )
+
+  useEffect(() => {
+    const handleCharacterRoam = (event: Event) => {
+      const detail =
+        event instanceof CustomEvent && detailIsCharacterRoamEvent(event.detail)
+          ? event.detail
+          : null
+      if (!detail) return
+
+      enterCharacterRoam(detail)
+    }
+
+    window.addEventListener(CHARACTER_ROAM_EVENT, handleCharacterRoam)
+    return () => window.removeEventListener(CHARACTER_ROAM_EVENT, handleCharacterRoam)
+  }, [enterCharacterRoam])
+
+  useEffect(() => {
+    const handleCharacterMenu = (event: Event) => {
+      const detail =
+        event instanceof CustomEvent && detailIsCharacterMenuEvent(event.detail)
+          ? event.detail
+          : null
+      if (!detail) return
+
+      characterMenuOpenedAtRef.current = performance.now()
+      setActionMenuNodeId(null)
+      setActionMenuAnchor(null)
+      setSelection({ selectedIds: [] })
+      setCharacterMenu(detail)
+    }
+
+    window.addEventListener(CHARACTER_MENU_EVENT, handleCharacterMenu)
+    return () => window.removeEventListener(CHARACTER_MENU_EVENT, handleCharacterMenu)
+  }, [])
+
   // Boolean selector, only re-renders when curving availability actually flips.
   const canCurveSelectedWall = useScene((s) => {
     if (!selectedId) return false
@@ -268,6 +410,11 @@ export function FloatingActionMenu() {
     const handleContextMenu = (event: NodeEvent) => {
       if (useViewer.getState().cameraDragging) return
       if (useEditor.getState().mode === 'delete') return
+      if (performance.now() - characterMenuOpenedAtRef.current < 350) {
+        event.stopPropagation()
+        preventNativeContextMenu(event)
+        return
+      }
 
       const actionNode = resolveActionMenuNode(event.node)
       if (!actionNode) return
@@ -294,6 +441,7 @@ export function FloatingActionMenu() {
     const closeActionMenu = () => {
       setActionMenuNodeId(null)
       setActionMenuAnchor(null)
+      setCharacterMenu(null)
     }
 
     ALLOWED_TYPES.forEach((type) => {
@@ -308,6 +456,24 @@ export function FloatingActionMenu() {
       emitter.off('grid:click', closeActionMenu)
     }
   }, [])
+
+  const dispatchCharacterCommand = useCallback(
+    (command: 'delete' | 'duplicate' | 'roam' | 'select') => {
+      if (!characterMenu) return
+      window.dispatchEvent(
+        new CustomEvent(CHARACTER_COMMAND_EVENT, {
+          detail: { command, id: characterMenu.id },
+        }),
+      )
+      setCharacterMenu(null)
+    },
+    [characterMenu],
+  )
+
+  const handleCharacterRoam = useCallback(() => {
+    if (!characterMenu) return
+    dispatchCharacterCommand('roam')
+  }, [characterMenu, dispatchCharacterCommand])
 
   useEffect(() => {
     if (actionMenuNodeId && (!selectedId || actionMenuNodeId !== selectedId)) {
@@ -426,6 +592,34 @@ export function FloatingActionMenu() {
       setSelection({ selectedIds: [] })
     },
     [node, setMovingNode, setSelection],
+  )
+  const handleRoamFromPerson = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      if (!isPersonItemNode(node)) return
+
+      const object = sceneRegistry.nodes.get(node.id)
+      const worldPosition = object
+        ? object.getWorldPosition(new THREE.Vector3())
+        : new THREE.Vector3(node.position[0], node.position[1], node.position[2])
+      const yaw = node.rotation[1] ?? 0
+
+      camera.position.set(worldPosition.x, worldPosition.y + 1.65, worldPosition.z)
+      camera.quaternion.setFromEuler(new THREE.Euler(0, yaw, 0, 'YXZ'))
+
+      useEditor.getState().setFirstPersonEyeHeightPreset(getFirstPersonPresetForPerson(node))
+      useEditor.getState().setFirstPersonMode(true)
+      setObjectVisibleNow(node.id, false)
+
+      const restorePersonVisibility = () => {
+        setObjectVisibleNow(node.id, node.visible !== false)
+        window.removeEventListener(FIRST_PERSON_END_EVENT, restorePersonVisibility)
+      }
+      window.addEventListener(FIRST_PERSON_END_EVENT, restorePersonVisibility)
+      setActionMenuNodeId(null)
+      setActionMenuAnchor(null)
+    },
+    [camera, node],
   )
   const handleHide = useCallback(
     (e: React.MouseEvent) => {
@@ -716,10 +910,52 @@ export function FloatingActionMenu() {
     [node?.type, selectedId, setSelection],
   )
 
-  if (!canRenderSelectionOverlays) return null
+  if (!(canRenderSelectionOverlays || characterMenu)) return null
 
   return (
     <group>
+      {characterMenu && (
+        <group position={characterMenu.anchor}>
+          <Html
+            style={{
+              pointerEvents: 'auto',
+              touchAction: 'none',
+            }}
+            zIndexRange={[100, 0]}
+          >
+            <NodeActionMenu
+              extraActions={[
+                {
+                  id: 'character-roam',
+                  label: '从此人视角漫游',
+                  icon: <Navigation className="h-4 w-4" />,
+                  onClick: handleCharacterRoam,
+                },
+                {
+                  id: 'character-select-move',
+                  label: '移动人物',
+                  icon: <MousePointer2 className="h-4 w-4" />,
+                  onClick: () => dispatchCharacterCommand('select'),
+                },
+                {
+                  id: 'character-duplicate',
+                  label: '复制人物',
+                  icon: <Copy className="h-4 w-4" />,
+                  onClick: () => dispatchCharacterCommand('duplicate'),
+                },
+                {
+                  id: 'character-delete',
+                  label: '删除人物',
+                  icon: <Trash2 className="h-4 w-4" />,
+                  onClick: () => dispatchCharacterCommand('delete'),
+                },
+              ]}
+              onPointerDown={(e) => e.stopPropagation()}
+              onPointerUp={(e) => e.stopPropagation()}
+            />
+          </Html>
+        </group>
+      )}
       {shouldShowActionMenu && (
         <group ref={groupRef}>
           <Html
@@ -740,6 +976,18 @@ export function FloatingActionMenu() {
               onDuplicate={
                 node && !DELETE_ONLY_TYPES.includes(node.type) && !HOLE_TYPES.includes(node.type)
                   ? handleDuplicate
+                  : undefined
+              }
+              extraActions={
+                isPersonItemNode(node)
+                  ? [
+                      {
+                        id: 'roam-from-person',
+                        label: 'Roam',
+                        icon: <Navigation className="h-4 w-4" />,
+                        onClick: handleRoamFromPerson,
+                      },
+                    ]
                   : undefined
               }
               onHide={handleHide}

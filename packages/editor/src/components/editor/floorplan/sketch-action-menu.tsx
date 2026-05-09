@@ -38,6 +38,9 @@ type BuildSketchLineActionMenuExtraActionsArgs = {
   onCreateProfileWalls: ActionHandler
   onCreateProfileSlab: ActionHandler
   onCreateProfileZone: ActionHandler
+  onCreateProfileExtrude: ActionHandler
+  onCreateProfileRevolve: ActionHandler
+  onCutProfile: ActionHandler
 }
 
 export function buildSketchLineActionMenuExtraActions({
@@ -70,6 +73,9 @@ export function buildSketchLineActionMenuExtraActions({
   onCreateProfileWalls,
   onCreateProfileSlab,
   onCreateProfileZone,
+  onCreateProfileExtrude,
+  onCreateProfileRevolve,
+  onCutProfile,
 }: BuildSketchLineActionMenuExtraActionsArgs): NodeActionMenuExtraAction[] {
   const isFixed = Boolean(selectedSketchLine?.relations?.includes('fixed'))
   const isConstruction = Boolean(selectedSketchLine?.construction)
@@ -199,6 +205,24 @@ export function buildSketchLineActionMenuExtraActions({
 
   if (hasSelectedSketchProfile) {
     actions.push(
+      {
+        id: 'sketch-profile-extrude',
+        label: '拉伸',
+        icon: <Icon height={16} icon="mdi:cube-outline" width={16} />,
+        onClick: onCreateProfileExtrude,
+      },
+      {
+        id: 'sketch-profile-revolve',
+        label: '旋转',
+        icon: <Icon height={16} icon="mdi:rotate-360" width={16} />,
+        onClick: onCreateProfileRevolve,
+      },
+      {
+        id: 'sketch-profile-cut',
+        label: '切割',
+        icon: <Icon height={16} icon="mdi:selection-remove" width={16} />,
+        onClick: onCutProfile,
+      },
       {
         id: 'sketch-profile-walls',
         label: '生成墙体',

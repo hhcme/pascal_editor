@@ -1,6 +1,23 @@
 'use client'
 
-import NextImage from 'next/image'
+import {
+  Blocks,
+  BrickWall,
+  Circle,
+  Construction,
+  DoorOpen,
+  Fence,
+  House,
+  Layers,
+  PanelTop,
+  PencilLine,
+  RectangleHorizontal,
+  Ruler,
+  Shapes,
+  Spline,
+  Square,
+  type LucideIcon,
+} from 'lucide-react'
 import { cn } from '../../../lib/utils'
 import useEditor, {
   isSketchStructureTool,
@@ -12,33 +29,40 @@ import { ActionButton } from './action-button'
 
 export type ToolConfig = {
   id: StructureTool
+  Icon: LucideIcon
   iconSrc: string
   label: string
   catalogCategory?: CatalogCategory
 }
 
 export const tools: ToolConfig[] = [
-  { id: 'wall', iconSrc: '/icons/wall.png', label: 'Wall' },
-  { id: 'sketch-line', iconSrc: '/icons/sketch-line.svg', label: '草图线' },
-  { id: 'sketch-rectangle', iconSrc: '/icons/sketch-rectangle.svg', label: '草图矩形' },
-  { id: 'sketch-circle', iconSrc: '/icons/sketch-circle.svg', label: '草图圆' },
-  { id: 'sketch-arc', iconSrc: '/icons/sketch-arc.svg', label: '草图圆弧' },
+  { id: 'wall', Icon: BrickWall, iconSrc: '/icons/wall.png', label: 'Wall' },
+  { id: 'sketch-line', Icon: PencilLine, iconSrc: '/icons/sketch-line.svg', label: '草图线' },
+  {
+    id: 'sketch-rectangle',
+    Icon: Square,
+    iconSrc: '/icons/sketch-rectangle.svg',
+    label: '草图矩形',
+  },
+  { id: 'sketch-circle', Icon: Circle, iconSrc: '/icons/sketch-circle.svg', label: '草图圆' },
+  { id: 'sketch-arc', Icon: Spline, iconSrc: '/icons/sketch-arc.svg', label: '草图圆弧' },
   {
     id: 'sketch-construction-line',
+    Icon: Construction,
     iconSrc: '/icons/sketch-construction-line.svg',
     label: '参考线',
   },
-  { id: 'smart-dimension', iconSrc: '/icons/smart-dimension.svg', label: '智能尺寸' },
+  { id: 'smart-dimension', Icon: Ruler, iconSrc: '/icons/smart-dimension.svg', label: '智能尺寸' },
   // { id: 'room', iconSrc: '/icons/room.png', label: 'Room' },
   // { id: 'custom-room', iconSrc: '/icons/custom-room.png', label: 'Custom Room' },
-  { id: 'slab', iconSrc: '/icons/floor.png', label: 'Slab' },
-  { id: 'ceiling', iconSrc: '/icons/ceiling.png', label: 'Ceiling' },
-  { id: 'roof', iconSrc: '/icons/roof.png', label: 'Gable Roof' },
-  { id: 'stair', iconSrc: '/icons/stairs.png', label: 'Stairs' },
-  { id: 'door', iconSrc: '/icons/door.png', label: 'Door' },
-  { id: 'window', iconSrc: '/icons/window.png', label: 'Window' },
-  { id: 'fence', iconSrc: '/icons/fence.png', label: 'Fence' },
-  { id: 'zone', iconSrc: '/icons/zone.png', label: 'Zone' },
+  { id: 'slab', Icon: Layers, iconSrc: '/icons/floor.png', label: 'Slab' },
+  { id: 'ceiling', Icon: PanelTop, iconSrc: '/icons/ceiling.png', label: 'Ceiling' },
+  { id: 'roof', Icon: House, iconSrc: '/icons/roof.png', label: 'Gable Roof' },
+  { id: 'stair', Icon: Blocks, iconSrc: '/icons/stairs.png', label: 'Stairs' },
+  { id: 'door', Icon: DoorOpen, iconSrc: '/icons/door.png', label: 'Door' },
+  { id: 'window', Icon: RectangleHorizontal, iconSrc: '/icons/window.png', label: 'Window' },
+  { id: 'fence', Icon: Fence, iconSrc: '/icons/fence.png', label: 'Fence' },
+  { id: 'zone', Icon: Shapes, iconSrc: '/icons/zone.png', label: 'Zone' },
 ]
 
 const sketchToolIds = new Set<StructureTool>(SKETCH_STRUCTURE_TOOLS)
@@ -65,6 +89,7 @@ export function StructureTools() {
         const isActive =
           activeTool === tool.id &&
           (tool.catalogCategory ? catalogCategory === tool.catalogCategory : true)
+        const Icon = tool.Icon
 
         return (
           <ActionButton
@@ -90,12 +115,12 @@ export function StructureTools() {
             size="icon"
             variant="ghost"
           >
-            <NextImage
-              alt={tool.label}
-              className="h-7 w-7 object-contain"
-              height={28}
-              src={tool.iconSrc}
-              width={28}
+            <Icon
+              aria-hidden="true"
+              className={cn(
+                'h-5 w-5 stroke-[1.9] transition-colors duration-200',
+                isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground',
+              )}
             />
           </ActionButton>
         )

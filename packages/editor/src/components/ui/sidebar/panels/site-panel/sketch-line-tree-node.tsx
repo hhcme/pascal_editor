@@ -2,7 +2,7 @@
 
 import { type AnyNodeId, type SketchLineNode, useScene } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
-import Image from 'next/image'
+import { Construction, PencilLine } from 'lucide-react'
 import { memo, useCallback, useState } from 'react'
 import { InlineRenameInput } from './inline-rename-input'
 import { focusTreeNode, handleTreeSelection, TreeNodeWrapper } from './tree-node'
@@ -44,6 +44,7 @@ export const SketchLineTreeNode = memo(function SketchLineTreeNode({
   if (!node) {
     return null
   }
+  const Icon = node.construction ? Construction : PencilLine
 
   return (
     <TreeNodeWrapper
@@ -51,15 +52,7 @@ export const SketchLineTreeNode = memo(function SketchLineTreeNode({
       depth={depth}
       expanded={false}
       hasChildren={false}
-      icon={
-        <Image
-          alt=""
-          className="object-contain"
-          height={14}
-          src={node.construction ? '/icons/sketch-construction-line.svg' : '/icons/sketch-line.svg'}
-          width={14}
-        />
-      }
+      icon={<Icon aria-hidden="true" className="h-3.5 w-3.5 stroke-[1.9]" />}
       isHovered={isHovered}
       isLast={isLast}
       isSelected={isSelected}

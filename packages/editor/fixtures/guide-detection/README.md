@@ -26,5 +26,10 @@ bun run guide:debug -- --input packages/editor/fixtures/guide-detection/mlstruct
 bun run guide:debug -- --input packages/editor/fixtures/guide-detection/external/robin/ROBIN --summary-only --scale 2
 ```
 
+Omit `--summary-only` to write per-image `overlay.png`, `wall-mask.png`,
+`raw-dark-mask.png`, `candidates.json`, and a sortable `report.html` contact
+sheet. The report sorts low-scoring samples first and flags issues such as
+low wall recall, zero openings, and thin-line underfit.
+
 Use `--scale` for datasets without calibration metadata. Otherwise opening-width
 filters can reject valid doors simply because the debug guide scale is arbitrary.

@@ -12,6 +12,11 @@ type SFXEvents = {
   'sfx:item-rotate': undefined
   'sfx:structure-build': undefined
   'sfx:structure-delete': undefined
+  'sfx:shooter-start': undefined
+  'sfx:shooter-fire': undefined
+  'sfx:shooter-hit': undefined
+  'sfx:shooter-kill': undefined
+  'sfx:shooter-damage': undefined
 }
 
 /**
@@ -37,6 +42,11 @@ export function initSFXBus() {
   sfxEmitter.on('sfx:item-rotate', () => playSFX('itemRotate'))
   sfxEmitter.on('sfx:structure-build', () => playSFX('structureBuild'))
   sfxEmitter.on('sfx:structure-delete', () => playSFX('structureDelete'))
+  sfxEmitter.on('sfx:shooter-start', () => playSFX('shooterStart'))
+  sfxEmitter.on('sfx:shooter-fire', () => playSFX('shooterFire'))
+  sfxEmitter.on('sfx:shooter-hit', () => playSFX('shooterHit'))
+  sfxEmitter.on('sfx:shooter-kill', () => playSFX('shooterKill'))
+  sfxEmitter.on('sfx:shooter-damage', () => playSFX('shooterDamage'))
 }
 
 /**

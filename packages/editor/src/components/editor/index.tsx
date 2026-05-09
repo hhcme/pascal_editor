@@ -7,7 +7,15 @@ import {
   useScene,
 } from '@pascal-app/core'
 import { InteractiveSystem, useViewer, Viewer } from '@pascal-app/viewer'
-import { memo, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+import {
+  memo,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { ViewerOverlay } from '../../components/viewer-overlay'
 import { ViewerZoneSystem } from '../../components/viewer-zone-system'
 import { type PresetsAdapter, PresetsProvider } from '../../contexts/presets-context'
@@ -50,6 +58,11 @@ import { CustomCameraControls } from './custom-camera-controls'
 import { EditorLayoutV2 } from './editor-layout-v2'
 import { ExportManager } from './export-manager'
 import { FirstPersonControls, FirstPersonOverlay } from './first-person-controls'
+import { FirstPersonShooterSystem } from './first-person-shooter-system'
+import {
+  getFirstPersonShooterStateSnapshot,
+  subscribeFirstPersonShooterState,
+} from './first-person-shooter-utils'
 import { FloatingActionMenu } from './floating-action-menu'
 import { FloatingBuildingActionMenu } from './floating-building-action-menu'
 import { FloorplanPanel } from './floorplan-panel'
@@ -547,6 +560,12 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
   isCadMultiView: boolean
   onThumbnailCapture?: (blob: Blob) => void
 }) {
+  const shooterState = useSyncExternalStore(
+    subscribeFirstPersonShooterState,
+    getFirstPersonShooterStateSnapshot,
+    getFirstPersonShooterStateSnapshot,
+  )
+
   return (
     <>
       {!isFirstPersonMode && <SelectionManager />}
@@ -567,6 +586,7 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
       {isCadMultiView && <CadMultiViewRenderer />}
       {!(isLoading || isVersionPreviewMode) && !isFirstPersonMode && <ToolManager />}
       {isFirstPersonMode && <FirstPersonControls />}
+      {isFirstPersonMode && shooterState.active && <FirstPersonShooterSystem />}
       {!isVersionPreviewMode && !isFirstPersonMode && <ViewpointPlacementController />}
       {!isFirstPersonMode && <CustomCameraControls />}
       <ThumbnailGenerator onThumbnailCapture={onThumbnailCapture} />
@@ -963,6 +983,9 @@ export default function Editor({
       !isFirstPersonMode &&
       !isVersionPreviewMode &&
       (shouldDockMeasurementPanel || inspectorPanelType || isInspectorPinned)
+    const shouldDockInspector =
+      shouldShowInspector && (shouldDockMeasurementPanel || isInspectorPinned)
+    const shouldFloatInspector = shouldShowInspector && !shouldDockInspector
 
     return (
       <PresetsProvider adapter={presetsAdapter}>
@@ -981,7 +1004,7 @@ export default function Editor({
           <>
             <EditorLayoutV2
               inspector={
-                shouldShowInspector ? (
+                shouldDockInspector ? (
                   <PanelSurfaceProvider
                     isPinned={isInspectorPinned}
                     mode="docked"
@@ -1024,6 +1047,15 @@ export default function Editor({
               viewerToolbarLeft={isFirstPersonMode ? null : viewerToolbarLeft}
               viewerToolbarRight={isFirstPersonMode ? null : viewerToolbarRight}
             />
+            {shouldFloatInspector ? (
+              <PanelSurfaceProvider
+                isPinned={isInspectorPinned}
+                mode="floating"
+                onPinnedChange={setInspectorPinned}
+              >
+                <PanelManager />
+              </PanelSurfaceProvider>
+            ) : null}
             {/* First-person overlay — rendered on top of normal layout */}
             {isFirstPersonMode && (
               <div className="fixed inset-0 z-50 pointer-events-none">

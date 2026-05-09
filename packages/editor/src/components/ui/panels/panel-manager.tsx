@@ -5,6 +5,7 @@ import { useViewer } from '@pascal-app/viewer'
 import useEditor from '../../../store/use-editor'
 import { CeilingPanel } from './ceiling-panel'
 import { DoorPanel } from './door-panel'
+import { FeaturePanel } from './feature-panel'
 import { FencePanel } from './fence-panel'
 import { ItemPanel } from './item-panel'
 import { ReferencePanel } from './reference-panel'
@@ -31,6 +32,7 @@ type InspectorPanelType =
   | 'sketch-dimension'
   | 'sketch-line'
   | 'ceiling'
+  | 'feature'
   | 'wall'
   | 'fence'
   | 'door'
@@ -48,6 +50,7 @@ function isInspectorPanelType(nodeType: string | null): nodeType is InspectorPan
     case 'sketch-dimension':
     case 'sketch-line':
     case 'ceiling':
+    case 'feature':
     case 'wall':
     case 'fence':
     case 'door':
@@ -61,6 +64,7 @@ function isInspectorPanelType(nodeType: string | null): nodeType is InspectorPan
 export function useInspectorPanelType(): InspectorPanelType | null {
   const selectedIds = useViewer((s) => s.selection.selectedIds)
   const selectedReferenceId = useEditor((s) => s.selectedReferenceId)
+  const revolveAxisPick = useEditor((s) => s.revolveAxisPick)
   // Only subscribe to the *type* of the single-selected node — string primitive
   // so we don't re-render on unrelated scene mutations.
   const selectedNodeType = useScene((s) => {
@@ -68,8 +72,13 @@ export function useInspectorPanelType(): InspectorPanelType | null {
     const id = selectedIds[0]
     return id ? (s.nodes[id as AnyNodeId]?.type ?? null) : null
   })
+  const pickedFeatureExists = useScene((s) => {
+    if (!revolveAxisPick) return false
+    return s.nodes[revolveAxisPick.featureId]?.type === 'feature'
+  })
 
   if (selectedReferenceId) return 'reference'
+  if (pickedFeatureExists) return 'feature'
   if (isInspectorPanelType(selectedNodeType)) return selectedNodeType
   return null
 }
@@ -102,6 +111,8 @@ export function PanelManager() {
         return <SketchLinePanel />
       case 'ceiling':
         return <CeilingPanel />
+      case 'feature':
+        return <FeaturePanel />
       case 'wall':
         return <WallPanel />
       case 'fence':

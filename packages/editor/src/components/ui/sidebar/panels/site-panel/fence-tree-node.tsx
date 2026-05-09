@@ -1,6 +1,6 @@
 import { type AnyNodeId, type FenceNode, useScene } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
-import Image from 'next/image'
+import { Fence } from 'lucide-react'
 import { memo, useState } from 'react'
 import useEditor from '../../../../../store/use-editor'
 import { InlineRenameInput } from './inline-rename-input'
@@ -42,9 +42,7 @@ export const FenceTreeNode = memo(function FenceTreeNode({
       depth={depth}
       expanded={false}
       hasChildren={false}
-      icon={
-        <Image alt="" className="object-contain" height={14} src="/icons/fence.png" width={14} />
-      }
+      icon={<Fence aria-hidden="true" className="h-3.5 w-3.5 stroke-[1.9]" />}
       isHovered={isHovered}
       isLast={isLast}
       isSelected={isSelected}

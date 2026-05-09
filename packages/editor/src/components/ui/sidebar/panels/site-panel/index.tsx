@@ -20,16 +20,24 @@ import {
 } from '@pascal-app/viewer'
 import {
   ArrowLeftRight,
+  Box,
+  BrickWall,
+  Building2,
   Camera,
   ChevronDown,
   Compass,
   Eye,
   EyeOff,
+  FileImage,
+  Layers,
   Loader2,
+  MapPinned,
   MoreHorizontal,
   Pencil,
   Pentagon,
   Plus,
+  Shapes,
+  Sofa,
   SunMedium,
   Trash2,
   X,
@@ -405,17 +413,9 @@ const ReferenceItem = memo(function ReferenceItem({
 
       <div className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 py-0 pl-[60px] text-muted-foreground group-hover/ref:text-foreground">
         {refNode.type === 'scan' ? (
-          <img
-            alt="Scan"
-            className="h-3.5 w-3.5 shrink-0 object-contain opacity-70 transition-opacity group-hover/ref:opacity-100"
-            src="/icons/mesh.png"
-          />
+          <Box aria-hidden="true" className="h-3.5 w-3.5 shrink-0 opacity-70" />
         ) : (
-          <img
-            alt="Guide"
-            className="h-3.5 w-3.5 shrink-0 object-contain opacity-70 transition-opacity group-hover/ref:opacity-100"
-            src="/icons/floorplan.png"
-          />
+          <FileImage aria-hidden="true" className="h-3.5 w-3.5 shrink-0 opacity-70" />
         )}
         <InlineRenameInput
           defaultName={refNode.type === 'scan' ? '3D Scan' : 'Guide Image'}
@@ -731,13 +731,12 @@ const LevelItem = memo(function LevelItem({
         </div>
 
         <div className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 py-0 pl-0.5 text-sm">
-          <img
-            alt="Level"
+          <Layers
+            aria-hidden="true"
             className={cn(
-              'h-4 w-4 shrink-0 object-contain transition-all duration-200',
-              !isSelected && 'opacity-60 grayscale',
+              'h-4 w-4 shrink-0 stroke-[1.9] transition-colors duration-200',
+              isSelected ? 'text-primary' : 'text-muted-foreground',
             )}
-            src="/icons/level.png"
           />
           <InlineRenameInput
             defaultName={`Level ${level.level}`}
@@ -1394,13 +1393,12 @@ const LayerToggle = memo(function LayerToggle() {
           />
         )}
         <div className="relative z-10 flex flex-col items-center">
-          <img
-            alt="Structure"
+          <BrickWall
+            aria-hidden="true"
             className={cn(
-              'mb-1 h-6 w-6 transition-all',
-              activeTab !== 'structure' && 'opacity-50 grayscale',
+              'mb-1 h-5 w-5 stroke-[1.9] transition-colors',
+              activeTab === 'structure' ? 'text-primary' : 'text-muted-foreground',
             )}
-            src="/icons/room.png"
           />
           Structure
         </div>
@@ -1430,13 +1428,12 @@ const LayerToggle = memo(function LayerToggle() {
           />
         )}
         <div className="relative z-10 flex flex-col items-center">
-          <img
-            alt="Furnish"
+          <Sofa
+            aria-hidden="true"
             className={cn(
-              'mb-1 h-6 w-6 transition-all',
-              activeTab !== 'furnish' && 'opacity-50 grayscale',
+              'mb-1 h-5 w-5 stroke-[1.9] transition-colors',
+              activeTab === 'furnish' ? 'text-primary' : 'text-muted-foreground',
             )}
-            src="/icons/couch.png"
           />
           Furnish
         </div>
@@ -1467,13 +1464,12 @@ const LayerToggle = memo(function LayerToggle() {
           />
         )}
         <div className="relative z-10 flex flex-col items-center">
-          <img
-            alt="Zones"
+          <Shapes
+            aria-hidden="true"
             className={cn(
-              'mb-1 h-6 w-6 transition-all',
-              activeTab !== 'zones' && 'opacity-50 grayscale',
+              'mb-1 h-5 w-5 stroke-[1.9] transition-colors',
+              activeTab === 'zones' ? 'text-primary' : 'text-muted-foreground',
             )}
-            src="/icons/kitchen.png"
           />
           Zones
         </div>
@@ -1871,13 +1867,12 @@ const BuildingItem = memo(function BuildingItem({
         ref={itemRef}
       >
         <div className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2.5 py-2 pl-3.5">
-          <img
-            alt="Building"
+          <Building2
+            aria-hidden="true"
             className={cn(
-              'h-5 w-5 object-contain transition-all',
-              !isBuildingActive && 'opacity-60 grayscale',
+              'h-5 w-5 shrink-0 stroke-[1.9] transition-colors',
+              isBuildingActive ? 'text-primary' : 'text-muted-foreground',
             )}
-            src="/icons/building.png"
           />
           <span className="truncate font-semibold text-sm">{building.name || 'Building'}</span>
           <OrientationToggleButton
@@ -2061,13 +2056,12 @@ export function SitePanel({ projectId, onUploadAsset, onDeleteAsset }: SitePanel
             onClick={() => setPhase('site')}
           >
             <div className="flex min-w-0 items-center gap-2.5">
-              <img
-                alt="Site"
+              <MapPinned
+                aria-hidden="true"
                 className={cn(
-                  'h-5 w-5 object-contain transition-all',
-                  phase !== 'site' && 'opacity-60 grayscale',
+                  'h-5 w-5 shrink-0 stroke-[1.9] transition-colors',
+                  phase === 'site' ? 'text-primary' : 'text-muted-foreground',
                 )}
-                src="/icons/site.png"
               />
               <span className="truncate font-semibold text-sm">{siteNode.name || 'Site'}</span>
               <OrientationToggleButton

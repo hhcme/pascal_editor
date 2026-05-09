@@ -89,6 +89,35 @@ export type ClearanceSummary = {
   metrics: ClearanceMetric[]
 }
 
+export type BoundsMetric = {
+  id:
+    | 'width'
+    | 'height'
+    | 'depth'
+    | 'diagonal'
+    | 'center-x'
+    | 'center-y'
+    | 'center-z'
+  label: string
+  value: number
+  formattedValue: string
+  description: string
+  approximate: boolean
+}
+
+export type BoundsSummary = {
+  nodeId: string
+  targetLabel: string
+  primaryLabel: string
+  value: number
+  formattedValue: string
+  description: string
+  approximate: boolean
+  anchor: [number, number, number]
+  bounds: ObjectBounds
+  metrics: BoundsMetric[]
+}
+
 export type AngleMetric = {
   id:
     | 'pitch-angle'
@@ -232,7 +261,7 @@ type MeasurementValueResult = {
   metrics?: MeasurementMetric[]
 }
 
-type ObjectBounds = {
+export type ObjectBounds = {
   center: [number, number, number]
   min: [number, number, number]
   max: [number, number, number]
@@ -1558,6 +1587,25 @@ function createClearanceMetric(
   approximate = false,
   formatOptions?: MeasurementFormatOptions,
 ): ClearanceMetric {
+  return {
+    id,
+    label,
+    value,
+    formattedValue: formatLength(value, unit, formatOptions),
+    description,
+    approximate,
+  }
+}
+
+function createBoundsMetric(
+  id: BoundsMetric['id'],
+  label: string,
+  value: number,
+  unit: MeasurementUnit,
+  description: string,
+  approximate = false,
+  formatOptions?: MeasurementFormatOptions,
+): BoundsMetric {
   return {
     id,
     label,
@@ -5603,6 +5651,100 @@ export function getClearanceSummaryForNode(
     description: primary.description,
     approximate: primary.approximate,
     anchor: getFallbackAnchor(node, nodes),
+    metrics,
+  }
+}
+
+export function getBoundsSummaryForNode(
+  node: AnyNode,
+  nodes: Record<string, AnyNode>,
+  unit: MeasurementUnit,
+  formatOptions?: MeasurementFormatOptions,
+): BoundsSummary | null {
+  const bounds = getObjectBounds(node.id)
+  if (!bounds) return null
+
+  const [width, height, depth] = bounds.size
+  const diagonal = Math.hypot(width, height, depth)
+  if (!Number.isFinite(diagonal) || diagonal <= 0.0001) return null
+
+  const approximate = node.type === 'item' || node.type === 'door' || node.type === 'window'
+  const metrics: BoundsMetric[] = [
+    createBoundsMetric(
+      'width',
+      '宽度 X',
+      width,
+      unit,
+      '按当前世界坐标包围盒 X 方向跨度得到',
+      approximate,
+      formatOptions,
+    ),
+    createBoundsMetric(
+      'depth',
+      '深度 Z',
+      depth,
+      unit,
+      '按当前世界坐标包围盒 Z 方向跨度得到',
+      approximate,
+      formatOptions,
+    ),
+    createBoundsMetric(
+      'height',
+      '高度 Y',
+      height,
+      unit,
+      '按当前世界坐标包围盒 Y 方向跨度得到',
+      approximate,
+      formatOptions,
+    ),
+    createBoundsMetric(
+      'diagonal',
+      '空间对角线',
+      diagonal,
+      unit,
+      '按包围盒宽、深、高计算得到的三维对角线',
+      approximate,
+      formatOptions,
+    ),
+    createBoundsMetric(
+      'center-x',
+      '中心 X',
+      bounds.center[0],
+      unit,
+      '当前世界坐标包围盒中心点 X 坐标',
+      true,
+      formatOptions,
+    ),
+    createBoundsMetric(
+      'center-y',
+      '中心 Y',
+      bounds.center[1],
+      unit,
+      '当前世界坐标包围盒中心点 Y 坐标',
+      true,
+      formatOptions,
+    ),
+    createBoundsMetric(
+      'center-z',
+      '中心 Z',
+      bounds.center[2],
+      unit,
+      '当前世界坐标包围盒中心点 Z 坐标',
+      true,
+      formatOptions,
+    ),
+  ].filter((metric) => Number.isFinite(metric.value))
+
+  return {
+    nodeId: node.id,
+    targetLabel: getMeasurementTargetLabel(node),
+    primaryLabel: '包围盒尺寸',
+    value: diagonal,
+    formattedValue: `${formatLength(width, unit, formatOptions)} × ${formatLength(depth, unit, formatOptions)} × ${formatLength(height, unit, formatOptions)}`,
+    description: '按当前渲染对象的世界轴对齐包围盒计算，适合快速核对构件占用尺寸',
+    approximate,
+    anchor: getFallbackAnchor(node, nodes),
+    bounds,
     metrics,
   }
 }

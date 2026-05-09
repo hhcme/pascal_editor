@@ -15,6 +15,10 @@ type FloorplanSketchCommandBarProps = {
   activeTool: SketchContextTool | null
   draftKind: SketchDraftKind
   canCommitDraft: boolean
+  sketchPlane: {
+    kind: 'feature-top'
+    elevation: number
+  } | null
   lineSelectionCount: number
   circleSelectionCount: number
   sketchLineActions: NodeActionMenuExtraAction[]
@@ -36,6 +40,7 @@ type CommandBarCopy = {
   cancelDraft: string
   completeSketch: string
   moreActions: string
+  topFacePlane: (elevation: number) => string
   readyStatus: string
   activeToolStatus: (toolLabel: string) => string
   draftStatus: (draftLabel: string) => string
@@ -60,6 +65,7 @@ const COPY: Record<'zh-CN' | 'en', CommandBarCopy> = {
     cancelDraft: '取消草稿',
     completeSketch: '完成草图',
     moreActions: '更多',
+    topFacePlane: (elevation) => `顶面 · ${elevation.toFixed(2)} m`,
     readyStatus: '选择工具或开始绘制',
     activeToolStatus: (toolLabel) => `当前工具：${toolLabel}`,
     draftStatus: (draftLabel) => `正在绘制${draftLabel}`,
@@ -83,6 +89,7 @@ const COPY: Record<'zh-CN' | 'en', CommandBarCopy> = {
     cancelDraft: 'Cancel Draft',
     completeSketch: 'Finish Sketch',
     moreActions: 'More',
+    topFacePlane: (elevation) => `Top face · ${elevation.toFixed(2)} m`,
     readyStatus: 'Choose a tool or start sketching',
     activeToolStatus: (toolLabel) => `Current tool: ${toolLabel}`,
     draftStatus: (draftLabel) => `Drawing ${draftLabel}`,
@@ -191,6 +198,9 @@ const CIRCLE_EDIT_ACTION_IDS = [
 ] as const
 
 const LINE_PROFILE_GENERATE_ACTION_IDS = [
+  'sketch-profile-extrude',
+  'sketch-profile-revolve',
+  'sketch-profile-cut',
   'sketch-profile-walls',
   'sketch-profile-slab',
   'sketch-profile-zone',
@@ -206,6 +216,9 @@ const TOOLBAR_ACTION_LABELS: Record<string, ToolbarActionLabelOverride> = {
   'sketch-line-trim-extend': { 'zh-CN': '修剪', en: 'Trim' },
   'sketch-circle-trim-extend': { 'zh-CN': '修剪', en: 'Trim' },
   'sketch-line-create-wall': { 'zh-CN': '墙体', en: 'Wall' },
+  'sketch-profile-extrude': { 'zh-CN': '拉伸', en: 'Extrude' },
+  'sketch-profile-revolve': { 'zh-CN': '旋转', en: 'Revolve' },
+  'sketch-profile-cut': { 'zh-CN': '切割', en: 'Cut' },
   'sketch-profile-walls': { 'zh-CN': '墙体', en: 'Wall' },
   'sketch-profile-slab': { 'zh-CN': '楼板', en: 'Slab' },
   'sketch-profile-zone': { 'zh-CN': '区域', en: 'Zone' },
@@ -232,7 +245,8 @@ function HeaderButton({
         primary
           ? 'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90'
           : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-        disabled && 'cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground',
+        disabled &&
+          'cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground',
       )}
       disabled={disabled}
       onClick={onClick}
@@ -265,7 +279,8 @@ function RibbonButton({
         active
           ? 'bg-primary/12 text-primary'
           : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-        disabled && 'cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground',
+        disabled &&
+          'cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground',
       )}
       disabled={disabled}
       onClick={onClick}
@@ -438,7 +453,8 @@ function OverflowRibbonButton({
                 action.active
                   ? 'bg-primary/10 text-primary'
                   : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-                action.disabled && 'cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground',
+                action.disabled &&
+                  'cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground',
               )}
               disabled={action.disabled}
               key={action.id}
@@ -504,6 +520,7 @@ export const FloorplanSketchCommandBar = memo(function FloorplanSketchCommandBar
   activeTool,
   draftKind,
   canCommitDraft,
+  sketchPlane,
   lineSelectionCount,
   circleSelectionCount,
   sketchLineActions,
@@ -571,7 +588,16 @@ export const FloorplanSketchCommandBar = memo(function FloorplanSketchCommandBar
         actions: pickActions(sketchLineActionById, generateIds, language),
       },
     ]
-  }, [copy.constraints, copy.edit, copy.generate, copy.quickActions, language, lineSelectionCount, showLineContext, sketchLineActionById])
+  }, [
+    copy.constraints,
+    copy.edit,
+    copy.generate,
+    copy.quickActions,
+    language,
+    lineSelectionCount,
+    showLineContext,
+    sketchLineActionById,
+  ])
 
   const circleContextGroups = useMemo<ToolbarGroup[]>(() => {
     if (!showCircleContext) {
@@ -596,7 +622,14 @@ export const FloorplanSketchCommandBar = memo(function FloorplanSketchCommandBar
         maxVisibleActions: 2,
       },
     ]
-  }, [copy.constraints, copy.edit, copy.quickActions, language, showCircleContext, sketchCircleActionById])
+  }, [
+    copy.constraints,
+    copy.edit,
+    copy.quickActions,
+    language,
+    showCircleContext,
+    sketchCircleActionById,
+  ])
 
   const activeContextGroups = showLineContext ? lineContextGroups : circleContextGroups
 
@@ -612,6 +645,14 @@ export const FloorplanSketchCommandBar = memo(function FloorplanSketchCommandBar
                   <span className="text-border">/</span>
                   <span className="shrink-0 rounded bg-accent px-2 py-0.5 font-medium text-foreground text-[11px]">
                     {getToolLabel(activeTool, language)}
+                  </span>
+                </>
+              ) : null}
+              {sketchPlane?.kind === 'feature-top' ? (
+                <>
+                  <span className="text-border">/</span>
+                  <span className="shrink-0 rounded border border-primary/20 bg-primary/10 px-2 py-0.5 font-medium text-[11px] text-primary">
+                    {copy.topFacePlane(sketchPlane.elevation)}
                   </span>
                 </>
               ) : null}

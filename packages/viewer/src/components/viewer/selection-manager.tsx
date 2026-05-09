@@ -5,6 +5,7 @@ import {
   type AnyNodeId,
   type BuildingNode,
   emitter,
+  type FeatureNode,
   type ItemNode,
   type LevelNode,
   type NodeEvent,
@@ -24,6 +25,20 @@ const tempWorldPos = new Vector3()
 // Tolerance for edge detection (in meters)
 const EDGE_TOLERANCE = 0.5
 
+function isPersonItem(node: ItemNode): boolean {
+  const assetId = node.asset.id.toLowerCase()
+  const category = node.asset.category.toLowerCase()
+  const tags = node.asset.tags?.map((tag) => tag.toLowerCase()) ?? []
+
+  return (
+    assetId.startsWith('person-') ||
+    category === 'people' ||
+    tags.includes('person') ||
+    tags.includes('people') ||
+    tags.includes('human')
+  )
+}
+
 type SelectableNodeType =
   | 'building'
   | 'level'
@@ -35,6 +50,7 @@ type SelectableNodeType =
   | 'item'
   | 'slab'
   | 'ceiling'
+  | 'feature'
   | 'roof'
   | 'roof-segment'
   | 'sketch-line'
@@ -167,6 +183,18 @@ const isNodeInZone = (node: AnyNode, levelId: string, zoneId: string): boolean =
     return false
   }
 
+  if (node.type === 'feature') {
+    const poly = (node as FeatureNode).profile.points
+    if (!poly?.length) return false
+    for (const [px, pz] of poly) {
+      if (pointInPolygonWithTolerance(px, pz, zone.polygon)) return true
+    }
+    for (const [zx, zz] of zone.polygon) {
+      if (pointInPolygon(zx, zz, poly)) return true
+    }
+    return false
+  }
+
   if (node.type === 'roof' || node.type === 'roof-segment') {
     // Roofs on the same level are valid when zone is selected
     return true
@@ -220,17 +248,34 @@ const getStrategy = (): SelectionStrategy | null => {
     }
   }
 
-  // Level selected, no zone -> can select zones (only zones on the selected level)
+  // Level selected, no zone -> can select zones and person anchors on the selected level.
+  // People act as viewpoint anchors, so they need to remain directly selectable
+  // after placement without forcing the user to drill into the containing room.
   if (!zoneId) {
     return {
-      types: ['zone'],
-      handleClick: (node) => {
+      types: ['zone', 'item'],
+      handleClick: (node, nativeEvent) => {
+        if (node.type === 'item') {
+          const { selectedIds } = useViewer.getState().selection
+          useViewer
+            .getState()
+            .setSelection({ selectedIds: computeNextIds(node, selectedIds, nativeEvent) })
+          return
+        }
+
         useViewer.getState().setSelection({ zoneId: (node as ZoneNode).id })
       },
       handleDeselect: () => {
-        useViewer.getState().setSelection({ levelId: null })
+        const { selectedIds } = useViewer.getState().selection
+        if (selectedIds.length > 0) {
+          useViewer.getState().setSelection({ selectedIds: [] })
+        } else {
+          useViewer.getState().setSelection({ levelId: null })
+        }
       },
-      isValid: (node) => node.type === 'zone' && node.parentId === levelId,
+      isValid: (node) =>
+        (node.type === 'zone' && node.parentId === levelId) ||
+        (node.type === 'item' && isPersonItem(node as ItemNode) && isNodeOnLevel(node, levelId)),
     }
   }
 
@@ -242,6 +287,7 @@ const getStrategy = (): SelectionStrategy | null => {
       'item',
       'slab',
       'ceiling',
+      'feature',
       'roof',
       'roof-segment',
       'sketch-line',
@@ -278,6 +324,7 @@ const getStrategy = (): SelectionStrategy | null => {
         'item',
         'slab',
         'ceiling',
+        'feature',
         'roof',
         'roof-segment',
         'sketch-line',
@@ -339,6 +386,7 @@ export const SelectionManager = () => {
       'item',
       'slab',
       'ceiling',
+      'feature',
       'roof',
       'roof-segment',
       'sketch-line',

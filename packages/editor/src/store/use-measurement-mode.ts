@@ -38,7 +38,7 @@ export type DistanceMeasurementRecord =
 export type NodePinnedMeasurementRecord = {
   id: string
   createdAt: number
-  kind: 'area' | 'volume' | 'clearance' | 'angle' | 'perimeter'
+  kind: 'area' | 'volume' | 'clearance' | 'bounds' | 'angle' | 'perimeter'
   nodeId: string
 }
 
@@ -88,13 +88,13 @@ type MeasurementModeState = {
   setPerimeterVisibility: (key: 'span' | 'depth' | 'setbacks' | 'baselines', value: boolean) => void
   setPrecision: (precision: MeasurementPrecision) => void
   pinMeasurement: (
-    kind: 'area' | 'volume' | 'clearance' | 'angle' | 'perimeter',
+    kind: 'area' | 'volume' | 'clearance' | 'bounds' | 'angle' | 'perimeter',
     nodeId: string,
   ) => void
   pinGridMeasurement: (nodeIds: string[]) => void
   removePinnedMeasurement: (id: string) => void
   clearPinnedMeasurements: (
-    kind?: 'area' | 'volume' | 'clearance' | 'angle' | 'perimeter' | 'grid',
+    kind?: 'area' | 'volume' | 'clearance' | 'bounds' | 'angle' | 'perimeter' | 'grid',
   ) => void
 }
 

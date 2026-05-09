@@ -3,13 +3,20 @@
 import {
   type AnyNode,
   type AnyNodeId,
+  type CeilingNode,
+  createExtrudeCutStepFromProfile,
+  createFeatureDefinitionFromLegacyNode,
+  FeatureCut as FeatureCutSchema,
+  type FeatureNode,
+  FeatureNode as FeatureNodeSchema,
+  normalizeWallCurveOffset,
+  pointInPolygon,
   type SketchCircleNode,
-  type SketchDimensionNode,
   SketchCircleNode as SketchCircleNodeSchema,
-  type SketchLineEndpointReference,
+  type SketchDimensionNode,
   type SketchLineNode,
   SketchLineNode as SketchLineNodeSchema,
-  normalizeWallCurveOffset,
+  type SlabNode,
   useScene,
 } from '@pascal-app/core'
 import {
@@ -21,15 +28,13 @@ import {
   useState,
 } from 'react'
 import { sfxEmitter } from '../../../lib/sfx-bus'
-import { getSketchEndpointReferenceFromSnapTarget } from '../../tools/sketch/sketch-coincident'
+import useEditor, { type SketchPlane } from '../../../store/use-editor'
 import {
   isSketchCircleConstraintActive,
   type SketchCircleEditResult,
 } from '../../tools/sketch/sketch-circle-constraints'
-import {
-  buildPropagateSketchLineTangentsFromCircles,
-} from '../../tools/sketch/sketch-line-tangent'
-import { type SketchCircleCreateSpec } from '../../tools/sketch/sketch-circle-transforms'
+import type { SketchCircleCreateSpec } from '../../tools/sketch/sketch-circle-transforms'
+import { getSketchEndpointReferenceFromSnapTarget } from '../../tools/sketch/sketch-coincident'
 import {
   buildSketchRectangleSegments,
   detectClosedSketchProfiles,
@@ -40,28 +45,28 @@ import {
 } from '../../tools/sketch/sketch-geometry'
 import { isSketchLineConstraintActive } from '../../tools/sketch/sketch-line-constraints'
 import { buildResolvedSketchLineUpdateSet } from '../../tools/sketch/sketch-line-resolution'
+import { buildPropagateSketchLineTangentsFromCircles } from '../../tools/sketch/sketch-line-tangent'
 import { createWallOnCurrentLevel, type WallPlanPoint } from '../../tools/wall/wall-drafting'
 import type { WallSketchSnapTarget } from '../../tools/wall/wall-sketch'
 import type { NodeActionMenuExtraAction } from '../node-action-menu'
 import {
-  buildSketchCircleActionMenuExtraActions,
-  buildSketchLineActionMenuExtraActions,
-} from './sketch-action-menu'
-import {
   addLocalCoincidentReferences,
-  addPoint,
   applyExternalRectangleConnection,
   buildSketchLineCoincident,
+  type FloorplanSketchLineEntry,
   getAngleFromCenter,
   getPointDistance,
   SKETCH_EPSILON,
-  type FloorplanSketchLineEntry,
   type SketchCircleOperation,
   type SketchLineCreateConnections,
   type SketchLineCreateSegment,
   type SketchLineOperation,
   type UnitSystem,
 } from './sketch-action-helpers'
+import {
+  buildSketchCircleActionMenuExtraActions,
+  buildSketchLineActionMenuExtraActions,
+} from './sketch-action-menu'
 import { useFloorplanSketchCircleActions } from './sketch-circle-actions'
 import { useFloorplanSketchDimensionActions } from './sketch-dimension-actions'
 import { useFloorplanSketchLineActions } from './sketch-line-actions'
@@ -80,6 +85,128 @@ const DEFAULT_SKETCH_OFFSET_DISTANCE = 0.5
 const DEFAULT_SKETCH_LINEAR_PATTERN_SPACING = 1
 const DEFAULT_SKETCH_LINEAR_PATTERN_COUNT = 3
 const DEFAULT_SKETCH_CORNER_DISTANCE = 0.5
+const DEFAULT_SKETCH_EXTRUDE_DEPTH = 2.8
+const DEFAULT_SKETCH_REVOLVE_ANGLE = Math.PI * 2
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function getActiveSketchPlaneMetadata(): Record<string, unknown> {
+  const plane = useEditor.getState().sketchPlane
+  if (!plane) {
+    return {}
+  }
+
+  return {
+    sketchPlane: {
+      kind: plane.kind,
+      targetNodeId: plane.targetNodeId,
+      elevation: plane.elevation,
+    },
+  }
+}
+
+function getSketchPlaneFromNode(
+  node: { metadata?: unknown } | null | undefined,
+): SketchPlane | null {
+  if (!isRecord(node?.metadata)) {
+    return null
+  }
+
+  const rawPlane = node.metadata.sketchPlane
+  if (!isRecord(rawPlane)) {
+    return null
+  }
+
+  if (
+    rawPlane.kind !== 'feature-top' ||
+    typeof rawPlane.targetNodeId !== 'string' ||
+    !(typeof rawPlane.elevation === 'number' && Number.isFinite(rawPlane.elevation))
+  ) {
+    return null
+  }
+
+  return {
+    kind: 'feature-top',
+    targetNodeId: rawPlane.targetNodeId as AnyNodeId,
+    elevation: rawPlane.elevation,
+  }
+}
+
+function getSketchPlaneFromProfile(
+  profile: SketchProfile,
+  nodes: Readonly<Record<string, AnyNode>>,
+): SketchPlane | null {
+  for (const lineId of profile.lineIds) {
+    const plane = getSketchPlaneFromNode(nodes[lineId])
+    if (plane) {
+      return plane
+    }
+  }
+
+  return null
+}
+
+function polygonArea(points: Array<[number, number]>) {
+  let area = 0
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index]
+    const next = points[(index + 1) % points.length]
+    if (!(current && next)) continue
+    area += current[0] * next[1] - next[0] * current[1]
+  }
+  return Math.abs(area) / 2
+}
+
+function getProfileMinX(points: Array<[number, number]>) {
+  return points.reduce((minX, [x]) => Math.min(minX, x), Number.POSITIVE_INFINITY)
+}
+
+function isVerticalConstructionAxisLine(line: SketchLineNode) {
+  const dx = Math.abs(line.end[0] - line.start[0])
+  const dy = Math.abs(line.end[1] - line.start[1])
+  return Boolean(line.construction && dy > SKETCH_EPSILON && dx <= 1e-4)
+}
+
+function getSelectedRevolveAxisLine(
+  selectedLines: SketchLineNode[],
+  profile: SketchProfile,
+): SketchLineNode | null {
+  const profileLineIds = new Set(profile.lineIds)
+  return (
+    selectedLines.find(
+      (line) => !profileLineIds.has(line.id) && isVerticalConstructionAxisLine(line),
+    ) ?? null
+  )
+}
+
+function polygonContainsPolygon(outer: Array<[number, number]>, inner: Array<[number, number]>) {
+  return inner.length >= 3 && inner.every(([x, z]) => pointInPolygon(x, z, outer))
+}
+
+function haveSameLineIds(first: readonly string[], second: readonly string[]) {
+  if (first.length !== second.length) return false
+  const secondIds = new Set(second)
+  return first.every((id) => secondIds.has(id))
+}
+
+function isCutProfileInsideSurface(
+  profilePoints: Array<[number, number]>,
+  surface: Pick<SlabNode | CeilingNode, 'polygon' | 'holes'>,
+) {
+  if (!polygonContainsPolygon(surface.polygon, profilePoints)) return false
+  return !(surface.holes ?? []).some((hole) => polygonContainsPolygon(hole, profilePoints))
+}
+
+function isCutProfileInsideFeature(profile: SketchProfile, feature: FeatureNode) {
+  if (feature.kind !== 'extrude' || feature.operation !== 'add') return false
+  if (polygonArea(profile.points) >= polygonArea(feature.profile.points) - 1e-6) return false
+  if (haveSameLineIds(profile.lineIds, feature.profile.lineIds)) return false
+  if (!polygonContainsPolygon(feature.profile.points, profile.points)) return false
+
+  return !feature.cuts.some((cut) => haveSameLineIds(profile.lineIds, cut.profile.lineIds))
+}
 
 type UseFloorplanSketchActionsArgs = {
   levelId: string | null
@@ -96,9 +223,7 @@ type UseFloorplanSketchActionsArgs = {
   setSketchCircleDraft: Dispatch<SetStateAction<SketchCircleDraft | null>>
   setSketchArcDraft: Dispatch<SetStateAction<SketchArcDraft | null>>
   setSketchDimensionInput: Dispatch<SetStateAction<SketchDimensionInputState | null>>
-  setSketchDistanceDimensionDraft: Dispatch<
-    SetStateAction<SketchDistanceDimensionDraft | null>
-  >
+  setSketchDistanceDimensionDraft: Dispatch<SetStateAction<SketchDistanceDimensionDraft | null>>
   sketchDimensions: SketchDimensionNode[]
   sketchLineById: ReadonlyMap<SketchLineNode['id'], SketchLineNode>
   sketchCircleById: ReadonlyMap<SketchCircleNode['id'], SketchCircleNode>
@@ -211,6 +336,7 @@ export function useFloorplanSketchActions({
         end,
         construction,
         coincident: buildSketchLineCoincident(connections),
+        metadata: getActiveSketchPlaneMetadata(),
       })
 
       createNode(sketchLine, levelId as AnyNodeId)
@@ -247,6 +373,7 @@ export function useFloorplanSketchActions({
             construction: segment.construction ?? false,
             relations: segment.relations ?? [],
             coincident: segment.coincident,
+            metadata: getActiveSketchPlaneMetadata(),
           }),
         ),
       )
@@ -289,6 +416,7 @@ export function useFloorplanSketchActions({
         startAngle,
         endAngle,
         dimensions: { radius },
+        metadata: getActiveSketchPlaneMetadata(),
       })
 
       createNode(sketchCircle, levelId as AnyNodeId)
@@ -327,6 +455,7 @@ export function useFloorplanSketchActions({
           construction: circle.construction,
           relations: circle.relations,
           dimensions: { radius: circle.radius },
+          metadata: getActiveSketchPlaneMetadata(),
         }),
       )
 
@@ -376,13 +505,7 @@ export function useFloorplanSketchActions({
       setSketchDimensionInput(null)
       return true
     },
-    [
-      setSelection,
-      setSketchDimensionInput,
-      showWallEditFeedback,
-      sketchCircleById,
-      sketchLineById,
-    ],
+    [setSelection, setSketchDimensionInput, showWallEditFeedback, sketchCircleById, sketchLineById],
   )
 
   const runSketchCircleEditResult = useCallback(
@@ -575,6 +698,254 @@ export function useFloorplanSketchActions({
       showWallEditFeedback,
       sketchProfiles,
     ],
+  )
+
+  const createExtrudeFromSelectedSketchProfile = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation()
+      if (!levelId) {
+        showWallEditFeedback('请先选择楼层。')
+        return
+      }
+      if (!selectedSketchProfile) {
+        showWallEditFeedback('请选择闭合轮廓中的一条草图边。')
+        return
+      }
+
+      const unsupportedReason = getSketchProfileUnsupportedReason(
+        selectedSketchProfile,
+        sketchProfiles,
+      )
+      if (unsupportedReason) {
+        showWallEditFeedback(unsupportedReason)
+        return
+      }
+
+      const { createNode, nodes } = useScene.getState()
+      const sketchPlane = getSketchPlaneFromProfile(selectedSketchProfile, nodes)
+      const featureCount = Object.values(nodes).filter((node) => node.type === 'feature').length
+      const feature = FeatureNodeSchema.parse({
+        name: `拉伸 ${featureCount + 1}`,
+        kind: 'extrude',
+        operation: 'add',
+        profile: {
+          kind: 'sketch-profile',
+          lineIds: selectedSketchProfile.lineIds,
+          points: selectedSketchProfile.points,
+        },
+        depth: DEFAULT_SKETCH_EXTRUDE_DEPTH,
+        baseElevation: sketchPlane?.elevation ?? 0,
+        metadata: {
+          sketchSource: {
+            kind: 'profile',
+            lineIds: selectedSketchProfile.lineIds,
+          },
+          ...(sketchPlane
+            ? {
+                sketchPlane,
+                sourceFeatureId: sketchPlane.targetNodeId,
+              }
+            : {}),
+        },
+      })
+
+      createNode(
+        {
+          ...feature,
+          definition: createFeatureDefinitionFromLegacyNode(feature),
+        },
+        levelId as AnyNodeId,
+      )
+      sfxEmitter.emit('sfx:structure-build')
+      setSelection({ selectedIds: [feature.id] })
+    },
+    [levelId, selectedSketchProfile, setSelection, showWallEditFeedback, sketchProfiles],
+  )
+
+  const createRevolveFromSelectedSketchProfile = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation()
+      if (!levelId) {
+        showWallEditFeedback('请先选择楼层。')
+        return
+      }
+      if (!selectedSketchProfile) {
+        showWallEditFeedback('请选择闭合轮廓中的一条草图边。')
+        return
+      }
+
+      const unsupportedReason = getSketchProfileUnsupportedReason(
+        selectedSketchProfile,
+        sketchProfiles,
+      )
+      if (unsupportedReason) {
+        showWallEditFeedback(unsupportedReason)
+        return
+      }
+
+      const { createNode, nodes } = useScene.getState()
+      const sketchPlane = getSketchPlaneFromProfile(selectedSketchProfile, nodes)
+      const featureCount = Object.values(nodes).filter((node) => node.type === 'feature').length
+      const axisLine = getSelectedRevolveAxisLine(selectedSketchLineList, selectedSketchProfile)
+      const profileAxisX = getProfileMinX(selectedSketchProfile.points)
+      const revolveAxisX = axisLine ? axisLine.start[0] : profileAxisX
+      const feature = FeatureNodeSchema.parse({
+        name: `旋转 ${featureCount + 1}`,
+        kind: 'revolve',
+        operation: 'add',
+        profile: {
+          kind: 'sketch-profile',
+          lineIds: selectedSketchProfile.lineIds,
+          points: selectedSketchProfile.points,
+        },
+        depth: DEFAULT_SKETCH_EXTRUDE_DEPTH,
+        baseElevation: sketchPlane?.elevation ?? 0,
+        revolveAxisX: Number.isFinite(revolveAxisX) ? revolveAxisX : 0,
+        revolveAxisLineId: axisLine?.id,
+        revolveAngle: DEFAULT_SKETCH_REVOLVE_ANGLE,
+        metadata: {
+          sketchSource: {
+            kind: 'profile',
+            lineIds: selectedSketchProfile.lineIds,
+          },
+          ...(sketchPlane
+            ? {
+                sketchPlane,
+                sourceFeatureId: sketchPlane.targetNodeId,
+              }
+            : {}),
+        },
+      })
+
+      createNode(
+        {
+          ...feature,
+          definition: createFeatureDefinitionFromLegacyNode(feature),
+        },
+        levelId as AnyNodeId,
+      )
+      sfxEmitter.emit('sfx:structure-build')
+      setSelection({ selectedIds: [feature.id] })
+    },
+    [
+      levelId,
+      selectedSketchLineList,
+      selectedSketchProfile,
+      setSelection,
+      showWallEditFeedback,
+      sketchProfiles,
+    ],
+  )
+
+  const cutFromSelectedSketchProfile = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation()
+      if (!levelId) {
+        showWallEditFeedback('请先选择楼层。')
+        return
+      }
+      if (!selectedSketchProfile) {
+        showWallEditFeedback('请选择闭合轮廓中的一条草图边。')
+        return
+      }
+
+      const unsupportedReason = getSketchProfileUnsupportedReason(
+        selectedSketchProfile,
+        sketchProfiles,
+      )
+      if (unsupportedReason) {
+        showWallEditFeedback(unsupportedReason)
+        return
+      }
+
+      const { nodes, updateNodes } = useScene.getState()
+      const profilePoints = selectedSketchProfile.points.map(([x, z]) => [x, z] as [number, number])
+      const sketchPlane = getSketchPlaneFromProfile(selectedSketchProfile, nodes)
+      const updates: Array<{ id: AnyNodeId; data: Partial<AnyNode> }> = []
+      const targetIds: AnyNodeId[] = []
+
+      for (const node of Object.values(nodes)) {
+        if (node.parentId !== levelId) continue
+
+        if (sketchPlane && node.id !== sketchPlane.targetNodeId) continue
+
+        if (
+          !sketchPlane &&
+          node.type === 'slab' &&
+          isCutProfileInsideSurface(profilePoints, node)
+        ) {
+          const currentHoles = node.holes ?? []
+          const currentMetadata = currentHoles.map(
+            (_, index) => node.holeMetadata?.[index] ?? { source: 'manual' as const },
+          )
+          updates.push({
+            id: node.id as AnyNodeId,
+            data: {
+              holes: [...currentHoles, profilePoints],
+              holeMetadata: [...currentMetadata, { source: 'manual' }],
+            } as Partial<AnyNode>,
+          })
+          targetIds.push(node.id as AnyNodeId)
+        }
+
+        if (
+          !sketchPlane &&
+          node.type === 'ceiling' &&
+          isCutProfileInsideSurface(profilePoints, node)
+        ) {
+          const currentHoles = node.holes ?? []
+          const currentMetadata = currentHoles.map(
+            (_, index) => node.holeMetadata?.[index] ?? { source: 'manual' as const },
+          )
+          updates.push({
+            id: node.id as AnyNodeId,
+            data: {
+              holes: [...currentHoles, profilePoints],
+              holeMetadata: [...currentMetadata, { source: 'manual' }],
+            } as Partial<AnyNode>,
+          })
+          targetIds.push(node.id as AnyNodeId)
+        }
+
+        if (node.type === 'feature' && isCutProfileInsideFeature(selectedSketchProfile, node)) {
+          const cut = FeatureCutSchema.parse({
+            profile: {
+              kind: 'sketch-profile',
+              lineIds: selectedSketchProfile.lineIds,
+              points: profilePoints,
+            },
+          })
+          const definition = node.definition
+            ? {
+                ...node.definition,
+                steps: [
+                  ...node.definition.steps,
+                  createExtrudeCutStepFromProfile(cut.profile, node.cuts.length),
+                ],
+                rebuild: { status: 'warning' as const, message: '切割步骤已添加，等待重建。' },
+              }
+            : undefined
+          updates.push({
+            id: node.id as AnyNodeId,
+            data: { cuts: [...node.cuts, cut], ...(definition ? { definition } : {}) } as Partial<AnyNode>,
+          })
+          targetIds.push(node.id as AnyNodeId)
+        }
+      }
+
+      if (updates.length === 0) {
+        showWallEditFeedback('未找到可切割的楼板、吊顶或拉伸体。请确认切割轮廓位于目标内部。')
+        return
+      }
+
+      updateNodes(updates)
+      for (const update of updates) {
+        useScene.getState().dirtyNodes.add(update.id)
+      }
+      sfxEmitter.emit('sfx:structure-build')
+      setSelection({ selectedIds: targetIds })
+    },
+    [levelId, selectedSketchProfile, setSelection, showWallEditFeedback, sketchProfiles],
   )
 
   const handleSketchLinePlacementPoint = useCallback(
@@ -965,12 +1336,18 @@ export function useFloorplanSketchActions({
       onCreateProfileWalls: createWallsFromSelectedSketchProfile,
       onCreateProfileSlab: createSlabFromSelectedSketchProfile,
       onCreateProfileZone: createZoneFromSelectedSketchProfile,
+      onCreateProfileExtrude: createExtrudeFromSelectedSketchProfile,
+      onCreateProfileRevolve: createRevolveFromSelectedSketchProfile,
+      onCutProfile: cutFromSelectedSketchProfile,
     })
   }, [
+    createExtrudeFromSelectedSketchProfile,
+    createRevolveFromSelectedSketchProfile,
     createWallFromSelectedSketchLine,
     createSlabFromSelectedSketchProfile,
     createWallsFromSelectedSketchProfile,
     createZoneFromSelectedSketchProfile,
+    cutFromSelectedSketchProfile,
     handleSelectedSketchLineChamfer,
     handleSelectedSketchLineCollinear,
     handleSelectedSketchLineFillet,

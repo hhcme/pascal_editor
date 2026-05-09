@@ -3,16 +3,16 @@ import {
   type AnyNodeId,
   type BuildingNode,
   emitter,
+  type FeatureNode,
   type ItemNode,
   type NodeEvent,
   type RoofEvent,
   type RoofSegmentEvent,
   resolveLevelId,
-  sceneRegistry,
   type StairEvent,
-  type StairNode,
-  type StairSurfaceMaterialRole,
   type StairSegmentEvent,
+  type StairSurfaceMaterialRole,
+  sceneRegistry,
   useScene,
   type WallEvent,
   type WallSurfaceSide,
@@ -20,10 +20,16 @@ import {
 
 import { useViewer } from '@pascal-app/viewer'
 import { useCallback, useEffect, useRef } from 'react'
-import { Color, type BufferGeometry, type Material, type Mesh, type Object3D } from 'three'
+import { type BufferGeometry, Color, type Material, type Mesh, type Object3D } from 'three'
 import { sfxEmitter } from '../../lib/sfx-bus'
-import useEditor, { type MaterialTargetRole, type Phase, type StructureLayer } from './../../store/use-editor'
+import useEditor, {
+  type MaterialTargetRole,
+  type Phase,
+  type StructureLayer,
+} from './../../store/use-editor'
 import { boxSelectHandled } from '../tools/select/box-select-tool'
+
+const FEATURE_TOP_FACE_HIT_TOLERANCE = 0.06
 
 const isNodeInCurrentLevel = (node: AnyNode): boolean => {
   const currentLevelId = useViewer.getState().selection.levelId
@@ -40,6 +46,7 @@ type SelectableNodeType =
   | 'zone'
   | 'slab'
   | 'ceiling'
+  | 'feature'
   | 'roof'
   | 'roof-segment'
   | 'sketch-circle'
@@ -177,10 +184,7 @@ function getIntersectionMaterialIndex(
   return group?.materialIndex
 }
 
-function setSelectedMaterialTargetForNode(
-  node: AnyNode,
-  role: MaterialTargetRole | null,
-) {
+function setSelectedMaterialTargetForNode(node: AnyNode, role: MaterialTargetRole | null) {
   if (!role) {
     const currentTarget = useEditor.getState().selectedMaterialTarget
     if (currentTarget?.nodeId !== node.id) {
@@ -193,6 +197,33 @@ function setSelectedMaterialTargetForNode(
     nodeId: node.id as AnyNodeId,
     role,
   })
+}
+
+function isFeatureTopFaceHit(event: NodeEvent<FeatureNode>): boolean {
+  const normalY = event.normal?.[1]
+  const hitNearTop =
+    Math.abs(event.localPosition[1] - event.node.depth) <=
+    Math.max(FEATURE_TOP_FACE_HIT_TOLERANCE, event.node.depth * 0.01)
+
+  return hitNearTop && (normalY === undefined || normalY > 0.5)
+}
+
+function activateFeatureTopFaceSketch(feature: FeatureNode) {
+  const editor = useEditor.getState()
+  const viewer = useViewer.getState()
+
+  editor.setSketchPlane({
+    kind: 'feature-top',
+    targetNodeId: feature.id as AnyNodeId,
+    elevation: feature.baseElevation + feature.depth,
+  })
+  editor.setViewMode('split')
+  editor.setPhase('structure')
+  editor.setStructureLayer('elements')
+  editor.setMode('build')
+  editor.setTool('sketch-line')
+  editor.setSelectedMaterialTarget(null)
+  viewer.setSelection({ selectedIds: [] })
 }
 
 const HIGHLIGHT_PROFILES = {
@@ -319,6 +350,7 @@ const SELECTION_STRATEGIES: Record<string, SelectionStrategy> = {
       'zone',
       'slab',
       'ceiling',
+      'feature',
       'roof',
       'roof-segment',
       'sketch-circle',
@@ -372,6 +404,7 @@ const SELECTION_STRATEGIES: Record<string, SelectionStrategy> = {
         node.type === 'fence' ||
         node.type === 'slab' ||
         node.type === 'ceiling' ||
+        node.type === 'feature' ||
         node.type === 'roof' ||
         node.type === 'roof-segment' ||
         node.type === 'sketch-circle' ||
@@ -436,6 +469,7 @@ const getSelectionTarget = (node: AnyNode): SelectionTarget | null => {
     node.type === 'fence' ||
     node.type === 'slab' ||
     node.type === 'ceiling' ||
+    node.type === 'feature' ||
     node.type === 'roof' ||
     node.type === 'roof-segment' ||
     node.type === 'sketch-circle' ||
@@ -623,6 +657,7 @@ export const SelectionManager = () => {
       'zone',
       'slab',
       'ceiling',
+      'feature',
       'roof',
       'roof-segment',
       'sketch-circle',
@@ -703,6 +738,16 @@ export const SelectionManager = () => {
       const node = event.node
       const currentPhase = useEditor.getState().phase
 
+      if (
+        node.type === 'feature' &&
+        isNodeInCurrentLevel(node) &&
+        isFeatureTopFaceHit(event as NodeEvent<FeatureNode>)
+      ) {
+        event.stopPropagation()
+        activateFeatureTopFaceSketch(node)
+        return
+      }
+
       let targetPhase: 'site' | 'structure' | 'furnish' | null = null
       let forceSelect = false
 
@@ -718,6 +763,7 @@ export const SelectionManager = () => {
         node.type === 'fence' ||
         node.type === 'slab' ||
         node.type === 'ceiling' ||
+        node.type === 'feature' ||
         node.type === 'roof' ||
         node.type === 'roof-segment' ||
         node.type === 'sketch-circle' ||
@@ -772,6 +818,7 @@ export const SelectionManager = () => {
       'building',
       'slab',
       'ceiling',
+      'feature',
       'roof',
       'roof-segment',
       'sketch-circle',
@@ -845,6 +892,7 @@ export const SelectionManager = () => {
       'item',
       'slab',
       'ceiling',
+      'feature',
       'roof',
       'roof-segment',
       'sketch-circle',
@@ -927,7 +975,9 @@ const SelectionStateSync = () => {
     const selectedNode = useScene.getState().nodes[singleSelectedId as AnyNodeId]
     if (
       !selectedNode ||
-      (selectedNode.type !== 'wall' && selectedNode.type !== 'stair' && selectedNode.type !== 'roof')
+      (selectedNode.type !== 'wall' &&
+        selectedNode.type !== 'stair' &&
+        selectedNode.type !== 'roof')
     ) {
       setSelectedMaterialTarget(null)
       return

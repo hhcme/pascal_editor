@@ -2,7 +2,7 @@
 
 import { type AnyNodeId, type SketchCircleNode, useScene } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
-import Image from 'next/image'
+import { Circle, Spline } from 'lucide-react'
 import { memo, useCallback, useState } from 'react'
 import { InlineRenameInput } from './inline-rename-input'
 import { focusTreeNode, handleTreeSelection, TreeNodeWrapper } from './tree-node'
@@ -44,6 +44,7 @@ export const SketchCircleTreeNode = memo(function SketchCircleTreeNode({
   if (!node) {
     return null
   }
+  const Icon = node.kind === 'arc' ? Spline : Circle
 
   return (
     <TreeNodeWrapper
@@ -51,15 +52,7 @@ export const SketchCircleTreeNode = memo(function SketchCircleTreeNode({
       depth={depth}
       expanded={false}
       hasChildren={false}
-      icon={
-        <Image
-          alt=""
-          className="object-contain"
-          height={14}
-          src={node.kind === 'arc' ? '/icons/sketch-arc.svg' : '/icons/sketch-circle.svg'}
-          width={14}
-        />
-      }
+      icon={<Icon aria-hidden="true" className="h-3.5 w-3.5 stroke-[1.9]" />}
       isHovered={isHovered}
       isLast={isLast}
       isSelected={isSelected}

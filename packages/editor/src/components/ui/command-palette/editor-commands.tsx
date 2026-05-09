@@ -391,6 +391,14 @@ export function EditorCommands() {
         execute: () => run(() => setMeasurementMode('clearance')),
       },
       {
+        id: 'editor.measure.bounds',
+        label: '3D 包围盒尺寸',
+        group: 'Viewer Controls',
+        icon: <Box className="h-4 w-4" />,
+        keywords: ['measure', 'bounds', 'bounding box', 'bbox', 'dimensions', '3d'],
+        execute: () => run(() => setMeasurementMode('bounds')),
+      },
+      {
         id: 'editor.measure.angle',
         label: '3D 角度/坡度',
         group: 'Viewer Controls',
@@ -435,6 +443,19 @@ export function EditorCommands() {
         },
         navigate: true,
         execute: () => navigateTo('wall-mode'),
+      },
+      {
+        id: 'editor.viewer.section-plane',
+        label: '切换 3D 剖切',
+        group: 'Viewer Controls',
+        icon: <Box className="h-4 w-4" />,
+        keywords: ['section', 'clip', 'cut', 'slice', '剖切', '裁切', '3d'],
+        badge: () => (useViewer.getState().sectionPlane.enabled ? 'On' : 'Off'),
+        execute: () =>
+          run(() => {
+            const { sectionPlane, setSectionPlane } = useViewer.getState()
+            setSectionPlane({ enabled: !sectionPlane.enabled })
+          }),
       },
       {
         id: 'editor.viewer.level-mode',

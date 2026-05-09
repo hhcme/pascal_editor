@@ -123,6 +123,17 @@ const NEGATIVE_PATTERNS = [
     ['reverse_door_swing', 'shift_door', 'replace_with_sliding_door'],
   ),
   negativePattern(
+    'BASIC_FURNITURE_MISSING',
+    'medium',
+    [
+      'bedroom_missing_bed_wardrobe_or_bedside',
+      'living_room_missing_seating_table_or_media_storage',
+      'dining_kitchen_bathroom_missing_core_fixtures',
+      'study_missing_desk_chair_or_storage',
+    ],
+    ['add_furniture_anchor', 'expand_room', 'reduce_furniture_set'],
+  ),
+  negativePattern(
     'BEDROOM_FURNITURE_IMPOSSIBLE',
     'high',
     ['bed_cannot_fit', 'wardrobe_cannot_fit', 'bedside_clearance_invalid'],

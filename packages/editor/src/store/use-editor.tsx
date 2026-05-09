@@ -49,6 +49,7 @@ export type MeasurementMode =
   | 'area'
   | 'volume'
   | 'clearance'
+  | 'bounds'
   | 'angle'
   | 'perimeter'
   | 'grid'
@@ -58,6 +59,16 @@ export type ViewpointEntryTarget = {
   z: number
   source: ViewpointEntrySource
   yaw?: number
+}
+
+export type SketchPlane = {
+  kind: 'feature-top'
+  targetNodeId: AnyNodeId
+  elevation: number
+}
+
+export type RevolveAxisPick = {
+  featureId: AnyNodeId
 }
 
 export type Phase = 'site' | 'structure' | 'furnish'
@@ -233,6 +244,10 @@ type EditorState = {
   setGridSnapStep: (step: GridSnapStep) => void
   showSketchRelations: boolean
   setShowSketchRelations: (show: boolean) => void
+  sketchPlane: SketchPlane | null
+  setSketchPlane: (plane: SketchPlane | null) => void
+  revolveAxisPick: RevolveAxisPick | null
+  setRevolveAxisPick: (pick: RevolveAxisPick | null) => void
   isInspectorPinned: boolean
   setInspectorPinned: (pinned: boolean) => void
   // First-person walkthrough mode (street view)
@@ -717,6 +732,10 @@ const useEditor = create<EditorState>()(
       setGridSnapStep: (step) => set({ gridSnapStep: step }),
       showSketchRelations: DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE.showSketchRelations,
       setShowSketchRelations: (show) => set({ showSketchRelations: show }),
+      sketchPlane: null,
+      setSketchPlane: (plane) => set({ sketchPlane: plane }),
+      revolveAxisPick: null,
+      setRevolveAxisPick: (pick) => set({ revolveAxisPick: pick }),
       isInspectorPinned: DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE.isInspectorPinned,
       setInspectorPinned: (pinned) => set({ isInspectorPinned: pinned }),
       allowUndergroundCamera: false,

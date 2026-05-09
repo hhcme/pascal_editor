@@ -12,6 +12,8 @@
     "check": "biome check",
     "check:fix": "biome check --write",
     "check-types": "turbo run check-types",
+    "clean:cache": "rm -rf .turbo apps/*/.turbo apps/*/.next/dev packages/*/.turbo tooling/*/.turbo",
+    "clean:artifacts": "rm -rf apps/*/.next apps/*/out packages/*/dist",
     "assets:manifest": "node ./tooling/assets/generate-asset-manifest.cjs",
     "assets:check": "node ./tooling/assets/generate-asset-manifest.cjs --check",
     "assets:thumbs": "node ./tooling/assets/render-item-thumbnails.cjs",

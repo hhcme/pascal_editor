@@ -1,6 +1,6 @@
 import { type AnyNodeId, type CeilingNode, useScene } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
-import Image from 'next/image'
+import { PanelTop } from 'lucide-react'
 import { memo, useCallback, useEffect, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import useEditor from './../../../../../store/use-editor'
@@ -84,9 +84,7 @@ export const CeilingTreeNode = memo(function CeilingTreeNode({
       depth={depth}
       expanded={expanded}
       hasChildren={children.length > 0}
-      icon={
-        <Image alt="" className="object-contain" height={14} src="/icons/ceiling.png" width={14} />
-      }
+      icon={<PanelTop aria-hidden="true" className="h-3.5 w-3.5 stroke-[1.9]" />}
       isHovered={isHovered}
       isLast={isLast}
       isSelected={isSelected}

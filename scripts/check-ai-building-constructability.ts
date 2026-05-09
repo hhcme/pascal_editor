@@ -59,7 +59,7 @@ mock.module('@pascal-app/editor', () => ({
     code,
     scope: 'room',
     severity:
-      code.includes('MISSING') ||
+      (code.includes('MISSING') && code !== 'BASIC_FURNITURE_MISSING') ||
       code.includes('REQUIRED') ||
       code.includes('COLLISION') ||
       code.includes('BROKEN') ||
@@ -97,7 +97,9 @@ mock.module('@pascal-app/viewer', () => ({
 const { createPlan, validateAiBuildingPlanConstructability } = await import(
   '../apps/editor/lib/ai-building'
 )
-const { getAiBuildingPlanSummary } = await import('../apps/editor/lib/ai-building')
+const { getAiBuildingPlanSummary, validateAiBuildingPlanHabitability } = await import(
+  '../apps/editor/lib/ai-building'
+)
 type AiBuildingFormState = import('../apps/editor/lib/ai-building').AiBuildingFormState
 
 type AcceptanceCase = {
@@ -189,12 +191,17 @@ const failures: string[] = []
 for (const testCase of cases) {
   const plan = createPlan(testCase.form, 'zh-CN', null)
   const validation = validateAiBuildingPlanConstructability(plan)
+  const habitability = validateAiBuildingPlanHabitability(plan, 'zh-CN')
   const summary = getAiBuildingPlanSummary(plan, 'zh-CN')
 
   if (!validation.passed) {
     failures.push(
       `${testCase.name}: ${validation.message ?? 'constructability validation failed'}`,
     )
+  }
+
+  if (!habitability.passed) {
+    failures.push(`${testCase.name}: ${habitability.message ?? 'habitability validation failed'}`)
   }
 
   if (
@@ -225,6 +232,7 @@ for (const testCase of cases) {
       `${plan.floors.length} floors`,
       `${summary.scores.overall} score`,
       validation.passed ? 'constructable' : 'blocked',
+      habitability.passed ? 'habitable-furnished' : 'under-furnished',
     ].join(' | '),
   )
 }

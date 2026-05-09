@@ -1,7 +1,7 @@
 import { type AnyNodeId, type RoofNode, type RoofSegmentNode, useScene } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
 import { AnimatePresence } from 'motion/react'
-import Image from 'next/image'
+import { House } from 'lucide-react'
 import { memo, useCallback, useEffect, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import useEditor from '../../../../../store/use-editor'
@@ -97,9 +97,7 @@ export const RoofTreeNode = memo(function RoofTreeNode({
         depth={depth}
         expanded={expanded}
         hasChildren={segments.length > 0}
-        icon={
-          <Image alt="" className="object-contain" height={14} src="/icons/roof.png" width={14} />
-        }
+        icon={<House aria-hidden="true" className="h-3.5 w-3.5 stroke-[1.9]" />}
         isDropTarget={isValidDropTarget && isDropTarget}
         isHovered={isHovered || isDropTarget}
         isLast={isLast && !expanded}
@@ -199,15 +197,7 @@ function RoofSegmentTreeNode({
         depth={depth}
         expanded={false}
         hasChildren={false}
-        icon={
-          <Image
-            alt=""
-            className="object-contain opacity-60"
-            height={14}
-            src="/icons/roof.png"
-            width={14}
-          />
-        }
+        icon={<House aria-hidden="true" className="h-3.5 w-3.5 stroke-[1.9] opacity-70" />}
         isDraggable
         isHovered={isHovered}
         isLast={isLast}

@@ -2,7 +2,24 @@
 
 import type { AssetInput } from '@pascal-app/core'
 import { resolveCdnUrl } from '@pascal-app/viewer'
-import { ImageIcon, Search, Sparkles, Wand2 } from 'lucide-react'
+import {
+  Bath,
+  BrickWall,
+  CookingPot,
+  ImageIcon,
+  Lamp,
+  PanelTop,
+  PawPrint,
+  Plug,
+  Search,
+  Sofa,
+  Sparkles,
+  Sprout,
+  TreePine,
+  Users,
+  Wand2,
+  type LucideIcon,
+} from 'lucide-react'
 import NextImage from 'next/image'
 import { type ReactNode, useMemo, useState } from 'react'
 import { Button } from '../../../primitives/button'
@@ -22,6 +39,7 @@ type FurnishSidebarCategory = Exclude<CatalogCategory, 'window' | 'door'>
 
 type CategoryMeta = {
   aliases: string[]
+  Icon: LucideIcon
   iconSrc: string
   labels: {
     en: string
@@ -44,46 +62,55 @@ const CATEGORY_ORDER: FurnishSidebarCategory[] = [
 const CATEGORY_META: Record<FurnishSidebarCategory, CategoryMeta> = {
   furniture: {
     aliases: ['sofa', 'chair', 'table', 'bed', 'cabinet', 'desk', '沙发', '椅子', '桌子', '床'],
+    Icon: Sofa,
     iconSrc: '/icons/couch.png',
     labels: { zh: '家具', en: 'Furniture' },
   },
   people: {
     aliases: ['human', 'character', 'person', '人物', '人'],
+    Icon: Users,
     iconSrc: '/icons/people.svg',
     labels: { zh: '人物', en: 'People' },
   },
   plants: {
     aliases: ['greenery', 'tree', 'flower', '植物', '绿植', '树'],
+    Icon: Sprout,
     iconSrc: '/icons/plants.svg',
     labels: { zh: '植物', en: 'Plants' },
   },
   animals: {
     aliases: ['pet', 'animal', 'cat', 'dog', '宠物', '动物', '猫', '狗'],
+    Icon: PawPrint,
     iconSrc: '/icons/animal.svg',
     labels: { zh: '动物', en: 'Animals' },
   },
   lighting: {
     aliases: ['light', 'lamp', 'ceiling light', '灯', '灯具', '照明'],
+    Icon: Lamp,
     iconSrc: '/icons/environment.png',
     labels: { zh: '灯光', en: 'Lighting' },
   },
   appliance: {
     aliases: ['device', 'home appliance', 'electrical', '家电', '电器'],
+    Icon: Plug,
     iconSrc: '/icons/appliance.png',
     labels: { zh: '家电', en: 'Appliance' },
   },
   kitchen: {
     aliases: ['cook', 'kitchenware', 'counter', '厨房', '厨具', '橱柜'],
+    Icon: CookingPot,
     iconSrc: '/icons/kitchen.png',
     labels: { zh: '厨房', en: 'Kitchen' },
   },
   bathroom: {
     aliases: ['bathtub', 'toilet', 'sink', '卫生间', '浴室', '洗手台'],
+    Icon: Bath,
     iconSrc: '/icons/bathroom.png',
     labels: { zh: '卫浴', en: 'Bathroom' },
   },
   outdoor: {
     aliases: ['garden', 'patio', 'tree', 'outdoor', '户外', '庭院', '花园'],
+    Icon: TreePine,
     iconSrc: '/icons/tree.png',
     labels: { zh: '户外', en: 'Outdoor' },
   },
@@ -140,11 +167,11 @@ function getSearchText(item: AssetInput) {
 
 function getAttachmentBadge(asset: AssetInput) {
   if (asset.attachTo === 'wall' || asset.attachTo === 'wall-side') {
-    return { alt: 'Wall attachment', iconSrc: '/icons/wall.png' }
+    return { Icon: BrickWall, alt: 'Wall attachment' }
   }
 
   if (asset.attachTo === 'ceiling') {
-    return { alt: 'Ceiling attachment', iconSrc: '/icons/ceiling.png' }
+    return { Icon: PanelTop, alt: 'Ceiling attachment' }
   }
 
   return null
@@ -277,6 +304,7 @@ export function FurnishPanel({
             const meta = CATEGORY_META[category]
             const isActive = !normalizedSearch && activeCategory === category
             const itemCount = CATALOG_ITEMS.filter((item) => item.category === category).length
+            const Icon = meta.Icon
 
             return (
               <button
@@ -290,13 +318,7 @@ export function FurnishPanel({
                 onClick={() => handleSelectCategory(category)}
                 type="button"
               >
-                <NextImage
-                  alt={meta.labels.en}
-                  className="h-5 w-5 object-contain"
-                  height={20}
-                  src={meta.iconSrc}
-                  width={20}
-                />
+                <Icon aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.9]" />
                 <span className="font-medium text-xs">{meta.labels[language === 'en' ? 'en' : 'zh']}</span>
                 <span className="text-[11px] text-muted-foreground">{itemCount}</span>
               </button>
@@ -403,13 +425,7 @@ function CatalogCard({
         />
         {attachmentBadge ? (
           <div className="absolute right-2 bottom-2 flex h-5 w-5 items-center justify-center rounded-md border border-border/60 bg-background/90 shadow-sm">
-            <NextImage
-              alt={attachmentBadge.alt}
-              className="h-4 w-4"
-              height={16}
-              src={attachmentBadge.iconSrc}
-              width={16}
-            />
+            <attachmentBadge.Icon aria-hidden="true" className="h-3.5 w-3.5 stroke-[1.9]" />
           </div>
         ) : null}
       </div>

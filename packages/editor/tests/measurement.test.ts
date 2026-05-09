@@ -582,4 +582,38 @@ describe('measurement geometry', () => {
       buildingSummary?.metrics.find((metric) => metric.id === 'parapet-height')?.value,
     ).toBeCloseTo(0.9)
   })
+
+  test('reports world-axis bounding box dimensions for rendered nodes', () => {
+    registerBox('item_bounds', { width: 2, depth: 4, height: 3 }, [5, 1.5, -2])
+
+    const item = {
+      id: 'item_bounds',
+      type: 'item',
+      parentId: null,
+      children: [],
+      position: [5, 1.5, -2],
+      rotation: 0,
+      dimensions: [2, 3, 4],
+      scale: [1, 1, 1],
+      name: '测试构件',
+    }
+    const nodes = { [item.id]: item } as any
+
+    const summary = measurement.getBoundsSummaryForNode(item as any, nodes, 'metric', {
+      precision: 1,
+    })
+
+    expect(summary).not.toBeNull()
+    expect(summary?.targetLabel).toBe('测试构件')
+    expect(summary?.primaryLabel).toBe('包围盒尺寸')
+    expect(summary?.bounds.center[0]).toBeCloseTo(5)
+    expect(summary?.bounds.center[1]).toBeCloseTo(1.5)
+    expect(summary?.bounds.center[2]).toBeCloseTo(-2)
+    expect(summary?.metrics.find((metric) => metric.id === 'width')?.value).toBeCloseTo(2)
+    expect(summary?.metrics.find((metric) => metric.id === 'height')?.value).toBeCloseTo(3)
+    expect(summary?.metrics.find((metric) => metric.id === 'depth')?.value).toBeCloseTo(4)
+    expect(summary?.metrics.find((metric) => metric.id === 'diagonal')?.value).toBeCloseTo(
+      Math.hypot(2, 3, 4),
+    )
+  })
 })

@@ -10,6 +10,9 @@ import {
   resolveSunStudyDate,
   SUN_TIME_OPTIONS,
   WEATHER_OPTIONS,
+  type CharacterActorState,
+  type CharacterMotion,
+  type CharacterPersonState,
   type SunTimeOfDay,
   type WeatherMode,
   useViewer,
@@ -18,6 +21,8 @@ import {
   ArrowLeftRight,
   ArrowUpDown,
   Box,
+  BrickWall,
+  Building2,
   Camera,
   Check,
   ChevronsLeft,
@@ -27,11 +32,22 @@ import {
   CloudSnow,
   CloudSun,
   Compass,
+  Columns3,
   DraftingCompass,
+  Eye,
+  Footprints,
   Grid3X3,
+  Layers,
+  Layers3,
+  LocateFixed,
+  Moon,
+  Minus,
+  Plus,
   Ruler,
   Square,
   SunMedium,
+  UserRound,
+  UsersRound,
   Volume2,
   VolumeX,
 } from 'lucide-react'
@@ -65,40 +81,28 @@ const TOOLBAR_CONTAINER = 'editor-toolbar-group'
 const TOOLBAR_BTN =
   'editor-icon-button flex min-h-9 min-w-9 items-center justify-center px-2 text-muted-foreground transition-colors'
 
-function ToolbarIcon({
-  src,
-  alt = '',
-  className = 'h-4 w-4',
-}: {
-  src: string
-  alt?: string
-  className?: string
-}) {
-  return <img alt={alt} className={cn('shrink-0 object-contain', className)} src={src} />
-}
-
 // ── View mode segmented control ─────────────────────────────────────────────
 
 const VIEW_MODES: { id: ViewMode; label: string; icon: React.ReactNode }[] = [
   {
     id: '3d',
     label: '3D',
-    icon: <img alt="" className="h-3.5 w-3.5 object-contain" src="/icons/building.png" />,
+    icon: <Building2 aria-hidden="true" className="h-3.5 w-3.5 stroke-[2]" />,
   },
   {
     id: '2d',
     label: '2D',
-    icon: <img alt="" className="h-3.5 w-3.5 object-contain" src="/icons/blueprint.png" />,
+    icon: <Square aria-hidden="true" className="h-3.5 w-3.5 stroke-[2]" />,
   },
   {
     id: 'split',
     label: 'Split',
-    icon: <ToolbarIcon className="h-3.5 w-3.5" src="/icons/split-view.svg" />,
+    icon: <Columns3 aria-hidden="true" className="h-3.5 w-3.5 stroke-[2]" />,
   },
   {
     id: 'tri-view',
     label: '三视图',
-    icon: <ToolbarIcon className="h-3.5 w-3.5" src="/icons/camera-orthographic.svg" />,
+    icon: <Grid3X3 aria-hidden="true" className="h-3.5 w-3.5 stroke-[2]" />,
   },
 ]
 
@@ -182,7 +186,7 @@ function WalkthroughButton() {
           onClick={toggle}
           type="button"
         >
-          <ToolbarIcon src="/icons/walkthrough.svg" />
+          <Footprints className="h-4 w-4 stroke-[2]" />
         </button>
       </TooltipTrigger>
       <TooltipContent side="bottom">Walkthrough</TooltipContent>
@@ -218,6 +222,7 @@ const measurementModeLabels: Record<MeasurementMode, string> = {
   area: '面积',
   volume: '体积',
   clearance: '净空',
+  bounds: '包围盒',
   angle: '角度',
   perimeter: '周长',
   grid: '轴网',
@@ -228,9 +233,172 @@ const measurementModeIcons: Record<MeasurementMode, ComponentType<{ className?: 
   area: Square,
   volume: Box,
   clearance: ArrowUpDown,
+  bounds: Box,
   angle: DraftingCompass,
   perimeter: ArrowLeftRight,
   grid: Grid3X3,
+}
+
+const characterMotionLabels = {
+  idle: '站立',
+  walk: '走',
+  run: '跑',
+  crouch: '蹲',
+  jump: '跳',
+} as const
+
+const MAX_CHARACTER_COUNT = 24
+
+type CharacterPlacementSelection = {
+  buildingId: string | null
+  levelId: string | null
+  zoneId: string | null
+}
+
+type SceneNodeLike = {
+  id: string
+  type: string
+  parentId?: string | null
+  children?: string[]
+  position?: [number, number, number]
+  polygon?: Array<[number, number]>
+}
+
+function getPolygonCentroid(polygon: Array<[number, number]>): [number, number] {
+  if (polygon.length === 0) return [0, 0]
+  if (polygon.length < 3) {
+    const sum = polygon.reduce<[number, number]>(
+      (acc, point) => [acc[0] + point[0], acc[1] + point[1]],
+      [0, 0],
+    )
+    return [sum[0] / polygon.length, sum[1] / polygon.length]
+  }
+
+  let signedArea = 0
+  let cx = 0
+  let cz = 0
+  for (let i = 0; i < polygon.length; i++) {
+    const [x0, z0] = polygon[i]!
+    const [x1, z1] = polygon[(i + 1) % polygon.length]!
+    const cross = x0 * z1 - x1 * z0
+    signedArea += cross
+    cx += (x0 + x1) * cross
+    cz += (z0 + z1) * cross
+  }
+
+  signedArea /= 2
+  if (Math.abs(signedArea) < 0.0001) {
+    return getPolygonCentroid(polygon.slice(0, 2))
+  }
+
+  const factor = 1 / (6 * signedArea)
+  return [cx * factor, cz * factor]
+}
+
+function findParentNode(
+  nodes: Record<string, SceneNodeLike>,
+  childId: string,
+): SceneNodeLike | null {
+  const explicitParentId = nodes[childId]?.parentId
+  if (explicitParentId && nodes[explicitParentId]) return nodes[explicitParentId]!
+
+  return (
+    Object.values(nodes).find((node) => Array.isArray(node.children) && node.children.includes(childId)) ??
+    null
+  )
+}
+
+function findBuildingForNode(
+  nodes: Record<string, SceneNodeLike>,
+  nodeId: string,
+): SceneNodeLike | null {
+  let current: SceneNodeLike | null = nodes[nodeId] ?? null
+  const visited = new Set<string>()
+
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id)
+    if (current.type === 'building') return current
+    current = findParentNode(nodes, current.id)
+  }
+
+  return null
+}
+
+function isDescendantOfBuilding(
+  nodes: Record<string, SceneNodeLike>,
+  node: SceneNodeLike,
+  buildingId: string | null,
+) {
+  if (!buildingId) return true
+  return findBuildingForNode(nodes, node.id)?.id === buildingId
+}
+
+function resolveCharacterPlacement(
+  rawNodes: Record<string, unknown>,
+  selection: CharacterPlacementSelection,
+): [number, number, number] {
+  const nodes = rawNodes as Record<string, SceneNodeLike>
+  const selectedZone =
+    selection.zoneId && nodes[selection.zoneId]?.type === 'zone' ? nodes[selection.zoneId] : null
+
+  const candidateZones = selectedZone
+    ? [selectedZone]
+    : Object.values(nodes).filter(
+        (node) =>
+          node.type === 'zone' &&
+          Array.isArray(node.polygon) &&
+          isDescendantOfBuilding(nodes, node, selection.buildingId),
+      )
+
+  if (candidateZones.length > 0) {
+    const points = candidateZones.flatMap((zone) => zone.polygon ?? [])
+    const [x, z] =
+      selectedZone && selectedZone.polygon
+        ? getPolygonCentroid(selectedZone.polygon)
+        : getPolygonCentroid(points)
+    const building = selectedZone
+      ? findBuildingForNode(nodes, selectedZone.id)
+      : selection.buildingId
+        ? nodes[selection.buildingId]
+        : null
+    const buildingPosition = building?.position ?? [0, 0, 0]
+    return [x + buildingPosition[0], buildingPosition[1] ?? 0, z + buildingPosition[2]]
+  }
+
+  const building =
+    selection.buildingId && nodes[selection.buildingId]?.type === 'building'
+      ? nodes[selection.buildingId]
+      : Object.values(nodes).find((node) => node.type === 'building')
+
+  return building?.position ?? [0, 0, 0]
+}
+
+function createFallbackCharacterPerson(actor: CharacterActorState): CharacterPersonState {
+  return {
+    id: actor.selectedPersonId || 'character-1',
+    name: '角色 1',
+    enabled: true,
+    motion: actor.motion,
+    speed: actor.speed,
+    showBones: actor.showBones,
+    position: actor.position,
+    color: '#4c6fff',
+  }
+}
+
+function getCharacterPeople(actor: CharacterActorState) {
+  return actor.people?.length > 0 ? actor.people : [createFallbackCharacterPerson(actor)]
+}
+
+function getSelectedCharacter(actor: CharacterActorState) {
+  const people = getCharacterPeople(actor)
+  return people.find((person) => person.id === actor.selectedPersonId) ?? people[0]
+}
+
+function getSelectedCharacterIndex(actor: CharacterActorState) {
+  const people = getCharacterPeople(actor)
+  const index = people.findIndex((person) => person.id === actor.selectedPersonId)
+  return index >= 0 ? index : 0
 }
 
 function MeasurementControl() {
@@ -295,6 +463,154 @@ function MeasurementControl() {
   )
 }
 
+function CharacterActorControl() {
+  const nodes = useScene((state) => state.nodes)
+  const selection = useViewer((s) => s.selection)
+  const characterActor = useViewer((s) => s.characterActor)
+  const selectedPerson = getSelectedCharacter(characterActor)
+  const selectedIndex = getSelectedCharacterIndex(characterActor)
+  const people = getCharacterPeople(characterActor)
+  const selectedMotion = selectedPerson?.motion ?? characterActor.motion
+
+  const updateCharacterActor = useCallback((updates: Partial<CharacterActorState>) => {
+    useViewer.getState().setCharacterActor(updates)
+  }, [])
+
+  const cycleMotion = useCallback(() => {
+    const motionOrder = Object.keys(characterMotionLabels) as CharacterMotion[]
+    const selected = getSelectedCharacter(characterActor)
+    const currentMotion = selected?.motion ?? characterActor.motion
+    const currentIndex = motionOrder.indexOf(currentMotion)
+    const nextMotion = characterActor.enabled
+      ? motionOrder[(currentIndex + 1) % motionOrder.length]
+      : 'idle'
+
+    updateCharacterActor({
+      enabled: true,
+      motion: nextMotion ?? 'idle',
+      position: characterActor.enabled
+        ? (selected?.position ?? characterActor.position)
+        : resolveCharacterPlacement(nodes, selection),
+    })
+  }, [characterActor, nodes, selection, updateCharacterActor])
+
+  const changeCount = useCallback(
+    (offset: number) => {
+      const nextCount = Math.max(
+        1,
+        Math.min(MAX_CHARACTER_COUNT, (characterActor.count || people.length || 1) + offset),
+      )
+      updateCharacterActor({
+        count: nextCount,
+        enabled: true,
+        position: selectedPerson?.position ?? resolveCharacterPlacement(nodes, selection),
+      })
+    },
+    [characterActor.count, nodes, people.length, selectedPerson?.position, selection, updateCharacterActor],
+  )
+
+  const cycleSelectedPerson = useCallback(() => {
+    const currentPeople = getCharacterPeople(characterActor)
+    const nextIndex = (getSelectedCharacterIndex(characterActor) + 1) % currentPeople.length
+    const nextPerson = currentPeople[nextIndex] ?? currentPeople[0]
+    if (!nextPerson) return
+
+    updateCharacterActor({
+      enabled: true,
+      selectedPersonId: nextPerson.id,
+    })
+  }, [characterActor, updateCharacterActor])
+
+  const placeSelectedPerson = useCallback(() => {
+    const placement = resolveCharacterPlacement(nodes, selection)
+    const currentPeople = getCharacterPeople(characterActor)
+    const selected = getSelectedCharacter(characterActor)
+    const selectedId = selected?.id ?? currentPeople[0]?.id
+    if (!selectedId) return
+
+    updateCharacterActor({
+      enabled: true,
+      people: currentPeople.map((person) =>
+        person.id === selectedId
+          ? {
+              ...person,
+              enabled: true,
+              position: placement,
+            }
+          : person,
+      ),
+      position: placement,
+      selectedPersonId: selectedId,
+    })
+  }, [characterActor, nodes, selection, updateCharacterActor])
+
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        aria-label="角色动作"
+        className={cn(
+          TOOLBAR_BTN,
+          'w-auto gap-1.5 px-2.5',
+          characterActor.enabled && 'bg-primary/10 text-primary',
+        )}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') cycleMotion()
+        }}
+        onPointerDown={cycleMotion}
+        title={characterActor.enabled ? '点击切换选中角色动作' : '放入角色'}
+        type="button"
+      >
+        <UserRound className="h-4 w-4" />
+        <span className="font-medium text-xs">
+          {characterActor.enabled ? characterMotionLabels[selectedMotion] : '角色'}
+        </span>
+      </button>
+      <button
+        aria-label="减少人数"
+        className={TOOLBAR_BTN}
+        disabled={(characterActor.count || people.length) <= 1}
+        onPointerDown={() => changeCount(-1)}
+        title="减少角色人数"
+        type="button"
+      >
+        <Minus className="h-3.5 w-3.5" />
+      </button>
+      <button
+        aria-label="增加人数"
+        className={cn(TOOLBAR_BTN, 'w-auto gap-1.5 px-2.5')}
+        disabled={(characterActor.count || people.length) >= MAX_CHARACTER_COUNT}
+        onPointerDown={() => changeCount(1)}
+        title="增加角色人数"
+        type="button"
+      >
+        <UsersRound className="h-4 w-4" />
+        <span className="font-medium text-xs">{characterActor.count || people.length}</span>
+        <Plus className="h-3.5 w-3.5" />
+      </button>
+      <button
+        aria-label="选择角色"
+        className={cn(TOOLBAR_BTN, 'w-auto px-2.5')}
+        onPointerDown={cycleSelectedPerson}
+        title="切换要控制的角色"
+        type="button"
+      >
+        <span className="font-medium text-xs">
+          {selectedIndex + 1}/{characterActor.count || people.length}
+        </span>
+      </button>
+      <button
+        aria-label="移动角色到选中位置"
+        className={TOOLBAR_BTN}
+        onPointerDown={placeSelectedPerson}
+        title="把选中角色移动到当前建筑/房间中心"
+        type="button"
+      >
+        <LocateFixed className="h-4 w-4" />
+      </button>
+    </div>
+  )
+}
+
 function UnitToggle() {
   const unit = useViewer((s) => s.unit)
   const setUnit = useViewer((s) => s.setUnit)
@@ -307,7 +623,7 @@ function UnitToggle() {
           onClick={() => setUnit(unit === 'metric' ? 'imperial' : 'metric')}
           type="button"
         >
-          <ToolbarIcon src="/icons/unit-ruler.svg" />
+          <Ruler className="h-4 w-4 stroke-[2]" />
           <span className="font-semibold text-[10px]">{unit === 'metric' ? 'm' : 'ft'}</span>
         </button>
       </TooltipTrigger>
@@ -330,7 +646,11 @@ function ThemeToggle() {
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
           type="button"
         >
-          <ToolbarIcon src={theme === 'dark' ? '/icons/theme-dark.svg' : '/icons/theme-light.svg'} />
+          {theme === 'dark' ? (
+            <Moon className="h-4 w-4 stroke-[2]" />
+          ) : (
+            <SunMedium className="h-4 w-4 stroke-[2]" />
+          )}
         </button>
       </TooltipTrigger>
       <TooltipContent side="bottom">{theme === 'dark' ? 'Dark' : 'Light'}</TooltipContent>
@@ -762,13 +1082,6 @@ const levelModeLabels: Record<string, string> = {
   exploded: 'Exploded',
   solo: 'Solo',
 }
-const levelModeIcons: Record<string, string> = {
-  manual: '/icons/level-stack.svg',
-  stacked: '/icons/level-stack.svg',
-  exploded: '/icons/level-exploded.svg',
-  solo: '/icons/level-solo.svg',
-}
-
 const gridSnapOrder: GridSnapStep[] = [0.5, 0.25, 0.1, 0.05]
 const gridSnapLabels: Record<GridSnapStep, string> = {
   0.5: '0.50',
@@ -796,7 +1109,7 @@ function LevelModeToggle() {
   }
 
   const isDefault = levelMode === 'stacked' || levelMode === 'manual'
-  const icon = levelModeIcons[levelMode] ?? levelModeIcons.stacked!
+  const LevelIcon = levelMode === 'exploded' ? Layers3 : Layers
 
   return (
     <Tooltip>
@@ -810,7 +1123,7 @@ function LevelModeToggle() {
           onClick={cycle}
           type="button"
         >
-          <ToolbarIcon src={icon} />
+          <LevelIcon className="h-4 w-4 stroke-[2]" />
           <span className="font-medium text-xs">{levelModeLabels[levelMode] ?? 'Stack'}</span>
         </button>
       </TooltipTrigger>
@@ -831,7 +1144,7 @@ function GridSnapToggle() {
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>
             <button className={cn(TOOLBAR_BTN, 'w-auto gap-1.5 px-2.5')} type="button">
-              <ToolbarIcon src="/icons/grid-snap.svg" />
+              <Grid3X3 className="h-4 w-4 stroke-[2]" />
               <span className="font-medium text-xs">{formatGridSnapStep(gridSnapStep)}</span>
             </button>
           </DropdownMenuTrigger>
@@ -858,10 +1171,10 @@ function GridSnapToggle() {
 // ── Wall mode toggle ────────────────────────────────────────────────────────
 
 const wallModeOrder = ['cutaway', 'up', 'down'] as const
-const wallModeConfig: Record<string, { icon: string; label: string }> = {
-  up: { icon: '/icons/room.png', label: 'Full height' },
-  cutaway: { icon: '/icons/wallcut.png', label: 'Cutaway' },
-  down: { icon: '/icons/walllow.png', label: 'Low' },
+const wallModeConfig: Record<string, { label: string }> = {
+  up: { label: 'Full height' },
+  cutaway: { label: 'Cutaway' },
+  down: { label: 'Low' },
 }
 
 function WallModeToggle() {
@@ -890,7 +1203,7 @@ function WallModeToggle() {
           onClick={cycle}
           type="button"
         >
-          <img alt={config.label} className="h-4 w-4 object-contain" src={config.icon} />
+          <BrickWall aria-hidden="true" className="h-4 w-4 stroke-[2]" />
           <span className="font-medium text-xs">{config.label}</span>
         </button>
       </TooltipTrigger>
@@ -899,53 +1212,92 @@ function WallModeToggle() {
   )
 }
 
-// ── View direction buttons ─────────────────────────────────────────────────
+const sectionAxisLabels = {
+  x: 'X',
+  y: 'Y',
+  z: 'Z',
+} as const
 
-type CameraViewDirection = 'front' | 'left' | 'right' | 'back' | 'top' | 'bottom'
+function SectionPlaneControl() {
+  const sectionPlane = useViewer((s) => s.sectionPlane)
+  const setSectionPlane = useViewer((s) => s.setSectionPlane)
+  const resetSectionPlane = useViewer((s) => s.resetSectionPlane)
 
-const viewDirectionButtons: Array<{
-  direction: CameraViewDirection
-  label: string
-  tooltip: string
-}> = [
-  { direction: 'front', label: '正', tooltip: '正视图' },
-  { direction: 'left', label: '左', tooltip: '左视图' },
-  { direction: 'right', label: '右', tooltip: '右视图' },
-  { direction: 'back', label: '后', tooltip: '后视图' },
-  { direction: 'top', label: '上', tooltip: '俯视图' },
-  { direction: 'bottom', label: '下', tooltip: '仰视图' },
-]
-
-const viewDirectionEmitter = emitter as unknown as {
-  emit: (
-    type: 'camera-controls:view-direction',
-    event: { direction: CameraViewDirection },
-  ) => void
-}
-
-function ViewDirectionButtons() {
   return (
-    <>
-      {viewDirectionButtons.map((button) => (
-        <Tooltip key={button.direction}>
-          <TooltipTrigger asChild>
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
             <button
-              aria-label={button.tooltip}
-              className={cn(TOOLBAR_BTN, 'min-w-8 px-2 font-semibold text-[11px]')}
-              onClick={() =>
-                viewDirectionEmitter.emit('camera-controls:view-direction', {
-                  direction: button.direction,
-                })
-              }
+              className={cn(
+                TOOLBAR_BTN,
+                'w-auto gap-1.5 px-2.5',
+                sectionPlane.enabled && 'bg-primary/10 text-primary',
+              )}
               type="button"
             >
-              {button.label}
+              <Box className="h-4 w-4" />
+              <span className="font-medium text-xs">剖切</span>
             </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{button.tooltip}</TooltipContent>
-        </Tooltip>
-      ))}
-    </>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          {sectionPlane.enabled ? `剖切 ${sectionAxisLabels[sectionPlane.axis]}` : '剖切'}
+        </TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="center" className="w-56" side="bottom">
+        <DropdownMenuLabel>单平面剖切</DropdownMenuLabel>
+        <div className="space-y-3 px-2 py-2">
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-medium text-xs">启用</span>
+            <Switch
+              checked={sectionPlane.enabled}
+              onCheckedChange={(checked) => setSectionPlane({ enabled: checked })}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <div className="text-muted-foreground text-xs">轴向</div>
+            <div className="grid grid-cols-3 gap-1">
+              {(['x', 'y', 'z'] as const).map((axis) => (
+                <button
+                  className={cn(
+                    'h-7 rounded-md border border-border/70 font-semibold text-xs transition-colors hover:bg-accent',
+                    sectionPlane.axis === axis && 'border-primary/40 bg-primary/10 text-primary',
+                  )}
+                  key={axis}
+                  onClick={() => setSectionPlane({ axis })}
+                  type="button"
+                >
+                  {sectionAxisLabels[axis]}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">位置</span>
+              <span className="font-mono">{sectionPlane.position.toFixed(1)} m</span>
+            </div>
+            <Slider
+              max={20}
+              min={-20}
+              onValueChange={(value) => setSectionPlane({ position: value[0] ?? 0 })}
+              step={0.1}
+              value={[sectionPlane.position]}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-medium text-xs">反向</span>
+            <Switch
+              checked={sectionPlane.inverted}
+              onCheckedChange={(checked) => setSectionPlane({ inverted: checked })}
+            />
+          </div>
+        </div>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => resetSectionPlane()}>重置剖切</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -968,13 +1320,7 @@ function CameraModeToggle() {
           }
           type="button"
         >
-          <ToolbarIcon
-            src={
-              cameraMode === 'perspective'
-                ? '/icons/camera-perspective.svg'
-                : '/icons/camera-orthographic.svg'
-            }
-          />
+          <Camera className="h-4 w-4 stroke-[2]" />
         </button>
       </TooltipTrigger>
       <TooltipContent side="bottom">
@@ -993,7 +1339,7 @@ function PreviewButton() {
           onClick={() => useEditor.getState().setPreviewMode(true)}
           type="button"
         >
-          <ToolbarIcon src="/icons/preview.svg" />
+          <Eye className="h-4 w-4 stroke-[2]" />
           <span>Preview</span>
         </button>
       </TooltipTrigger>
@@ -1018,6 +1364,8 @@ export function ViewerToolbarRight() {
     <div className={TOOLBAR_CONTAINER}>
       <LevelModeToggle />
       <WallModeToggle />
+      <CharacterActorControl />
+      <SectionPlaneControl />
       <GridSnapToggle />
       <div className="my-2 w-px bg-border/70" />
       <UnitToggle />
@@ -1027,7 +1375,6 @@ export function ViewerToolbarRight() {
       <CameraModeToggle />
       <MeasurementControl />
       <ViewpointCameraButton />
-      <ViewDirectionButtons />
       <div className="my-2 w-px bg-border/70" />
       <WalkthroughButton />
       <PreviewButton />

@@ -27,6 +27,36 @@ export {
 export { BuildingNode } from './nodes/building'
 export { CeilingNode } from './nodes/ceiling'
 export { DoorNode, DoorSegment } from './nodes/door'
+export {
+  FeatureBody,
+  FeatureCombineStep,
+  FeatureCut,
+  FeatureDefinition,
+  FeatureDirection,
+  FeatureDraftStep,
+  FeatureEdgeTreatmentStep,
+  FeatureExtrudeCutStep,
+  FeatureExtrudeStep,
+  FeatureHoleEndCondition,
+  FeatureHoleKind,
+  FeatureHoleStep,
+  FeatureKind,
+  FeatureLoftStep,
+  FeatureMirrorStep,
+  FeatureNode,
+  FeatureOperation,
+  FeaturePatternStep,
+  FeatureProfile,
+  FeatureRebuildState,
+  FeatureReferenceGeometry,
+  FeatureReferenceStatus,
+  FeatureRevolveCutStep,
+  FeatureRevolveStep,
+  FeatureShellStep,
+  FeatureStep,
+  FeatureStepStatus,
+  FeatureSweepStep,
+} from './nodes/feature'
 export { FenceBaseStyle, FenceNode, FenceStyle } from './nodes/fence'
 export { GuideNode } from './nodes/guide'
 export type {
@@ -49,7 +79,6 @@ export { RoofSegmentNode, RoofType } from './nodes/roof-segment'
 export { ScanNode } from './nodes/scan'
 // Nodes
 export { SiteNode } from './nodes/site'
-export * from './nodes/sketch-dimension'
 export {
   SketchCircleConstraint,
   SketchCircleConstraintKind,
@@ -59,6 +88,7 @@ export {
   SketchCircleRelation,
   SketchCircleTangentMode,
 } from './nodes/sketch-circle'
+export * from './nodes/sketch-dimension'
 export * from './nodes/sketch-line'
 export { SlabNode } from './nodes/slab'
 export type { StairSurfaceMaterialRole, StairSurfaceMaterialSpec } from './nodes/stair'

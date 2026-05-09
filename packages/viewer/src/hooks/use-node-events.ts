@@ -7,6 +7,8 @@ import {
   type DoorNode,
   type EventSuffix,
   emitter,
+  type FeatureEvent,
+  type FeatureNode,
   type FenceEvent,
   type FenceNode,
   type ItemEvent,
@@ -17,10 +19,10 @@ import {
   type RoofNode,
   type RoofSegmentEvent,
   type RoofSegmentNode,
-  type SketchLineEvent,
-  type SketchLineNode,
   type SiteEvent,
   type SiteNode,
+  type SketchLineEvent,
+  type SketchLineNode,
   type SlabEvent,
   type SlabNode,
   type StairEvent,
@@ -47,6 +49,7 @@ type NodeConfig = {
   zone: { node: ZoneNode; event: ZoneEvent }
   slab: { node: SlabNode; event: SlabEvent }
   ceiling: { node: CeilingNode; event: CeilingEvent }
+  feature: { node: FeatureNode; event: FeatureEvent }
   roof: { node: RoofNode; event: RoofEvent }
   'roof-segment': { node: RoofSegmentNode; event: RoofSegmentEvent }
   'sketch-line': { node: SketchLineNode; event: SketchLineEvent }

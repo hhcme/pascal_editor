@@ -123,9 +123,11 @@ type AiBuildingAssetId =
   | 'bedside-table'
   | 'closet'
   | 'coffee-table'
+  | 'desk'
   | 'dining-chair'
   | 'dining-table'
   | 'double-bed'
+  | 'floor-lamp'
   | 'fridge'
   | 'kitchen-counter'
   | 'lounge-chair'
@@ -136,6 +138,7 @@ type AiBuildingAssetId =
   | 'sofa'
   | 'stove'
   | 'sunbed'
+  | 'shelf'
   | 'television'
   | 'tesla'
   | 'toilet'
@@ -386,6 +389,21 @@ type AiBuildingConstructabilityIssue = {
 export type AiBuildingConstructabilityValidation = {
   passed: boolean
   issues: AiBuildingConstructabilityIssue[]
+  message: string | null
+}
+
+type AiBuildingHabitabilityIssue = {
+  code: 'BASIC_FURNITURE_MISSING'
+  level: number
+  roomKey: string
+  roomName: string
+  missingGroups: string[]
+  message: string
+}
+
+export type AiBuildingHabitabilityValidation = {
+  passed: boolean
+  issues: AiBuildingHabitabilityIssue[]
   message: string | null
 }
 
@@ -872,12 +890,18 @@ const ITEM_ASSETS = {
     offset: [0, 0, -0.01],
   }),
   'coffee-table': asset('coffee-table', 'furniture', 'Coffee Table', [1.1, 0.45, 0.65]),
+  desk: asset('desk', 'furniture', 'Desk', [1.8, 0.9, 0.9], {
+    offset: [0, 0, 0.03],
+  }),
   'dining-chair': asset('dining-chair', 'furniture', 'Dining Chair', [0.5, 1, 0.5]),
   'dining-table': asset('dining-table', 'furniture', 'Dining Table', [1.9, 0.8, 1], {
     offset: [0, 0, -0.01],
   }),
   'double-bed': asset('double-bed', 'furniture', 'Double Bed', [1.9, 0.7, 2.1], {
     offset: [0, 0, -0.03],
+  }),
+  'floor-lamp': asset('floor-lamp', 'lighting', 'Floor Lamp', [1, 1.9, 1], {
+    offset: [0.04, 0, 0.02],
   }),
   fridge: asset('fridge', 'kitchen', 'Fridge', [0.85, 1.9, 0.78], {
     offset: [0, 0, -0.04],
@@ -906,6 +930,9 @@ const ITEM_ASSETS = {
   }),
   sunbed: asset('sunbed', 'outdoor', 'Sunbed', [2.1, 0.5, 0.8], {
     offset: [0, 0.04, 0],
+  }),
+  shelf: asset('shelf', 'furniture', 'Shelf', [1, 0.5, 0.7], {
+    offset: [0, 0.1, 0.01],
   }),
   television: asset('television', 'appliance', 'Television', [1.25, 0.8, 0.08]),
   tesla: asset('tesla', 'outdoor', 'Tesla', [2, 1.7, 5]),
@@ -956,6 +983,11 @@ const ITEM_PLACEMENT_PROFILES: Partial<Record<AiBuildingAssetId, AiBuildingItemP
       pairWith: ['sofa'],
       pairDistance: [0.4, 1.4],
     },
+    desk: {
+      role: 'wall',
+      minGap: 0.5,
+      reserveCenter: true,
+    },
     'dining-chair': {
       role: 'flex',
       minGap: 0.08,
@@ -991,6 +1023,10 @@ const ITEM_PLACEMENT_PROFILES: Partial<Record<AiBuildingAssetId, AiBuildingItemP
       role: 'flex',
       minGap: 0.42,
     },
+    'floor-lamp': {
+      role: 'corner',
+      minGap: 0.24,
+    },
     'parking-spot': {
       role: 'center',
       minGap: 0.82,
@@ -1015,6 +1051,11 @@ const ITEM_PLACEMENT_PROFILES: Partial<Record<AiBuildingAssetId, AiBuildingItemP
     sunbed: {
       role: 'flex',
       minGap: 0.44,
+    },
+    shelf: {
+      role: 'wall',
+      minGap: 0.34,
+      reserveCenter: true,
     },
     television: {
       role: 'flex',
@@ -1050,6 +1091,7 @@ const ITEM_USE_ZONE_SPECS: Partial<Record<AiBuildingAssetId, AiBuildingUseZoneSp
   'bathroom-sink': [{ side: 'front', depth: 0.68, span: 0.88 }],
   bathtub: [{ side: 'front', depth: 0.6, span: 1.45 }],
   closet: [{ side: 'front', depth: 0.78, span: 1.5 }],
+  desk: [{ side: 'front', depth: 0.72, span: 1.42 }],
   'dining-chair': [{ side: 'back', depth: 0.72, span: 0.68 }],
   'dining-table': [
     { side: 'left', depth: 0.62, span: 1.18 },
@@ -1065,10 +1107,12 @@ const ITEM_USE_ZONE_SPECS: Partial<Record<AiBuildingAssetId, AiBuildingUseZoneSp
   fridge: [{ side: 'front', depth: 0.86, span: 0.96 }],
   'kitchen-counter': [{ side: 'front', depth: 0.88, span: 1.9 }],
   'lounge-chair': [{ side: 'front', depth: 0.56, span: 0.86 }],
+  'floor-lamp': [{ side: 'front', depth: 0.32, span: 0.42 }],
   'shower-square': [{ side: 'front', depth: 0.58, span: 0.9 }],
   sofa: [{ side: 'front', depth: 0.72, span: 1.9 }],
   stove: [{ side: 'front', depth: 0.76, span: 0.9 }],
   sunbed: [{ side: 'front', depth: 0.74, span: 1.52 }],
+  shelf: [{ side: 'front', depth: 0.42, span: 0.9 }],
   tesla: [
     { side: 'left', depth: 0.74, span: 3.4 },
     { side: 'right', depth: 0.74, span: 3.4 },
@@ -1136,6 +1180,7 @@ export const COPY = {
       STAIR_WALKABILITY_BROKEN: '楼梯踏步或上下楼出口不合理',
       STAIR_WALL_COLLISION: '楼梯或行走路径穿过实体墙',
       STAIR_ROUTE_DISCONNECTED: '楼梯没有接成连续跨楼层动线',
+      BASIC_FURNITURE_MISSING: '房间缺少基础入住家具',
       TOILET_EXPOSED_TO_PUBLIC_VIEW: '卫生间暴露在入户或公共视线',
       PRIVATE_ROOM_TRAVERSED: '到达私密房间需要穿越其他空间',
       PUBLIC_PRIVATE_REVERSED: '优先朝向没有留给客厅或主卧',
@@ -1159,11 +1204,13 @@ export const COPY = {
       add_built_in_cabinet: '补充内置收纳柜',
       add_corridor: '补一段过渡走道',
       add_entry_buffer: '增加入户玄关缓冲',
+      add_furniture_anchor: '补充核心家具锚点',
       add_opening: '为主要房间补充开窗或开口',
       borrow_light: '利用借光改善走道或内区',
       clear_main_paths: '先清理主通道堆物',
       compress_corridor: '压缩低效走廊面积',
       expand_service_zone: '扩大服务收纳区',
+      expand_room: '扩大房间可用面积',
       improve_internal_air_path: '优化室内空气路径',
       increase_prep_surface: '增加备餐台面',
       insert_partition: '加隔断避免一眼看穿',
@@ -1175,6 +1222,7 @@ export const COPY = {
       reallocate_daylight_rooms: '把更好采光面留给主要房间',
       rebuild_zone_order: '重排公私空间顺序',
       reduce_depth: '减小进深提升通风',
+      reduce_furniture_set: '降级为紧凑家具组合',
       reduce_layout_depth: '减小整体进深',
       reorder_kitchen_modules: '重排冰箱备餐烹饪顺序',
       repair_damaged_fixtures: '先修复破损设施',
@@ -1300,6 +1348,7 @@ export const COPY = {
       STAIR_WALKABILITY_BROKEN: 'The stair geometry or arrival sequence is unrealistic',
       STAIR_WALL_COLLISION: 'The stair or walking route crosses a solid wall',
       STAIR_ROUTE_DISCONNECTED: 'The stair is disconnected from the cross-floor route',
+      BASIC_FURNITURE_MISSING: 'A room is missing basic daily-living furniture',
       TOILET_EXPOSED_TO_PUBLIC_VIEW: 'A bathroom is exposed to entry or public sightlines',
       PRIVATE_ROOM_TRAVERSED: 'Private rooms require passing through other spaces',
       PUBLIC_PRIVATE_REVERSED: 'Prime frontage is not reserved for the living room or main bedroom',
@@ -1323,11 +1372,13 @@ export const COPY = {
       add_built_in_cabinet: 'Add built-in storage',
       add_corridor: 'Add a transition corridor',
       add_entry_buffer: 'Create an entry buffer',
+      add_furniture_anchor: 'Add core furniture anchors',
       add_opening: 'Add an opening to the main room',
       borrow_light: 'Borrow light from adjacent space',
       clear_main_paths: 'Clear the main circulation path',
       compress_corridor: 'Reduce oversized corridor area',
       expand_service_zone: 'Expand the service zone',
+      expand_room: 'Expand usable room area',
       improve_internal_air_path: 'Improve the interior air path',
       increase_prep_surface: 'Increase prep counter space',
       insert_partition: 'Add a visual partition',
@@ -1339,6 +1390,7 @@ export const COPY = {
       reallocate_daylight_rooms: 'Give better daylight frontage to key rooms',
       rebuild_zone_order: 'Rebuild the public-private zone order',
       reduce_depth: 'Reduce room depth for ventilation',
+      reduce_furniture_set: 'Use a compact furniture set',
       reduce_layout_depth: 'Reduce overall layout depth',
       reorder_kitchen_modules: 'Reorder the kitchen workflow',
       repair_damaged_fixtures: 'Repair damaged fixtures',
@@ -1739,6 +1791,12 @@ function getAppliedRepairActionsForIssueCode(
         ? '已启用厨房工作流检查和模块顺序约束。'
         : 'Enabled kitchen workflow checks and module-order constraints.',
     )
+  } else if (code === 'BASIC_FURNITURE_MISSING') {
+    actions.push(
+      language === 'zh-CN'
+        ? '已把卧室、客厅、餐厅、厨房、卫生间和书房的最低家具清单接入方案检查。'
+        : 'Minimum furniture lists for bedrooms, living rooms, dining rooms, kitchens, bathrooms, and studies are now checked.',
+    )
   } else if (
     code === 'ACCESSIBLE_ENTRY_REQUIRED' ||
     code === 'ELEVATOR_REQUIRED' ||
@@ -1768,6 +1826,7 @@ function getNextRepairActionsForIssueCode(language: AiBuildingLanguage, code: Ai
     AGING_PATH_UNSAFE: ['reroute_access', 'clear_main_paths'],
     ENTRY_NO_BUFFER: ['add_entry_buffer', 'insert_transition_zone', 'rotate_entry_path'],
     ELEVATOR_REQUIRED: ['rebuild_zone_order'],
+    BASIC_FURNITURE_MISSING: ['add_furniture_anchor', 'expand_room', 'reduce_furniture_set'],
     ROOM_DOOR_MISSING: ['add_opening', 'reroute_access', 'rebuild_zone_order'],
     ROOM_ENCLOSURE_INCOMPLETE: ['rebuild_zone_order', 'reroute_access', 'swap_room_positions'],
     STAIR_REQUIRED_BETWEEN_FLOORS: ['rebuild_zone_order', 'add_corridor', 'reroute_access'],
@@ -1814,6 +1873,7 @@ function getRepairSummaryTitle(
           AGING_PATH_UNSAFE: '适老夜间动线不稳',
           ENTRY_NO_BUFFER: '玄关缓冲不足',
           ELEVATOR_REQUIRED: '垂直交通不满足需求',
+          BASIC_FURNITURE_MISSING: '基础入住家具不足',
           ROOM_DOOR_MISSING: '房间缺少可用门洞',
           ROOM_ENCLOSURE_INCOMPLETE: '房间围护墙不完整',
           STAIR_REQUIRED_BETWEEN_FLOORS: '楼层之间缺少楼梯',
@@ -1832,6 +1892,7 @@ function getRepairSummaryTitle(
           AGING_PATH_UNSAFE: 'Aging-friendly route is still unsafe',
           ENTRY_NO_BUFFER: 'Entry buffer is still weak',
           ELEVATOR_REQUIRED: 'Vertical access still falls short',
+          BASIC_FURNITURE_MISSING: 'Basic daily-living furniture is still missing',
           ROOM_DOOR_MISSING: 'A room still lacks a usable door',
           ROOM_ENCLOSURE_INCOMPLETE: 'A room boundary is still incomplete',
           STAIR_REQUIRED_BETWEEN_FLOORS: 'A required floor-to-floor stair is still missing',
@@ -5068,10 +5129,29 @@ function getStairSolidWallConflicts(
   }
 }
 
-function getStairWallClearRects(
-  floorStairs: AiBuildingStairPlan[],
+function getCurrentFloorStairClearRects(stair: AiBuildingStairPlan) {
+  return [getPlannedStairProtectedRectBounds(stair)]
+}
+
+function getStairWallClearRects(floorStairs: AiBuildingStairPlan[]) {
+  return floorStairs.flatMap((stair) => getCurrentFloorStairClearRects(stair))
+}
+
+function getStairCoreRoomContainmentClearance(
+  stair: AiBuildingStairPlan,
+  room: AiBuildingRoomPlan,
 ) {
-  return floorStairs.map((stair) => getPlannedStairFootprintRectBounds(stair))
+  return getRectClearanceWithinBounds(
+    getPlannedStairProtectedRectBounds(stair),
+    getRoomMetrics(room),
+  )
+}
+
+function isStairProtectedAreaInsideCoreRoom(
+  stair: AiBuildingStairPlan,
+  room: AiBuildingRoomPlan,
+) {
+  return getStairCoreRoomContainmentClearance(stair, room) >= -0.02
 }
 
 function clipInteriorWallsForRects(
@@ -5475,6 +5555,12 @@ function getCombinedRectBounds(...rects: AiBuildingRectBounds[]): AiBuildingRect
   }
 }
 
+function rotateStairSegmentPoint(point: Point2D, rotationY: number): Point2D {
+  const cos = Math.cos(rotationY)
+  const sin = Math.sin(rotationY)
+  return [point[0] * cos + point[1] * sin, -point[0] * sin + point[1] * cos]
+}
+
 type AiBuildingStairSegmentTransform = {
   position: Point3D
   rotation: number
@@ -5531,7 +5617,7 @@ function computePlannedStairSegmentTransforms(
         break
     }
 
-    const [deltaX, deltaZ] = rotateLocalPoint([attachX, attachZ], currentRot)
+    const [deltaX, deltaZ] = rotateStairSegmentPoint([attachX, attachZ], currentRot)
     currentX += deltaX
     currentY += previous.height
     currentZ += deltaZ
@@ -5576,12 +5662,12 @@ function getPlannedStairSegmentPolygon(
   ]
 
   return localPolygon.map((point) => {
-    const rotatedSegmentPoint = rotateLocalPoint(point, layout.transform.rotation)
+    const rotatedSegmentPoint = rotateStairSegmentPoint(point, layout.transform.rotation)
     const groupPoint: Point2D = [
       layout.transform.position[0] + rotatedSegmentPoint[0],
       layout.transform.position[2] + rotatedSegmentPoint[1],
     ]
-    const rotatedGroupPoint = rotateLocalPoint(groupPoint, stairPlan.rotation)
+    const rotatedGroupPoint = rotateStairSegmentPoint(groupPoint, stairPlan.rotation)
     return [
       stairPlan.position[0] + rotatedGroupPoint[0],
       stairPlan.position[2] + rotatedGroupPoint[1],
@@ -6237,8 +6323,7 @@ function scorePlacedStairCandidateWalkability(
     comfortFormulaMin < STAIR_COMFORT_FORMULA_MIN ||
     comfortFormulaMin > STAIR_COMFORT_FORMULA_MAX
   const wallCollisionIssue = wallConflicts.stairWallBlocked || wallConflicts.startRouteWallBlocked
-  const hardFailure =
-    geometryIssue || wallCollisionIssue || !routeSupported || startAccessSummary.hardConflict
+  const hardFailure = geometryIssue || wallCollisionIssue
 
   return {
     score: Math.round(clampNumber(score, 0, 100)),
@@ -6277,29 +6362,21 @@ function getStairBlockedRectsByRoomKey(
   )
 
   for (const stair of floorStairs) {
-    addBlockedRectToOverlappingRooms(
-      blockedRectsByRoomKey,
-      rooms,
-      getPlannedStairFootprintRectBounds(stair),
-    )
-    addBlockedRectToOverlappingRooms(
-      blockedRectsByRoomKey,
-      rooms,
-      getPlannedStairLandingRectBounds(stair, 'start'),
-    )
+    const routeRects = getStairRouteRects(stair)
+    for (const rect of getCurrentFloorStairClearRects(stair)) {
+      addBlockedRectToOverlappingRooms(blockedRectsByRoomKey, rooms, rect)
+    }
+    addBlockedRectToOverlappingRooms(blockedRectsByRoomKey, rooms, routeRects.startRouteRect)
   }
 
   for (const stair of previousFloorStairs) {
-    addBlockedRectToOverlappingRooms(
-      blockedRectsByRoomKey,
-      rooms,
-      getPlannedStairFootprintRectBounds(stair),
-    )
+    const routeRects = getStairRouteRects(stair)
     addBlockedRectToOverlappingRooms(
       blockedRectsByRoomKey,
       rooms,
       getPlannedStairLandingRectBounds(stair, 'end'),
     )
+    addBlockedRectToOverlappingRooms(blockedRectsByRoomKey, rooms, routeRects.endRouteRect)
   }
 
   return blockedRectsByRoomKey
@@ -6826,8 +6903,52 @@ function getStairRoomPriority(room: AiBuildingRoomPlan) {
 function getStairLayoutDesignBias(
   layoutType: AiBuildingStairLayoutType,
   bounds: { width: number; depth: number },
+  context: {
+    buildingType?: AiBuildingType
+    floorCount?: number
+    footprintWidth?: number
+    footprintDepth?: number
+  } = {},
 ) {
   const minSpan = Math.min(bounds.width, bounds.depth)
+  const maxSpan = Math.max(bounds.width, bounds.depth)
+  const footprintMinSpan =
+    Number.isFinite(context.footprintWidth) && Number.isFinite(context.footprintDepth)
+      ? Math.min(context.footprintWidth!, context.footprintDepth!)
+      : null
+  const isResidentialLike =
+    context.buildingType === 'villa' ||
+    context.buildingType === 'residential' ||
+    context.buildingType === 'apartment'
+  const isOfficeLike = context.buildingType === 'office'
+  const isMultiFloor = (context.floorCount ?? 1) > 1
+  const isCompactResidentialFootprint = isResidentialLike && (footprintMinSpan ?? Infinity) <= 12
+
+  if (isResidentialLike && isMultiFloor) {
+    switch (layoutType) {
+      case 'u-shaped':
+        return isCompactResidentialFootprint ? -8 : minSpan <= 4.8 ? 24 : minSpan >= 3.2 ? 48 : 12
+      case 'compact-switchback':
+        return isCompactResidentialFootprint ? 130 : minSpan <= 4.8 ? 56 : 20
+      case 'l-shaped':
+        return isCompactResidentialFootprint ? 38 : 26
+      case 'straight':
+        return maxSpan >= 7 ? -6 : -28
+    }
+  }
+
+  if (isOfficeLike && isMultiFloor) {
+    switch (layoutType) {
+      case 'straight':
+        return maxSpan >= 6 ? 24 : 4
+      case 'l-shaped':
+        return 20
+      case 'u-shaped':
+        return minSpan >= 3.4 ? 18 : 6
+      case 'compact-switchback':
+        return minSpan <= 4.2 ? 14 : -4
+    }
+  }
 
   switch (layoutType) {
     case 'u-shaped':
@@ -6903,6 +7024,31 @@ function getVerticalCoreAlignedRooms(
     })
 }
 
+function isDedicatedStairCoreRoom(room: AiBuildingRoomPlan) {
+  return room.programKey === 'stairs'
+}
+
+function getStairCoreRoomAnchorScore(
+  room: AiBuildingRoomPlan,
+  anchor: ProgramDrivenVerticalAnchor | null | undefined,
+) {
+  if (!anchor) return 0
+  const roomMetrics = getRoomMetrics(room)
+  const anchorRect = {
+    minX: anchor.minX,
+    maxX: anchor.maxX,
+    minZ: anchor.minZ,
+    maxZ: anchor.maxZ,
+  }
+  const roomCenter = getRoomCenter(room)
+  const anchorCenter: Point2D = [anchor.centerX, anchor.centerZ]
+
+  return (
+    getRectOverlapArea(roomMetrics, anchorRect) * 4 -
+    getPointDistance(roomCenter, anchorCenter)
+  )
+}
+
 function mergeUniqueRoomsByKey(...roomGroups: AiBuildingRoomPlan[][]) {
   const seen = new Set<string>()
   const rooms: AiBuildingRoomPlan[] = []
@@ -6974,6 +7120,7 @@ function createFloorStairPlans(
   openings: AiBuildingOpeningPlan[],
   roomAccessPointsByKey: Map<string, AiBuildingRoomAccessPoint[]>,
   totalRise: number,
+  form: AiBuildingFormState,
   layoutHint: AiBuildingGridLayoutHint | null | undefined,
   floorBounds: { minX: number; maxX: number; minZ: number; maxZ: number },
   previousFloorStairs: AiBuildingStairPlan[] = [],
@@ -6997,17 +7144,27 @@ function createFloorStairPlans(
     getPreferredStairRooms(rooms),
     previousFloorStair,
   )
-  const candidateRooms = mergeUniqueRoomsByKey(
-    getVerticalCoreAlignedRooms(rooms, verticalCoreAnchor),
-    preferredRooms,
-  )
+  const verticalCoreRooms = rooms
+    .filter(isDedicatedStairCoreRoom)
+    .sort(
+      (left, right) =>
+        getStairCoreRoomAnchorScore(right, verticalCoreAnchor) -
+        getStairCoreRoomAnchorScore(left, verticalCoreAnchor),
+    )
+  const candidateRooms = verticalCoreAnchor
+    ? verticalCoreRooms
+    : mergeUniqueRoomsByKey(
+        getVerticalCoreAlignedRooms(rooms, verticalCoreAnchor),
+        preferredRooms,
+      )
   const fallbackRoom: AiBuildingRoomPlan = {
     key: '__floor_envelope__',
     name: 'Floor Envelope',
     color: '#dbeafe',
     polygon: rect(floorBounds.minX, floorBounds.minZ, floorBounds.maxX, floorBounds.maxZ),
   }
-  const allCandidateRooms = candidateRooms.length > 0 ? candidateRooms : [fallbackRoom]
+  const allCandidateRooms =
+    candidateRooms.length > 0 ? candidateRooms : verticalCoreAnchor ? [] : [fallbackRoom]
 
   for (const room of allCandidateRooms) {
     const isFallbackRoom = room.key === fallbackRoom.key
@@ -7016,14 +7173,29 @@ function createFloorStairPlans(
     const accessPoints = isFallbackRoom ? [] : roomAccessPointsByKey.get(room.key) ?? []
     const anchorPoints = getStairAnchorCandidatePoints(room, layoutHint)
 
-    for (const rotation of getStairRotationCandidates(room, previousFloorStair?.rotation)) {
+    const rotationCandidates =
+      verticalCoreAnchor && previousFloorStair
+        ? [previousFloorStair.rotation]
+        : getStairRotationCandidates(room, previousFloorStair?.rotation)
+    for (const rotation of rotationCandidates) {
       for (const stairCandidate of createStairPlanCandidates(bounds, stairWidth, totalRise, rotation)) {
         const placementRange = getPlannedStairProtectedPlacementRange(bounds, stairCandidate)
         if (!placementRange) continue
 
-        const stackedPosition = stackedLandingCenter
-          ? getPlannedStairPositionFromLandingCenter(stackedLandingCenter, stairCandidate, 'start')
+        const stackedPosition = previousFloorStair
+          ? verticalCoreAnchor
+            ? previousFloorStair.position
+            : stackedLandingCenter
+              ? getPlannedStairPositionFromLandingCenter(stackedLandingCenter, stairCandidate, 'start')
+              : null
           : null
+        if (
+          verticalCoreAnchor &&
+          previousFloorStair &&
+          stairCandidate.layoutType !== previousFloorStair.layoutType
+        ) {
+          continue
+        }
         const verticalCoreAnchorPoint = getVerticalCoreAnchorPoint(verticalCoreAnchor)
         const rawPositions = dedupeStairAnchorPoints([
           ...(stackedPosition ? [stackedPosition] : []),
@@ -7079,10 +7251,17 @@ function createFloorStairPlans(
           const stackRotationDistance = previousFloorStair
             ? getRotationDistance(rotation, previousFloorStair.rotation)
             : 0
+          const stackAnchorRoomOverlapRatio = stackedAnchorRect
+            ? getRectOverlapArea(stackedAnchorRect, bounds) /
+              Math.max(getRectArea(stackedAnchorRect), 0.01)
+            : 0
           const stackAnchorOverlap = stackedAnchorRect
             ? getRectOverlapArea(protectedRect, stackedAnchorRect)
             : 0
-          const candidateWalls = clipInteriorWallsForRects(walls, [protectedRect])
+          const candidateWalls = clipInteriorWallsForRects(
+            walls,
+            getStairWallClearRects([placedPlan]),
+          )
           const walkability = scorePlacedStairCandidateWalkability(
             placedPlan,
             isFallbackRoom ? null : room,
@@ -7091,15 +7270,20 @@ function createFloorStairPlans(
             openings,
           )
           if (walkability.hardFailure) continue
-          const layoutBias = getStairLayoutDesignBias(placedPlan.layoutType, bounds)
+          const layoutBias = getStairLayoutDesignBias(placedPlan.layoutType, bounds, {
+            buildingType: form.buildingType,
+            floorCount: form.floors,
+            footprintWidth: form.width,
+            footprintDepth: form.depth,
+          })
           const score =
             (isFallbackRoom ? 0 : getStairRoomPriority(room)) +
             layoutBias +
             (walkability.score - 78) * 1.6 +
             Math.min(slackX, slackZ) * 18 -
             centerDistance * 7 -
-            stackShiftDistance * 38 -
-            stackRotationDistance * 16 +
+            stackShiftDistance * (stackAnchorRoomOverlapRatio >= 0.7 ? 130 : 58) -
+            stackRotationDistance * 36 +
             stackAnchorOverlap * 42 -
             Math.max(0, STAIR_WALL_CLEARANCE - protectedClearance) * 180 -
             Math.max(0, 0.12 - arrivalClearance) * 120 -
@@ -7119,7 +7303,27 @@ function createFloorStairPlans(
     }
   }
 
-  return best ? [best.plan] : []
+  if (best) return [best.plan]
+
+  if (verticalCoreAnchor && previousFloorStair && allCandidateRooms.length > 0) {
+    const stackRoom = allCandidateRooms[0]
+    if (stackRoom) {
+      const roomBounds = getRoomMetrics(stackRoom)
+      const stackedPlan: AiBuildingStairPlan = {
+        ...previousFloorStair,
+        key: `${previousFloorStair.key}_stacked`,
+        roomKey: stackRoom.key,
+        totalRise,
+      }
+      const protectedRect = getPlannedStairProtectedRectBounds(stackedPlan)
+      const protectedClearance = getRectClearanceWithinBounds(protectedRect, roomBounds)
+      if (protectedClearance >= STAIR_WALL_CLEARANCE - 0.01) {
+        return [stackedPlan]
+      }
+    }
+  }
+
+  return []
 }
 
 function itemPlan(
@@ -7391,6 +7595,10 @@ function getRectOverlapArea(left: AiBuildingRectBounds, right: AiBuildingRectBou
   const overlapDepth = Math.min(left.maxZ, right.maxZ) - Math.max(left.minZ, right.minZ)
   if (!(overlapWidth > 0 && overlapDepth > 0)) return 0
   return overlapWidth * overlapDepth
+}
+
+function getRectArea(rect: AiBuildingRectBounds) {
+  return Math.max(0, rect.maxX - rect.minX) * Math.max(0, rect.maxZ - rect.minZ)
 }
 
 function getRectGap(left: AiBuildingRectBounds, right: AiBuildingRectBounds) {
@@ -8634,6 +8842,10 @@ function createRoomItemPlans(
     hasRoomMeaning(room, /餐|厨|dining|kitchen|pantry|cafe/)
   const isBath =
     programKey === 'bathroom' || hasRoomMeaning(room, /卫|浴|卫生间|bath|restroom|toilet|powder/)
+  const isStudy =
+    programKey === 'study' ||
+    programKey === 'open_office' ||
+    hasRoomMeaning(room, /书房|办公|study|office|studio/)
   const isTerrace =
     programKey === 'balcony' ||
     programKey === 'courtyard' ||
@@ -8660,27 +8872,26 @@ function createRoomItemPlans(
       }),
     )
 
-    if (metrics.area >= 10.5 && metrics.minSpan >= 2.75) {
-      commitItem(
-        solveRoomItem(`${prefix}_closet`, 'closet', {
-          scale: tightRoom ? [0.54, 0.78, 0.54] : [0.66, 0.84, 0.66],
-          fitWidthRatio: 0.46,
-          fitDepthRatio: 0.46,
-          marginX: 0.16,
-          marginZ: 0.16,
-        }),
-      )
-    }
+    commitItem(
+      solveRoomItem(`${prefix}_closet`, 'closet', {
+        scale: tightRoom ? [0.42, 0.72, 0.42] : [0.66, 0.84, 0.66],
+        fitWidthRatio: tightRoom ? 0.34 : 0.46,
+        fitDepthRatio: tightRoom ? 0.34 : 0.46,
+        marginX: 0.12,
+        marginZ: 0.12,
+      }),
+    )
 
-    if (bed && !tightRoom && metrics.area >= 13.5) {
+    if (bed) {
       commitItem(
         placeRoomCompanionItem(`${prefix}_bedside`, 'bedside-table', bed, {
           sides: ['left', 'right'],
           gap: 0.08,
-          fitWidthRatio: 0.24,
-          fitDepthRatio: 0.24,
-          marginX: 0.16,
-          marginZ: 0.16,
+          scale: tightRoom ? [0.58, 0.7, 0.58] : undefined,
+          fitWidthRatio: tightRoom ? 0.18 : 0.24,
+          fitDepthRatio: tightRoom ? 0.18 : 0.24,
+          marginX: 0.1,
+          marginZ: 0.1,
         }),
       )
     }
@@ -8731,25 +8942,63 @@ function createRoomItemPlans(
       })
     }
 
-    if (sofa && !tightRoom && metrics.area >= 14) {
+    if (sofa) {
       commitItem(
         placeRoomCompanionItem(`${prefix}_coffee`, 'coffee-table', sofa, {
           sides: ['front', 'back'],
-          gap: 0.32,
-          scale: [0.68, 0.8, 0.62],
-          fitWidthRatio: 0.34,
-          fitDepthRatio: 0.34,
+          gap: tightRoom ? 0.18 : 0.32,
+          scale: tightRoom ? [0.44, 0.68, 0.42] : [0.68, 0.8, 0.62],
+          fitWidthRatio: tightRoom ? 0.24 : 0.34,
+          fitDepthRatio: tightRoom ? 0.24 : 0.34,
           profile: {
             role: 'center',
             pairWith: ['sofa'],
-            pairDistance: [0.38, 1.7],
+            pairDistance: tightRoom ? [0.22, 1.2] : [0.38, 1.7],
           },
         }) ??
           solveRoomItem(`${prefix}_coffee`, 'coffee-table', {
-            scale: [0.68, 0.8, 0.62],
-            fitWidthRatio: 0.34,
-            fitDepthRatio: 0.34,
+            scale: tightRoom ? [0.44, 0.68, 0.42] : [0.68, 0.8, 0.62],
+            fitWidthRatio: tightRoom ? 0.24 : 0.34,
+            fitDepthRatio: tightRoom ? 0.24 : 0.34,
           }),
+      )
+    }
+  }
+
+  if (isStudy && intent.furnish) {
+    const compactStudy = tightRoom || metrics.area < 8.5
+    const desk = commitItem(
+      solveRoomItem(`${prefix}_desk`, 'desk', {
+        scale: compactStudy ? [0.56, 0.78, 0.56] : [0.72, 0.84, 0.72],
+        fitWidthRatio: compactStudy ? 0.34 : 0.44,
+        fitDepthRatio: compactStudy ? 0.34 : 0.44,
+        marginX: 0.12,
+        marginZ: 0.12,
+      }),
+    )
+
+    if (desk) {
+      commitItem(
+        placeRoomCompanionItem(`${prefix}_desk_chair`, 'dining-chair', desk, {
+          sides: ['front', 'back'],
+          gap: 0.08,
+          faceTarget: true,
+          scale: compactStudy ? [0.7, 0.78, 0.7] : [0.82, 0.86, 0.82],
+          fitWidthRatio: 0.2,
+          fitDepthRatio: 0.2,
+        }),
+      )
+    }
+
+    if (!compactStudy || metrics.area >= 6.2) {
+      commitItem(
+        solveRoomItem(`${prefix}_shelf`, 'shelf', {
+          scale: compactStudy ? [0.58, 0.7, 0.58] : [0.78, 0.82, 0.78],
+          fitWidthRatio: 0.28,
+          fitDepthRatio: 0.28,
+          marginX: 0.1,
+          marginZ: 0.1,
+        }),
       )
     }
   }
@@ -8806,15 +9055,13 @@ function createRoomItemPlans(
         }),
       )
 
-      if (metrics.area >= 8.5) {
-        commitItem(
-          solveRoomItem(`${prefix}_fridge`, 'fridge', {
-            scale: compactKitchen ? [0.64, 0.8, 0.64] : [0.72, 0.82, 0.72],
-            fitWidthRatio: 0.22,
-            fitDepthRatio: 0.22,
-          }),
-        )
-      }
+      commitItem(
+        solveRoomItem(`${prefix}_fridge`, 'fridge', {
+          scale: compactKitchen ? [0.5, 0.72, 0.5] : [0.72, 0.82, 0.72],
+          fitWidthRatio: compactKitchen ? 0.18 : 0.22,
+          fitDepthRatio: compactKitchen ? 0.18 : 0.22,
+        }),
+      )
 
       if ((!isDiningFocused || metrics.area >= 13) && counter) {
         const counterHeight = getScaledAssetDimensions('kitchen-counter', counter.scale)[1]
@@ -8845,7 +9092,7 @@ function createRoomItemPlans(
 
   if (isBath && intent.bathroom) {
     const compactBath = compact || metrics.area < 4.5 || metrics.minSpan < 2.1
-    const canFitShower = metrics.area >= 4.2 && metrics.minSpan >= 1.9
+    const canFitShower = metrics.area >= 3.1 && metrics.minSpan >= 1.45
 
     commitItem(
       solveRoomItem(`${prefix}_sink`, 'bathroom-sink', {
@@ -8875,9 +9122,9 @@ function createRoomItemPlans(
         solveRoomItem(`${prefix}_shower`, 'shower-square', {
           anchors: getPlacementAnchorsForRole('corner'),
           rotationResolver: getWallAlignedRotationsForAnchor,
-          scale: compactBath ? [0.5, 0.66, 0.5] : [0.6, 0.72, 0.6],
-          fitWidthRatio: 0.24,
-          fitDepthRatio: 0.24,
+          scale: compactBath ? [0.42, 0.58, 0.42] : [0.6, 0.72, 0.6],
+          fitWidthRatio: compactBath ? 0.18 : 0.24,
+          fitDepthRatio: compactBath ? 0.18 : 0.24,
           marginX: 0.03,
           marginZ: 0.03,
         }),
@@ -9293,6 +9540,7 @@ function createVerticalAnchorFromRect(
 }
 
 function getPlannedStairCoreAnchor(
+  form: AiBuildingFormState,
   totalRise: number,
   layoutHint: AiBuildingGridLayoutHint | null | undefined,
   floorBounds: { minX: number; maxX: number; minZ: number; maxZ: number },
@@ -9318,14 +9566,22 @@ function getPlannedStairCoreAnchor(
   const anchorPoint = roomPointByLayout(floorEnvelope, layoutHint, 0.5, 0.42)
   let best: { score: number; rect: AiBuildingRectBounds } | null = null
 
-  for (const rotation of getStairRotationCandidates(floorEnvelope, previousFloorStair?.rotation)) {
+  const rotationCandidates = previousFloorStair
+    ? [previousFloorStair.rotation]
+    : getStairRotationCandidates(floorEnvelope)
+  for (const rotation of rotationCandidates) {
     for (const stairCandidate of createStairPlanCandidates(bounds, stairWidth, totalRise, rotation)) {
       const placementRange = getPlannedStairProtectedPlacementRange(bounds, stairCandidate)
       if (!placementRange) continue
 
-      const stackedPosition = stackedLandingCenter
-        ? getPlannedStairPositionFromLandingCenter(stackedLandingCenter, stairCandidate, 'start')
-        : null
+      const stackedPosition = previousFloorStair
+        ? previousFloorStair.position
+        : stackedLandingCenter
+          ? getPlannedStairPositionFromLandingCenter(stackedLandingCenter, stairCandidate, 'start')
+          : null
+      if (previousFloorStair && stairCandidate.layoutType !== previousFloorStair.layoutType) {
+        continue
+      }
       const position: Point3D = [
         clampNumber(
           stackedPosition?.[0] ?? anchorPoint[0],
@@ -9364,19 +9620,28 @@ function getPlannedStairCoreAnchor(
       const stackRotationDistance = previousFloorStair
         ? getRotationDistance(rotation, previousFloorStair.rotation)
         : 0
+      const stackAnchorRoomOverlapRatio = stackedAnchorRect
+        ? getRectOverlapArea(stackedAnchorRect, bounds) /
+          Math.max(getRectArea(stackedAnchorRect), 0.01)
+        : 0
       const stackAnchorOverlap = stackedAnchorRect
         ? getRectOverlapArea(protectedRect, stackedAnchorRect)
         : 0
       const walkability = scorePlacedStairCandidateWalkability(placedPlan, floorEnvelope, [])
       if (walkability.hardFailure) continue
-      const layoutBias = getStairLayoutDesignBias(placedPlan.layoutType, bounds)
+      const layoutBias = getStairLayoutDesignBias(placedPlan.layoutType, bounds, {
+        buildingType: form.buildingType,
+        floorCount: form.floors,
+        footprintWidth: form.width,
+        footprintDepth: form.depth,
+      })
       const score =
         layoutBias +
         (walkability.score - 78) * 1.4 +
         Math.min(slackX, slackZ) * 18 -
         centerDistance * 7 -
-        stackShiftDistance * 38 -
-        stackRotationDistance * 16 +
+        stackShiftDistance * (stackAnchorRoomOverlapRatio >= 0.7 ? 130 : 58) -
+        stackRotationDistance * 36 +
         stackAnchorOverlap * 42 -
         Math.max(0, STAIR_WALL_CLEARANCE - protectedClearance) * 180 -
         Math.max(0, 0.12 - arrivalClearance) * 120
@@ -9401,7 +9666,7 @@ function createVerticalCorePlan(
   if (form.floors <= 1) return null
 
   const firstFloorRise = 3
-  const stairAnchor = getPlannedStairCoreAnchor(firstFloorRise, layoutHint, floorBounds)
+  const stairAnchor = getPlannedStairCoreAnchor(form, firstFloorRise, layoutHint, floorBounds)
   if (!stairAnchor) return null
 
   return {
@@ -9417,6 +9682,75 @@ function createVerticalCorePlan(
       ]),
     ),
   }
+}
+
+function alignRoomsToVerticalCore(
+  rooms: AiBuildingRoomPlan[],
+  verticalCoreAnchor: ProgramDrivenVerticalAnchor | null | undefined,
+  buildingType: AiBuildingType,
+  forceFixedCore = false,
+) {
+  if (!verticalCoreAnchor) return rooms
+  if (
+    buildingType !== 'villa' &&
+    buildingType !== 'residential' &&
+    buildingType !== 'apartment'
+  ) {
+    return rooms
+  }
+  const stairRoomIndex = rooms.findIndex((room) => room.programKey === 'stairs')
+  if (stairRoomIndex < 0) return rooms
+  const currentStairRoom = rooms[stairRoomIndex]
+  if (!currentStairRoom) return rooms
+  const currentBounds = getRoomMetrics(currentStairRoom)
+  const floorBounds = rooms.reduce(
+    (bounds, room) => {
+      const metrics = getRoomMetrics(room)
+      return {
+        minX: Math.min(bounds.minX, metrics.minX),
+        maxX: Math.max(bounds.maxX, metrics.maxX),
+        minZ: Math.min(bounds.minZ, metrics.minZ),
+        maxZ: Math.max(bounds.maxZ, metrics.maxZ),
+      }
+    },
+    { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity },
+  )
+  const fixedCoreBounds = expandRectBounds(
+    {
+      minX: verticalCoreAnchor.minX,
+      maxX: verticalCoreAnchor.maxX,
+      minZ: verticalCoreAnchor.minZ,
+      maxZ: verticalCoreAnchor.maxZ,
+    },
+    0.42,
+  )
+  const clampBounds = forceFixedCore ? floorBounds : currentBounds
+  const alignedBounds = {
+    minX: Math.max(clampBounds.minX, fixedCoreBounds.minX),
+    maxX: Math.min(clampBounds.maxX, fixedCoreBounds.maxX),
+    minZ: Math.max(clampBounds.minZ, fixedCoreBounds.minZ),
+    maxZ: Math.min(clampBounds.maxZ, fixedCoreBounds.maxZ),
+  }
+  if (
+    alignedBounds.maxX - alignedBounds.minX < 2.4 ||
+    alignedBounds.maxZ - alignedBounds.minZ < 2.4
+  ) {
+    return rooms
+  }
+
+  return rooms.map((room, index) =>
+    index === stairRoomIndex
+      ? {
+          ...room,
+          polygon: rect(
+            alignedBounds.minX,
+            alignedBounds.minZ,
+            alignedBounds.maxX,
+            alignedBounds.maxZ,
+          ),
+        }
+      : room,
+  )
 }
 
 function createFloorPlan(
@@ -9445,6 +9779,7 @@ function createFloorPlan(
     plannedAnchors.push(verticalCoreAnchor)
   } else if (intent.stairs && floorIndex < form.floors - 1) {
     const plannedStairCoreAnchor = getPlannedStairCoreAnchor(
+      form,
       wallHeight,
       layoutHint,
       { minX, maxX, minZ, maxZ },
@@ -9500,7 +9835,7 @@ function createFloorPlan(
     },
     ...layout.walls,
   ]
-  const rooms = layout.rooms
+  let rooms = alignRoomsToVerticalCore(layout.rooms, verticalCoreAnchor, form.buildingType)
   walls = ensureRoomEnclosureWalls(rooms, walls)
 
   for (const wall of walls) {
@@ -9592,6 +9927,7 @@ function createFloorPlan(
           openings,
           roomAccessPointsByKey,
           wallHeight,
+          form,
           layoutHint,
           { minX, maxX, minZ, maxZ },
           previousFloorPlan?.stairs ?? [],
@@ -9638,6 +9974,7 @@ function createFloorPlan(
       retryOpenings,
       retryAccessPointsByKey,
       wallHeight,
+      form,
       layoutHint,
       { minX, maxX, minZ, maxZ },
       previousFloorPlan?.stairs ?? [],
@@ -9668,6 +10005,77 @@ function createFloorPlan(
         stairs = retryStairs
         walls = retryWalls
         openings = retryFinalOpenings
+      }
+    }
+
+    if (
+      stairs.length === 0 &&
+      verticalCoreAnchor &&
+      (form.buildingType === 'villa' ||
+        form.buildingType === 'residential' ||
+        form.buildingType === 'apartment')
+    ) {
+      const forcedRooms = alignRoomsToVerticalCore(
+        layout.rooms,
+        verticalCoreAnchor,
+        form.buildingType,
+        true,
+      )
+      const forcedBaseWalls = ensureRoomEnclosureWalls(forcedRooms, baseWalls)
+      const forcedOpenings = createPlanOpenings(
+        form,
+        floorIndex,
+        language,
+        forcedRooms,
+        forcedBaseWalls,
+        intent,
+        layoutHint,
+        options.openingBias ?? 'balanced',
+        previousFloorPlan?.stairs ?? [],
+      )
+      const forcedAccessPointsByKey = new Map(
+        forcedRooms.map((room) => [
+          room.key,
+          getRoomAccessPoints(room, forcedBaseWalls, forcedOpenings),
+        ]),
+      )
+      const forcedStairs = createFloorStairPlans(
+        forcedRooms,
+        forcedBaseWalls,
+        forcedOpenings,
+        forcedAccessPointsByKey,
+        wallHeight,
+        form,
+        layoutHint,
+        { minX, maxX, minZ, maxZ },
+        previousFloorPlan?.stairs ?? [],
+        verticalCoreAnchor,
+      )
+      if (forcedStairs.length > 0) {
+        const forcedWalls = clipInteriorWallsForRects(
+          forcedBaseWalls,
+          getStairWallClearRects(forcedStairs),
+        )
+        const forcedFinalOpenings = createPlanOpenings(
+          form,
+          floorIndex,
+          language,
+          forcedRooms,
+          forcedWalls,
+          intent,
+          layoutHint,
+          options.openingBias ?? 'balanced',
+          previousFloorPlan?.stairs ?? [],
+        )
+        const forcedHasWallConflict = forcedStairs.some((stair) =>
+          getStairSolidWallConflicts(stair, forcedWalls, forcedFinalOpenings).hasConflict,
+        )
+        if (!forcedHasWallConflict) {
+          rooms = forcedRooms
+          stairs = forcedStairs
+          walls = forcedWalls
+          openings = forcedFinalOpenings
+        }
       }
     }
   }
@@ -11083,6 +11491,7 @@ function createPlanAnalysis(
   const ruleGuidance = createPlanRuleGuidance(
     floors,
     form,
+    language,
     sceneContext,
     targetClearance,
     circulationResults,
@@ -11198,6 +11607,7 @@ function isRoomReflowEligibleIssueCode(code: AiAnalysisIssueCode) {
     code === 'ENTRY_NO_BUFFER' ||
     code === 'TOILET_EXPOSED_TO_PUBLIC_VIEW' ||
     code === 'DOOR_SWING_COLLISION' ||
+    code === 'BASIC_FURNITURE_MISSING' ||
     code === 'BEDROOM_FURNITURE_IMPOSSIBLE' ||
     code === 'KITCHEN_WORKFLOW_BROKEN' ||
     code === 'DINING_PULL_OUT_BLOCKED' ||
@@ -11250,6 +11660,15 @@ function getIssueDrivenRoomOptimizationPreference(
       placementMode: isBathroomProgram(room.programKey)
         ? ('perimeter' as const)
         : ('entry-clear' as const),
+      density: 'compact' as const,
+    }
+  }
+
+  if (code === 'BASIC_FURNITURE_MISSING') {
+    return {
+      placementMode: isLivingOrDiningProgram(room.programKey)
+        ? ('entry-clear' as const)
+        : ('perimeter' as const),
       density: 'compact' as const,
     }
   }
@@ -11377,6 +11796,10 @@ function expandIssueOptimizationRooms(
           isLivingOrDiningProgram(room.programKey) ||
           isBedroomLikeProgram(room.programKey),
       ),
+    )
+  } else if (code === 'BASIC_FURNITURE_MISSING') {
+    appendRooms(
+      matchingRooms((room) => Boolean(getBasicFurnitureRequirement(room))),
     )
   } else if (
     code === 'KITCHEN_WORKFLOW_BROKEN' ||
@@ -12076,6 +12499,7 @@ function shouldUseResidentialRuleGuidance(buildingType: AiBuildingType) {
 function createPlanRuleGuidance(
   floors: AiBuildingFloorPlan[],
   form: AiBuildingFormState,
+  language: AiBuildingLanguage,
   sceneContext: SceneContext | null | undefined,
   targetClearance: number,
   circulationResults: Array<NonNullable<ReturnType<typeof analyzeRoomCirculation>>>,
@@ -12088,6 +12512,7 @@ function createPlanRuleGuidance(
   const snapshot = createPlanRuleSnapshot(
     floors,
     form,
+    language,
     sceneContext,
     targetClearance,
     circulationResults,
@@ -12160,6 +12585,7 @@ function createFengShuiAdvisorySummaryMessage(
 function createPlanRuleSnapshot(
   floors: AiBuildingFloorPlan[],
   form: AiBuildingFormState,
+  language: AiBuildingLanguage,
   sceneContext: SceneContext | null | undefined,
   targetClearance: number,
   circulationResults: Array<NonNullable<ReturnType<typeof analyzeRoomCirculation>>>,
@@ -12197,6 +12623,7 @@ function createPlanRuleSnapshot(
     issues: createPlanRuleIssues(
       floors,
       form,
+      language,
       targetClearance,
       circulationResults,
       kitchenWorkflowResults,
@@ -12674,6 +13101,7 @@ function ensureRoomEnclosureWalls(
 function createPlanRuleIssues(
   floors: AiBuildingFloorPlan[],
   form: AiBuildingFormState,
+  language: AiBuildingLanguage,
   targetClearance: number,
   circulationResults: Array<NonNullable<ReturnType<typeof analyzeRoomCirculation>>>,
   kitchenWorkflowResults: Array<NonNullable<ReturnType<typeof analyzeKitchenWorkflow>>>,
@@ -12683,6 +13111,20 @@ function createPlanRuleIssues(
   const issues = circulationResults.flatMap((result) =>
     createPlanRuleCirculationIssues(result, floors, targetClearance),
   )
+
+  if (shouldUseResidentialRuleGuidance(form.buildingType)) {
+    for (const issue of collectBasicFurnitureIssues(floors, language)) {
+      issues.push(
+        createAiAnalysisIssue({
+          code: 'BASIC_FURNITURE_MISSING',
+          targetId: issue.roomKey,
+          metricValue: issue.missingGroups.length,
+          message: issue.message,
+          sourceProfileIds: [...AI_BUILDING_RULE_PROFILE_IDS],
+        }),
+      )
+    }
+  }
 
   if (form.floors > 1) {
     for (let floorIndex = 0; floorIndex < floors.length - 1; floorIndex += 1) {
@@ -12834,6 +13276,162 @@ function createPlanRuleIssues(
   }
 
   return issues
+}
+
+type BasicFurnitureGroup = {
+  key: string
+  label: {
+    'zh-CN': string
+    en: string
+  }
+  assetIds: AiBuildingAssetId[]
+}
+
+type BasicFurnitureRequirement = {
+  programKeys: string[]
+  groups: BasicFurnitureGroup[]
+}
+
+const BASIC_FURNITURE_REQUIREMENTS: BasicFurnitureRequirement[] = [
+  {
+    programKeys: ['primary_bedroom', 'bedroom'],
+    groups: [
+      basicFurnitureGroup('bed', '床', 'bed', ['double-bed']),
+      basicFurnitureGroup('wardrobe', '衣柜', 'wardrobe', ['closet']),
+      basicFurnitureGroup('bedside', '床头柜', 'bedside table', ['bedside-table']),
+    ],
+  },
+  {
+    programKeys: ['living_room'],
+    groups: [
+      basicFurnitureGroup('seating', '沙发', 'sofa', ['sofa']),
+      basicFurnitureGroup('table', '茶几', 'coffee table', ['coffee-table']),
+      basicFurnitureGroup('media_storage', '电视柜/媒体柜', 'TV stand or media storage', [
+        'tv-stand',
+        'television',
+      ]),
+    ],
+  },
+  {
+    programKeys: ['dining_room'],
+    groups: [
+      basicFurnitureGroup('table', '餐桌', 'dining table', ['dining-table']),
+      basicFurnitureGroup('chair', '餐椅', 'dining chair', ['dining-chair']),
+    ],
+  },
+  {
+    programKeys: ['kitchen'],
+    groups: [
+      basicFurnitureGroup('counter', '操作台', 'countertop', ['kitchen-counter']),
+      basicFurnitureGroup('fridge', '冰箱', 'fridge', ['fridge']),
+      basicFurnitureGroup('stove', '灶具', 'stove', ['stove']),
+    ],
+  },
+  {
+    programKeys: ['bathroom'],
+    groups: [
+      basicFurnitureGroup('sink', '洗手台', 'sink', ['bathroom-sink']),
+      basicFurnitureGroup('toilet', '马桶', 'toilet', ['toilet']),
+      basicFurnitureGroup('shower', '淋浴区', 'shower area', ['shower-square', 'bathtub']),
+    ],
+  },
+  {
+    programKeys: ['study'],
+    groups: [
+      basicFurnitureGroup('desk', '书桌', 'desk', ['desk']),
+      basicFurnitureGroup('chair', '椅子', 'chair', ['dining-chair', 'lounge-chair']),
+      basicFurnitureGroup('storage', '书架/收纳', 'shelf or storage', ['shelf']),
+    ],
+  },
+]
+
+function basicFurnitureGroup(
+  key: string,
+  labelZh: string,
+  labelEn: string,
+  assetIds: AiBuildingAssetId[],
+): BasicFurnitureGroup {
+  return {
+    key,
+    label: {
+      'zh-CN': labelZh,
+      en: labelEn,
+    },
+    assetIds,
+  }
+}
+
+function getBasicFurnitureRequirement(room: AiBuildingRoomPlan) {
+  return (
+    BASIC_FURNITURE_REQUIREMENTS.find((requirement) =>
+      requirement.programKeys.includes(room.programKey ?? ''),
+    ) ?? null
+  )
+}
+
+function collectBasicFurnitureIssues(
+  floors: AiBuildingFloorPlan[],
+  language: AiBuildingLanguage,
+): AiBuildingHabitabilityIssue[] {
+  const issues: AiBuildingHabitabilityIssue[] = []
+
+  for (const floor of floors) {
+    for (const room of floor.rooms) {
+      const requirement = getBasicFurnitureRequirement(room)
+      if (!requirement) continue
+
+      const roomItemAssetIds = new Set(
+        floor.items.filter((item) => item.roomKey === room.key).map((item) => item.assetId),
+      )
+      const missingGroups = requirement.groups
+        .filter((group) => !group.assetIds.some((assetId) => roomItemAssetIds.has(assetId)))
+        .map((group) => group.label[language])
+
+      if (missingGroups.length === 0) continue
+
+      issues.push({
+        code: 'BASIC_FURNITURE_MISSING',
+        level: floor.level,
+        roomKey: room.key,
+        roomName: room.name,
+        missingGroups,
+        message:
+          language === 'zh-CN'
+            ? `${floor.label} ${room.name} 缺少基础入住家具：${missingGroups.join('、')}`
+            : `${floor.label} ${room.name} is missing basic daily-living furniture: ${missingGroups.join(', ')}`,
+      })
+    }
+  }
+
+  return issues
+}
+
+function createHabitabilityValidationMessage(
+  issues: AiBuildingHabitabilityIssue[],
+  language: AiBuildingLanguage,
+) {
+  if (issues.length === 0) return null
+
+  const firstIssues = issues.slice(0, 3).map((issue) => issue.message)
+  if (language === 'zh-CN') {
+    const suffix = issues.length > firstIssues.length ? ` 等 ${issues.length} 项问题` : ''
+    return `方案未通过基础入住家具检查：${firstIssues.join('；')}${suffix}。`
+  }
+
+  const suffix = issues.length > firstIssues.length ? ` and ${issues.length} total issues` : ''
+  return `The plan did not pass the basic daily-living furniture check: ${firstIssues.join('; ')}${suffix}.`
+}
+
+export function validateAiBuildingPlanHabitability(
+  plan: AiBuildingPlan,
+  language: AiBuildingLanguage = 'zh-CN',
+): AiBuildingHabitabilityValidation {
+  const issues = collectBasicFurnitureIssues(plan.floors, language)
+  return {
+    passed: issues.length === 0,
+    issues,
+    message: createHabitabilityValidationMessage(issues, language),
+  }
 }
 
 function evaluateEntryBuffer(floor: AiBuildingFloorPlan) {
@@ -13362,6 +13960,14 @@ export function validateAiBuildingPlanConstructability(
             roomName: room?.name,
             message: `${floor.label} 的楼梯没有落在楼梯间内`,
           })
+        } else if (!isStairProtectedAreaInsideCoreRoom(stair, room)) {
+          issues.push({
+            code: 'STAIR_OUTSIDE_STAIR_ROOM',
+            level: floor.level,
+            roomKey: room.key,
+            roomName: room.name,
+            message: `${floor.label} 的楼梯实体、平台或栏杆超出了楼梯间边界`,
+          })
         }
 
         const wallConflicts = getStairSolidWallConflicts(
@@ -13626,7 +14232,7 @@ export function applyPlanToScene(plan: AiBuildingPlan, context: SceneContext) {
         }),
       )
       const stair = StairNode.parse({
-        name: 'AI Stair',
+        name: `AI Stair ${stairPlan.layoutType}`,
         position: stairPlan.position,
         rotation: stairPlan.rotation,
         stairType: 'straight',
@@ -13642,7 +14248,12 @@ export function applyPlanToScene(plan: AiBuildingPlan, context: SceneContext) {
         railingMode: 'both',
         railingHeight: 0.92,
         children: stairSegments.map((segment) => segment.id),
-        metadata: { ...metadataBase, role: 'stair', detailKey: stairPlan.key },
+        metadata: {
+          ...metadataBase,
+          role: 'stair',
+          detailKey: stairPlan.key,
+          layoutType: stairPlan.layoutType,
+        },
       })
       operations.push({ node: stair, parentId: level.id as AnyNodeId })
       operations.push(

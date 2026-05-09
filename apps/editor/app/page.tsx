@@ -1,11 +1,15 @@
 'use client'
 
 import {
+  type AnyNodeId,
+  DoorNode,
   emitter,
   GuideNode,
   type LevelNode,
   ScanNode,
   useScene,
+  type WallNode,
+  WindowNode,
   type ZoneNode,
 } from '@pascal-app/core'
 import {
@@ -93,6 +97,38 @@ type AiCreateApplyPayload = {
   summary?: unknown
   language?: unknown
 }
+
+type AiEditOrientation = 'north' | 'south' | 'east' | 'west'
+
+type AiEditTarget = {
+  levelIndex?: number
+  orientation?: AiEditOrientation
+  roomName?: string
+  wallId?: string
+}
+
+type AiEditOperation =
+  | {
+      action: 'move_wall'
+      distance: number
+      direction?: 'inward' | 'outward'
+      target: AiEditTarget
+    }
+  | {
+      action: 'add_window'
+      height?: number
+      positionRatio?: number
+      sillHeight?: number
+      target: AiEditTarget
+      width?: number
+    }
+  | {
+      action: 'add_door'
+      height?: number
+      positionRatio?: number
+      target: AiEditTarget
+      width?: number
+    }
 
 type ProjectAssetKind = 'scan' | 'guide'
 
@@ -187,6 +223,105 @@ function normalizePositiveNumber(value: unknown, fallback: number): number {
   return Number.isFinite(number) && number > 0 ? number : fallback
 }
 
+function getAiEditNumber(text: string, fallback: number): number {
+  const match = text.match(/(\d+(?:\.\d+)?)\s*(?:m|米|公尺)?/i)
+  if (!match) return fallback
+  return normalizePositiveNumber(match[1], fallback)
+}
+
+function getAiEditOrientation(text: string): AiEditOrientation | null {
+  const normalizedText = text.toLowerCase()
+  if (/东|右侧|east/.test(normalizedText)) return 'east'
+  if (/西|左侧|west/.test(normalizedText)) return 'west'
+  if (/南|下侧|south/.test(normalizedText)) return 'south'
+  if (/北|上侧|north/.test(normalizedText)) return 'north'
+  return null
+}
+
+function getAiEditMoveDirection(text: string): 'inward' | 'outward' {
+  return /内移|向内|缩小|收缩|inward|shrink/.test(text.toLowerCase()) ? 'inward' : 'outward'
+}
+
+function getAiEditSignedDistance(text: string, orientation: AiEditOrientation): number {
+  const distance = getAiEditNumber(text, 1)
+  const direction = getAiEditMoveDirection(text)
+  const signByOrientation: Record<AiEditOrientation, number> = {
+    east: 1,
+    west: -1,
+    south: 1,
+    north: -1,
+  }
+  return distance * signByOrientation[orientation] * (direction === 'outward' ? 1 : -1)
+}
+
+function getAiEditPositionRatio(text: string): number {
+  const normalizedText = text.toLowerCase()
+  if (/左侧|西侧|靠左|靠西|left|west/.test(normalizedText)) return 0.32
+  if (/右侧|东侧|靠右|靠东|right|east/.test(normalizedText)) return 0.68
+  return 0.5
+}
+
+function normalizeAiEditName(value: string): string {
+  return value.trim().toLowerCase().replace(/[_\-\s]+/g, '')
+}
+
+function getAiEditTargetRoomName(text: string): string | undefined {
+  const normalizedText = normalizeAiEditName(text)
+  const zones = Object.values(useScene.getState().nodes).filter(
+    (node): node is ZoneNode => node.type === 'zone',
+  )
+  const matchedZone = zones
+    .filter((zone) => normalizeAiEditName(zone.name).length > 0)
+    .sort((a, b) => b.name.length - a.name.length)
+    .find((zone) => normalizedText.includes(normalizeAiEditName(zone.name)))
+  return matchedZone?.name
+}
+
+function getAiEditOperationsFromPrompt(prompt: string): AiEditOperation[] {
+  const text = prompt.trim()
+  if (!text) return []
+
+  const orientation = getAiEditOrientation(text)
+  const roomName = getAiEditTargetRoomName(text)
+  const target: AiEditTarget = { orientation: orientation ?? undefined, roomName }
+
+  const operations: AiEditOperation[] = []
+  const normalizedText = text.toLowerCase()
+
+  if (/墙|wall/.test(normalizedText) && /外移|内移|移动|扩大|缩小|move|extend|expand|shrink/.test(normalizedText)) {
+    operations.push({
+      action: 'move_wall',
+      direction: getAiEditMoveDirection(text),
+      distance: orientation ? getAiEditSignedDistance(text, orientation) : getAiEditNumber(text, 1),
+      target,
+    })
+  }
+
+  if (/落地窗|窗|window|glazing/.test(normalizedText)) {
+    const isFullHeight = /落地窗|full.?height|floor.?to.?ceiling/.test(normalizedText)
+    operations.push({
+      action: 'add_window',
+      height: isFullHeight ? 2.4 : 1.4,
+      positionRatio: getAiEditPositionRatio(text),
+      sillHeight: isFullHeight ? 0.05 : 0.9,
+      target,
+      width: getAiEditNumber(text, isFullHeight ? 2.4 : 1.6),
+    })
+  }
+
+  if (/门|入口|door|entrance/.test(normalizedText)) {
+    operations.push({
+      action: 'add_door',
+      height: 2.2,
+      positionRatio: getAiEditPositionRatio(text),
+      target,
+      width: getAiEditNumber(text, /大门|entrance|grand/.test(normalizedText) ? 1.5 : 0.9),
+    })
+  }
+
+  return operations
+}
+
 function mapAiCreateBuildingType(value: unknown): AiBuildingType {
   switch (value) {
     case 'office':
@@ -276,6 +411,82 @@ function getAiCreateRequestedSpaces(
     .filter((space) => space.count > 0)
 }
 
+function hasAiCreateVillaIntent(
+  draft: Record<string, unknown>,
+  text: string,
+): boolean {
+  const normalizedText = text.toLowerCase()
+  if (/别墅|大宅|豪宅|庄园|villa|mansion|estate/.test(normalizedText)) return true
+
+  if (!isRecord(draft.spaceCounts)) return false
+  const garageCount = normalizePositiveNumber(draft.spaceCounts.garage, 0)
+  const balconyCount = normalizePositiveNumber(draft.spaceCounts.balcony, 0)
+  const primarySuiteCount = normalizePositiveNumber(draft.spaceCounts.primary_bedroom, 0)
+  const bedroomCount = normalizePositiveNumber(draft.spaceCounts.bedroom, 0)
+  return garageCount > 0 && primarySuiteCount > 0 && (balconyCount > 0 || bedroomCount >= 3)
+}
+
+function getAiCreateVillaVariant(
+  draft: Record<string, unknown>,
+  intentText: string,
+): AiBuildingVariant {
+  const normalizedText = intentText.toLowerCase()
+  if (
+    draft.shape === 'courtyard' ||
+    draft.shape === 'u_shape' ||
+    /庭院|院子|花园|景观|合院|courtyard|garden|landscape|estate/.test(normalizedText)
+  ) {
+    return 'courtyard'
+  }
+  if (
+    draft.shape === 'l_shape' ||
+    draft.shape === 't_shape' ||
+    draft.shape === 'freeform' ||
+    /海|湖|景观|露台|落地窗|采光|sea|ocean|lake|view|terrace|glazing|daylight/.test(
+      normalizedText,
+    )
+  ) {
+    return 'daylight'
+  }
+  return 'courtyard'
+}
+
+function ensureAiCreateRequestedSpace(
+  spaces: NonNullable<AiBuildingFormState['requestedSpaces']>,
+  key: string,
+  count: number,
+  language: 'zh-CN' | 'en',
+) {
+  const normalizedCount = Math.max(1, Math.round(count))
+  const existing = spaces.find((space) => space.key === key)
+  if (existing) {
+    existing.count = Math.max(existing.count, normalizedCount)
+    return
+  }
+  spaces.push({
+    key,
+    label: getAiCreateSpaceLabel(key, language),
+    count: normalizedCount,
+  })
+}
+
+function enhanceAiCreateVillaSpaces(
+  spaces: NonNullable<AiBuildingFormState['requestedSpaces']>,
+  floorCount: number,
+  language: 'zh-CN' | 'en',
+) {
+  ensureAiCreateRequestedSpace(spaces, 'living_room', 1, language)
+  ensureAiCreateRequestedSpace(spaces, 'dining_room', 1, language)
+  ensureAiCreateRequestedSpace(spaces, 'kitchen', 1, language)
+  ensureAiCreateRequestedSpace(spaces, 'primary_bedroom', 1, language)
+  ensureAiCreateRequestedSpace(spaces, 'bedroom', 3, language)
+  ensureAiCreateRequestedSpace(spaces, 'bathroom', 3, language)
+  ensureAiCreateRequestedSpace(spaces, 'study', 1, language)
+  ensureAiCreateRequestedSpace(spaces, 'balcony', 2, language)
+  ensureAiCreateRequestedSpace(spaces, 'garage', 1, language)
+  ensureAiCreateRequestedSpace(spaces, 'stairs', floorCount > 1 ? 1 : 0, language)
+}
+
 function convertAiCreateDraftToForm(
   payload: AiCreateApplyPayload,
   language: 'zh-CN' | 'en',
@@ -284,10 +495,21 @@ function convertAiCreateDraftToForm(
   const draft = payload.draft
   if (!isRecord(draft)) return null
 
-  const buildingType = mapAiCreateBuildingType(draft.buildingType)
-  const floorCount = Math.round(clampNumber(normalizePositiveNumber(draft.floorCount, 1), 1, 8))
+  const spaceSummary = summarizeAiCreateSpaces(draft.spaceCounts, language)
+  const requirements = typeof draft.requirements === 'string' ? draft.requirements.trim() : ''
+  const summary = typeof payload.summary === 'string' ? payload.summary.trim() : ''
+  const intentText = [summary, spaceSummary, requirements].filter(Boolean).join(' ')
+  const mappedBuildingType = mapAiCreateBuildingType(draft.buildingType)
+  const isVillaDraft =
+    mappedBuildingType === 'residential' && hasAiCreateVillaIntent(draft, intentText)
+  const buildingType: AiBuildingType = isVillaDraft ? 'villa' : mappedBuildingType
+  const requestedFloorCount = Math.round(
+    clampNumber(normalizePositiveNumber(draft.floorCount, 1), 1, 8),
+  )
+  const floorCount = isVillaDraft ? Math.max(2, requestedFloorCount) : requestedFloorCount
   const area = normalizePositiveNumber(draft.area, 120)
-  const areaSqm = draft.areaUnit === 'sqft' ? area * 0.092903 : area
+  const rawAreaSqm = draft.areaUnit === 'sqft' ? area * 0.092903 : area
+  const areaSqm = isVillaDraft ? Math.max(rawAreaSqm, 360) : rawAreaSqm
   const footprintArea = Math.max(36, areaSqm / Math.max(1, floorCount))
   const aspect =
     draft.shape === 'freeform' || draft.shape === 'l_shape' || draft.shape === 't_shape'
@@ -301,18 +523,26 @@ function convertAiCreateDraftToForm(
   const width =
     Math.round(clampNumber(Math.sqrt(footprintArea * aspect), MIN_DIMENSION, maxWidth) * 10) / 10
   const depth = Math.round(clampNumber(footprintArea / width, MIN_DIMENSION, maxDepth) * 10) / 10
-  const spaceSummary = summarizeAiCreateSpaces(draft.spaceCounts, language)
   const requestedSpaces = getAiCreateRequestedSpaces(draft.spaceCounts, language)
-  const requirements = typeof draft.requirements === 'string' ? draft.requirements.trim() : ''
-  const summary = typeof payload.summary === 'string' ? payload.summary.trim() : ''
+  if (isVillaDraft) {
+    enhanceAiCreateVillaSpaces(requestedSpaces, floorCount, language)
+  }
+  const villaPrompt =
+    isVillaDraft && language === 'en'
+      ? 'Villa mode: create a multi-level villa with expressive massing, garage, terrace or balcony, landscape courtyard, grand entrance, large glazing, facade depth, and roof expression.'
+      : isVillaDraft
+        ? '别墅生成模式：生成多层别墅体量，包含车库、露台或阳台、庭院景观、入口门廊、落地窗、立面层次和屋顶造型。'
+        : ''
   const promptParts =
     language === 'en'
       ? [
+          villaPrompt,
           summary,
           spaceSummary ? `Spaces: ${spaceSummary}` : '',
           requirements ? `Additional requirements: ${requirements}` : '',
         ]
       : [
+          villaPrompt,
           summary,
           spaceSummary ? `功能空间：${spaceSummary}` : '',
           requirements ? `额外要求：${requirements}` : '',
@@ -321,13 +551,396 @@ function convertAiCreateDraftToForm(
   return {
     buildingType,
     style: 'modern',
-    variant: mapAiCreateVariant(draft.shape),
+    variant: isVillaDraft
+      ? getAiCreateVillaVariant(draft, intentText)
+      : mapAiCreateVariant(draft.shape),
     floors: floorCount,
     width: snapDimensionToSceneGrid(width, sceneContext, maxWidth),
     depth: snapDimensionToSceneGrid(depth, sceneContext, maxDepth),
     prompt: promptParts.filter(Boolean).join(language === 'en' ? '. ' : '。'),
     requestedSpaces,
   }
+}
+
+function readAiEditOperations(payload: unknown): AiEditOperation[] {
+  if (!isRecord(payload)) return []
+
+  const prompt = typeof payload.prompt === 'string' ? payload.prompt.trim() : ''
+  const promptOperations = getAiEditOperationsFromPrompt(prompt)
+  if (promptOperations.length) return promptOperations
+
+  if (!Array.isArray(payload.operations)) return []
+  return payload.operations
+    .map((operation): AiEditOperation | null => {
+      if (!isRecord(operation) || !isRecord(operation.target)) return null
+      const orientation =
+        operation.target.orientation === 'north' ||
+        operation.target.orientation === 'south' ||
+        operation.target.orientation === 'east' ||
+        operation.target.orientation === 'west'
+          ? operation.target.orientation
+          : undefined
+      const wallId = typeof operation.target.wallId === 'string' ? operation.target.wallId : undefined
+      const roomName =
+        typeof operation.target.roomName === 'string' && operation.target.roomName.trim()
+          ? operation.target.roomName.trim()
+          : undefined
+      const target: AiEditTarget = { orientation, roomName, wallId }
+
+      if (operation.action === 'move_wall') {
+        const distance = Number(operation.distance)
+        if (!Number.isFinite(distance) || distance === 0) return null
+        const direction =
+          operation.direction === 'inward' || operation.direction === 'outward'
+            ? operation.direction
+            : undefined
+        return { action: 'move_wall', direction, distance, target }
+      }
+      if (operation.action === 'add_window') {
+        return {
+          action: 'add_window',
+          height: normalizePositiveNumber(operation.height, 1.4),
+          positionRatio: clampNumber(normalizePositiveNumber(operation.positionRatio, 0.5), 0.08, 0.92),
+          sillHeight: Math.max(0, Number(operation.sillHeight) || 0.9),
+          target,
+          width: normalizePositiveNumber(operation.width, 1.6),
+        }
+      }
+      if (operation.action === 'add_door') {
+        return {
+          action: 'add_door',
+          height: normalizePositiveNumber(operation.height, 2.1),
+          positionRatio: clampNumber(normalizePositiveNumber(operation.positionRatio, 0.5), 0.08, 0.92),
+          target,
+          width: normalizePositiveNumber(operation.width, 0.9),
+        }
+      }
+      return null
+    })
+    .filter((operation): operation is AiEditOperation => Boolean(operation))
+}
+
+function resolveAiEditChildNode(
+  child: unknown,
+  nodes: ReturnType<typeof useScene.getState>['nodes'],
+) {
+  if (typeof child === 'string') return nodes[child as AnyNodeId]
+  if (isRecord(child) && typeof child.id === 'string') {
+    return nodes[child.id as AnyNodeId] ?? child
+  }
+  return null
+}
+
+function getAiEditLevelNodes() {
+  const scene = useScene.getState()
+  const selectedBuildingId = useViewer.getState().selection.buildingId
+  const selectedBuilding =
+    selectedBuildingId && scene.nodes[selectedBuildingId]?.type === 'building'
+      ? scene.nodes[selectedBuildingId]
+      : null
+  const building =
+    selectedBuilding ?? Object.values(scene.nodes).find((node) => node.type === 'building') ?? null
+  if (!building || !Array.isArray(building.children)) return []
+
+  return building.children
+    .map((child) => resolveAiEditChildNode(child, scene.nodes))
+    .filter((node): node is LevelNode => Boolean(node && node.type === 'level'))
+    .sort((a, b) => a.level - b.level)
+}
+
+function getAiEditLevelWalls(level: LevelNode) {
+  const scene = useScene.getState()
+  return level.children
+    .map((child) => resolveAiEditChildNode(child, scene.nodes))
+    .filter((node): node is WallNode => Boolean(node && node.type === 'wall'))
+}
+
+function getAiEditWallLength(wall: WallNode) {
+  return Math.hypot(wall.end[0] - wall.start[0], wall.end[1] - wall.start[1])
+}
+
+function getAiEditWallMidpoint(wall: WallNode) {
+  return {
+    x: (wall.start[0] + wall.end[0]) / 2,
+    z: (wall.start[1] + wall.end[1]) / 2,
+  }
+}
+
+function getAiEditPolygonBounds(points: Array<[number, number]>) {
+  const xs = points.map((point) => point[0])
+  const zs = points.map((point) => point[1])
+  return {
+    minX: Math.min(...xs),
+    maxX: Math.max(...xs),
+    minZ: Math.min(...zs),
+    maxZ: Math.max(...zs),
+  }
+}
+
+function getAiEditWallBounds(wall: WallNode) {
+  return {
+    minX: Math.min(wall.start[0], wall.end[0]),
+    maxX: Math.max(wall.start[0], wall.end[0]),
+    minZ: Math.min(wall.start[1], wall.end[1]),
+    maxZ: Math.max(wall.start[1], wall.end[1]),
+  }
+}
+
+function getAiEditRangeOverlap(aMin: number, aMax: number, bMin: number, bMax: number) {
+  return Math.max(0, Math.min(aMax, bMax) - Math.max(aMin, bMin))
+}
+
+function isAiEditWallVertical(wall: WallNode) {
+  return Math.abs(wall.end[0] - wall.start[0]) <= Math.abs(wall.end[1] - wall.start[1])
+}
+
+function getSelectedAiEditWall(): WallNode | null {
+  const scene = useScene.getState()
+  const selection = useViewer.getState().selection
+  for (const selectedId of selection.selectedIds) {
+    const node = scene.nodes[selectedId as AnyNodeId]
+    if (node?.type === 'wall') return node as WallNode
+    if ((node?.type === 'window' || node?.type === 'door') && typeof node.wallId === 'string') {
+      const wall = scene.nodes[node.wallId as AnyNodeId]
+      if (wall?.type === 'wall') return wall as WallNode
+    }
+  }
+  return null
+}
+
+function findAiEditZone(roomName: string): ZoneNode | null {
+  const normalizedRoomName = normalizeAiEditName(roomName)
+  return (
+    Object.values(useScene.getState().nodes)
+      .filter((node): node is ZoneNode => node.type === 'zone')
+      .find((zone) => normalizeAiEditName(zone.name) === normalizedRoomName) ?? null
+  )
+}
+
+function findAiEditRoomWall(zone: ZoneNode, orientation: AiEditOrientation | undefined): WallNode | null {
+  const scene = useScene.getState()
+  const parentId = zone.parentId as AnyNodeId | null
+  const level =
+    parentId && scene.nodes[parentId]?.type === 'level'
+      ? (scene.nodes[parentId] as LevelNode)
+      : null
+  if (!level || zone.polygon.length < 3) return null
+
+  const walls = getAiEditLevelWalls(level)
+  if (!walls.length) return null
+
+  const zoneBounds = getAiEditPolygonBounds(zone.polygon)
+  const targetOrientation = orientation ?? 'south'
+  const wantsVertical = targetOrientation === 'east' || targetOrientation === 'west'
+  const targetCoordinate =
+    targetOrientation === 'east'
+      ? zoneBounds.maxX
+      : targetOrientation === 'west'
+        ? zoneBounds.minX
+        : targetOrientation === 'south'
+          ? zoneBounds.maxZ
+          : zoneBounds.minZ
+
+  const candidates = walls.filter((wall) => isAiEditWallVertical(wall) === wantsVertical)
+  const targetPool = candidates.length ? candidates : walls
+
+  return targetPool.reduce((best, wall) => {
+    const scoreWall = (candidate: WallNode) => {
+      const midpoint = getAiEditWallMidpoint(candidate)
+      const wallBounds = getAiEditWallBounds(candidate)
+      const distance = wantsVertical
+        ? Math.abs(midpoint.x - targetCoordinate)
+        : Math.abs(midpoint.z - targetCoordinate)
+      const overlap = wantsVertical
+        ? getAiEditRangeOverlap(wallBounds.minZ, wallBounds.maxZ, zoneBounds.minZ, zoneBounds.maxZ)
+        : getAiEditRangeOverlap(wallBounds.minX, wallBounds.maxX, zoneBounds.minX, zoneBounds.maxX)
+      return distance - overlap * 0.08
+    }
+    return scoreWall(wall) < scoreWall(best) ? wall : best
+  }, targetPool[0] as WallNode)
+}
+
+function findAiEditTargetWall(operation: AiEditOperation): WallNode | null {
+  const scene = useScene.getState()
+  const explicitWall =
+    operation.target.wallId && scene.nodes[operation.target.wallId as AnyNodeId]?.type === 'wall'
+      ? (scene.nodes[operation.target.wallId as AnyNodeId] as WallNode)
+      : null
+  if (explicitWall) return explicitWall
+
+  if (operation.target.roomName) {
+    const zone = findAiEditZone(operation.target.roomName)
+    const roomWall = zone ? findAiEditRoomWall(zone, operation.target.orientation) : null
+    if (roomWall) return roomWall
+  }
+
+  const selectedWall = getSelectedAiEditWall()
+  if (selectedWall) return selectedWall
+
+  const levels = getAiEditLevelNodes()
+  const level = levels[Math.max(0, operation.target.levelIndex ?? 0)]
+  if (!level) return null
+
+  const walls = getAiEditLevelWalls(level)
+  if (!walls.length) return null
+  const orientation = operation.target.orientation ?? 'south'
+  const candidates = walls.filter((wall) =>
+    orientation === 'east' || orientation === 'west'
+      ? isAiEditWallVertical(wall)
+      : !isAiEditWallVertical(wall),
+  )
+  const targetPool = candidates.length ? candidates : walls
+
+  return targetPool.reduce((best, wall) => {
+    const bestMidpoint = getAiEditWallMidpoint(best)
+    const midpoint = getAiEditWallMidpoint(wall)
+    if (orientation === 'east') return midpoint.x > bestMidpoint.x ? wall : best
+    if (orientation === 'west') return midpoint.x < bestMidpoint.x ? wall : best
+    if (orientation === 'south') return midpoint.z > bestMidpoint.z ? wall : best
+    return midpoint.z < bestMidpoint.z ? wall : best
+  }, targetPool[0] as WallNode)
+}
+
+function areAiEditPointsClose(a: [number, number], b: [number, number]) {
+  return Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.04
+}
+
+function moveAiEditPoint(point: [number, number], delta: [number, number]): [number, number] {
+  return [Math.round((point[0] + delta[0]) * 1000) / 1000, Math.round((point[1] + delta[1]) * 1000) / 1000]
+}
+
+function getAiEditLevelBounds(level: LevelNode) {
+  const walls = getAiEditLevelWalls(level)
+  const points = walls.flatMap((wall) => [wall.start, wall.end])
+  return points.length ? getAiEditPolygonBounds(points) : null
+}
+
+function getAiEditMoveDistanceForWall(
+  wall: WallNode,
+  operation: Extract<AiEditOperation, { action: 'move_wall' }>,
+  parentLevel: LevelNode | null,
+) {
+  if (operation.target.orientation) return operation.distance
+  const distance = Math.abs(operation.distance)
+  const vertical = isAiEditWallVertical(wall)
+  const midpoint = getAiEditWallMidpoint(wall)
+  const bounds = parentLevel ? getAiEditLevelBounds(parentLevel) : null
+  const centerX = bounds ? (bounds.minX + bounds.maxX) / 2 : 0
+  const centerZ = bounds ? (bounds.minZ + bounds.maxZ) / 2 : 0
+  const outwardSign = vertical ? (midpoint.x >= centerX ? 1 : -1) : midpoint.z >= centerZ ? 1 : -1
+  return distance * outwardSign * (operation.direction === 'inward' ? -1 : 1)
+}
+
+function applyAiEditMoveWall(
+  wall: WallNode,
+  operation: Extract<AiEditOperation, { action: 'move_wall' }>,
+) {
+  const scene = useScene.getState()
+  const vertical = isAiEditWallVertical(wall)
+  const parentId = wall.parentId as AnyNodeId | null
+  const parentLevel =
+    parentId && scene.nodes[parentId]?.type === 'level'
+      ? (scene.nodes[parentId] as LevelNode)
+      : null
+  const distance = getAiEditMoveDistanceForWall(wall, operation, parentLevel)
+  const delta: [number, number] = vertical ? [distance, 0] : [0, distance]
+  const nextStart = moveAiEditPoint(wall.start, delta)
+  const nextEnd = moveAiEditPoint(wall.end, delta)
+  const siblingWalls = parentLevel ? getAiEditLevelWalls(parentLevel) : []
+  const updates = [
+    {
+      id: wall.id,
+      data: { start: nextStart, end: nextEnd },
+    },
+  ]
+
+  for (const sibling of siblingWalls) {
+    if (sibling.id === wall.id) continue
+    let start = sibling.start
+    let end = sibling.end
+    if (areAiEditPointsClose(start, wall.start)) start = nextStart
+    if (areAiEditPointsClose(start, wall.end)) start = nextEnd
+    if (areAiEditPointsClose(end, wall.start)) end = nextStart
+    if (areAiEditPointsClose(end, wall.end)) end = nextEnd
+    if (start !== sibling.start || end !== sibling.end) {
+      updates.push({ id: sibling.id, data: { start, end } })
+    }
+  }
+
+  scene.updateNodes(updates)
+}
+
+function applyAiEditOpening(operation: Extract<AiEditOperation, { action: 'add_window' | 'add_door' }>, wall: WallNode) {
+  const wallLength = getAiEditWallLength(wall)
+  if (wallLength < 0.4) return false
+  const width = Math.min(operation.width ?? 1.4, Math.max(0.3, wallLength - 0.3))
+  const localX = clampNumber(
+    wallLength * (operation.positionRatio ?? 0.5),
+    width / 2 + 0.08,
+    wallLength - width / 2 - 0.08,
+  )
+  if (operation.action === 'add_door') {
+    const height = operation.height ?? 2.1
+    const door = DoorNode.parse({
+      name: 'AI Door',
+      position: [localX, height / 2, 0],
+      width,
+      height,
+      wallId: wall.id,
+      parentId: wall.id,
+      metadata: { source: 'ai-edit', role: 'door' },
+    })
+    useScene.getState().createNode(door, wall.id)
+    return true
+  }
+
+  const height = operation.height ?? 1.4
+  const centerY = (operation.sillHeight ?? 0.9) + height / 2
+  const windowNode = WindowNode.parse({
+    name: 'AI Window',
+    position: [localX, centerY, 0],
+    width,
+    height,
+    wallId: wall.id,
+    parentId: wall.id,
+    metadata: { source: 'ai-edit', role: 'window' },
+  })
+  useScene.getState().createNode(windowNode, wall.id)
+  return true
+}
+
+function applyAiEditOperationsFromHost(payload: unknown) {
+  const operations = readAiEditOperations(payload)
+  if (!operations.length) {
+    postToHost('ai-edit-apply-result', {
+      status: 'error',
+      message: '没有识别到可执行的墙、窗、门或尺寸编辑指令。',
+    })
+    return
+  }
+
+  let appliedCount = 0
+  for (const operation of operations) {
+    const wall = findAiEditTargetWall(operation)
+    if (!wall) continue
+    if (operation.action === 'move_wall') {
+      applyAiEditMoveWall(wall, operation)
+      appliedCount += 1
+      continue
+    }
+    if (applyAiEditOpening(operation, wall)) {
+      appliedCount += 1
+    }
+  }
+
+  postToHost('ai-edit-apply-result', {
+    status: appliedCount > 0 ? 'success' : 'error',
+    appliedCount,
+    message:
+      appliedCount > 0
+        ? `已执行 ${appliedCount} 个 AI 精确编辑操作。`
+        : '没有找到匹配的目标墙体。',
+  })
 }
 
 async function readApiError(response: Response, fallback: string): Promise<string> {
@@ -1202,6 +1815,11 @@ export default function Home() {
 
       if (event.data.type === 'apply-ai-create-draft') {
         applyAiCreateDraftFromHost(event.data.payload)
+        return
+      }
+
+      if (event.data.type === 'apply-ai-edit-operations') {
+        applyAiEditOperationsFromHost(event.data.payload)
         return
       }
 

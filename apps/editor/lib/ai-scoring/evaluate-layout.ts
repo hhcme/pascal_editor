@@ -74,6 +74,7 @@ const ISSUE_DIMENSION_MAP: Record<AiAnalysisIssueCode, AiScoreDimensionKey> = {
   TOILET_EXPOSED_TO_PUBLIC_VIEW: 'zoning_privacy',
   PRIVATE_ROOM_TRAVERSED: 'zoning_privacy',
   DOOR_SWING_COLLISION: 'circulation',
+  BASIC_FURNITURE_MISSING: 'furniture_fit',
   BEDROOM_FURNITURE_IMPOSSIBLE: 'furniture_fit',
   KITCHEN_WORKFLOW_BROKEN: 'storage_chores',
   DINING_PULL_OUT_BLOCKED: 'circulation',

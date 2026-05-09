@@ -2,7 +2,17 @@
 
 import { type LevelNode, useScene } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
-import Image from 'next/image'
+import {
+  Hammer,
+  MapPinned,
+  MousePointer2,
+  PencilLine,
+  ScanSearch,
+  Shapes,
+  Sofa,
+  Trash2,
+  type LucideIcon,
+} from 'lucide-react'
 import { cn } from './../../../lib/utils'
 import useEditor, { isSketchStructureTool } from './../../../store/use-editor'
 import { ActionButton } from './action-button'
@@ -19,7 +29,7 @@ type ControlId =
 
 type ControlConfig = {
   id: ControlId
-  imageSrc: string
+  Icon: LucideIcon
   label: string
   shortcut?: string
   color: string
@@ -30,7 +40,7 @@ type ControlConfig = {
 const controls: ControlConfig[] = [
   {
     id: 'select',
-    imageSrc: '/icons/select.png',
+    Icon: MousePointer2,
     label: 'Select',
     shortcut: 'V',
     color: 'hover:bg-blue-500/20 hover:text-blue-400',
@@ -38,28 +48,28 @@ const controls: ControlConfig[] = [
   },
   {
     id: 'box-select',
-    imageSrc: '/icons/box-select.svg',
+    Icon: ScanSearch,
     label: 'Box select',
     color: 'hover:bg-accent',
     activeColor: 'bg-primary/10 text-primary ring-1 ring-primary/20 hover:bg-primary/15',
   },
   {
     id: 'site-edit',
-    imageSrc: '/icons/site.png',
+    Icon: MapPinned,
     label: 'Edit site',
     color: 'hover:bg-accent',
     activeColor: 'bg-primary/10 text-primary ring-1 ring-primary/20 hover:bg-primary/15',
   },
   {
     id: 'sketch',
-    imageSrc: '/icons/sketch-line.svg',
+    Icon: PencilLine,
     label: '2D Sketch',
     color: 'hover:bg-blue-500/20 hover:text-blue-400',
     activeColor: 'bg-blue-500/20 text-blue-400',
   },
   {
     id: 'build',
-    imageSrc: '/icons/build.png',
+    Icon: Hammer,
     label: 'Build',
     shortcut: 'B',
     color: 'hover:bg-green-500/20 hover:text-green-400',
@@ -67,7 +77,7 @@ const controls: ControlConfig[] = [
   },
   {
     id: 'furnish',
-    imageSrc: '/icons/couch.png',
+    Icon: Sofa,
     label: 'Furnish',
     shortcut: 'F',
     color: 'hover:bg-green-500/20 hover:text-green-400',
@@ -75,7 +85,7 @@ const controls: ControlConfig[] = [
   },
   {
     id: 'zone',
-    imageSrc: '/icons/zone.png',
+    Icon: Shapes,
     label: 'Zone',
     shortcut: 'Z',
     color: 'hover:bg-green-500/20 hover:text-green-400',
@@ -83,7 +93,7 @@ const controls: ControlConfig[] = [
   },
   {
     id: 'delete',
-    imageSrc: '/icons/delete.svg',
+    Icon: Trash2,
     label: 'Delete',
     shortcut: 'D',
     color: 'hover:bg-red-500/20 hover:text-red-400',
@@ -218,6 +228,7 @@ export function ControlModes() {
         const isDeleteButton = c.id === 'delete'
         const isActive = getIsActive(c.id)
         const isDisabled = isSiteButton && !canEnterSiteEdit
+        const Icon = c.Icon
 
         return (
           <ActionButton
@@ -253,21 +264,12 @@ export function ControlModes() {
             size="icon"
             variant="ghost"
           >
-            <Image
-              alt={c.label}
+            <Icon
+              aria-hidden="true"
               className={cn(
-                'h-[28px] w-[28px] object-contain transition-[opacity,filter] duration-200',
-                isSiteButton
-                  ? isActive
-                    ? 'opacity-100 grayscale-0'
-                    : ''
-                  : isActive
-                    ? 'opacity-100 grayscale-0'
-                    : 'opacity-60 grayscale group-hover:opacity-100 group-hover:grayscale-0',
+                'h-5 w-5 stroke-[1.9] transition-colors duration-200',
+                isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground',
               )}
-              height={28}
-              src={c.imageSrc}
-              width={28}
             />
           </ActionButton>
         )

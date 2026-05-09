@@ -1,7 +1,7 @@
 import { type AnyNodeId, type StairNode, type StairSegmentNode, useScene } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
 import { AnimatePresence } from 'motion/react'
-import Image from 'next/image'
+import { Blocks } from 'lucide-react'
 import { memo, useCallback, useEffect, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import useEditor from '../../../../../store/use-editor'
@@ -97,9 +97,7 @@ export const StairTreeNode = memo(function StairTreeNode({
         depth={depth}
         expanded={expanded}
         hasChildren={segments.length > 0}
-        icon={
-          <Image alt="" className="object-contain" height={14} src="/icons/stairs.png" width={14} />
-        }
+        icon={<Blocks aria-hidden="true" className="h-3.5 w-3.5 stroke-[1.9]" />}
         isDropTarget={isValidDropTarget && isDropTarget}
         isHovered={isHovered || isDropTarget}
         isLast={isLast && !expanded}
@@ -201,15 +199,7 @@ function StairSegmentTreeNode({
         depth={depth}
         expanded={false}
         hasChildren={false}
-        icon={
-          <Image
-            alt=""
-            className="object-contain opacity-60"
-            height={14}
-            src="/icons/stairs.png"
-            width={14}
-          />
-        }
+        icon={<Blocks aria-hidden="true" className="h-3.5 w-3.5 stroke-[1.9] opacity-70" />}
         isDraggable
         isHovered={isHovered}
         isLast={isLast}

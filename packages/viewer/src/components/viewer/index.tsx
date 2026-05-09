@@ -16,6 +16,7 @@ import { Canvas, extend, type ThreeToJSXElements, useFrame, useThree } from '@re
 import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three/webgpu'
 import useViewer from '../../store/use-viewer'
+import { CharacterActorSystem } from '../../systems/character/character-actor-system'
 import { GuideSystem } from '../../systems/guide/guide-system'
 import { ItemLightSystem } from '../../systems/item-light/item-light-system'
 import { LevelSystem } from '../../systems/level/level-system'
@@ -57,6 +58,62 @@ function AnimatedBackground({ isDark }: { isDark: boolean }) {
     targetColor.set(targetHex)
     scene.background.lerp(targetColor, dt)
   })
+
+  return null
+}
+
+function SectionPlaneSystem() {
+  const sectionPlane = useViewer((state) => state.sectionPlane)
+  const { gl, invalidate } = useThree()
+  const plane = useMemo(() => new THREE.Plane(), [])
+  const normal = useMemo(() => new THREE.Vector3(), [])
+  const point = useMemo(() => new THREE.Vector3(), [])
+
+  useEffect(() => {
+    const renderer = gl as typeof gl & {
+      clippingPlanes?: THREE.Plane[]
+      localClippingEnabled?: boolean
+    }
+
+    if (!sectionPlane.enabled) {
+      renderer.clippingPlanes = []
+      renderer.localClippingEnabled = false
+      invalidate()
+      return
+    }
+
+    normal.set(0, 0, 0)
+    if (sectionPlane.axis === 'x') normal.setX(1)
+    if (sectionPlane.axis === 'y') normal.setY(1)
+    if (sectionPlane.axis === 'z') normal.setZ(1)
+    if (sectionPlane.inverted) normal.multiplyScalar(-1)
+
+    point.set(0, 0, 0)
+    if (sectionPlane.axis === 'x') point.setX(sectionPlane.position)
+    if (sectionPlane.axis === 'y') point.setY(sectionPlane.position)
+    if (sectionPlane.axis === 'z') point.setZ(sectionPlane.position)
+
+    plane.setFromNormalAndCoplanarPoint(normal, point)
+    renderer.localClippingEnabled = true
+    renderer.clippingPlanes = [plane]
+    invalidate()
+
+    return () => {
+      renderer.clippingPlanes = []
+      renderer.localClippingEnabled = false
+      invalidate()
+    }
+  }, [
+    gl,
+    invalidate,
+    normal,
+    plane,
+    point,
+    sectionPlane.axis,
+    sectionPlane.enabled,
+    sectionPlane.inverted,
+    sectionPlane.position,
+  ])
 
   return null
 }
@@ -150,6 +207,7 @@ const Viewer: React.FC<ViewerProps> = ({
     >
       <FrameLimiter fps={50} />
       <AnimatedBackground isDark={theme === 'dark'} />
+      <SectionPlaneSystem />
       <ViewerCamera />
 
       {/* <directionalLight position={[10, 10, 5]} intensity={0.5} castShadow
@@ -157,6 +215,7 @@ const Viewer: React.FC<ViewerProps> = ({
       <Lights />
       <Bvh>
         <SceneRenderer />
+        <CharacterActorSystem />
       </Bvh>
 
       {/* Default Systems */}

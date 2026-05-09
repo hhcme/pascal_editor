@@ -1,7 +1,7 @@
 import {
   getSketchLineChordLength,
-  sampleSketchLineCenterline,
   type SketchLineNode,
+  sampleSketchLineCenterline,
   useRegistry,
 } from '@pascal-app/core'
 import { useEffect, useMemo, useRef } from 'react'
@@ -63,15 +63,14 @@ function interpolatePoint(
 function buildSketchLineSegments(node: SketchLineNode, construction: boolean): SketchLineSegment[] {
   const centerline = sampleSketchLineCenterline(node, 36)
   if (!construction) {
-    return centerline
-      .flatMap((point, index) => {
-        const nextPoint = centerline[index + 1]
-        if (!nextPoint) {
-          return []
-        }
-        const segment = createSketchLineSegment(point, nextPoint)
-        return segment ? [segment] : []
-      })
+    return centerline.flatMap((point, index) => {
+      const nextPoint = centerline[index + 1]
+      if (!nextPoint) {
+        return []
+      }
+      const segment = createSketchLineSegment(point, nextPoint)
+      return segment ? [segment] : []
+    })
   }
 
   const segments: SketchLineSegment[] = []
@@ -131,6 +130,21 @@ function createHitMaterial() {
   return material
 }
 
+function getSketchPlaneElevation(node: SketchLineNode): number {
+  const metadata = node.metadata
+  if (!(typeof metadata === 'object' && metadata !== null && 'sketchPlane' in metadata)) {
+    return 0
+  }
+
+  const sketchPlane = (metadata as Record<string, unknown>).sketchPlane
+  if (!(typeof sketchPlane === 'object' && sketchPlane !== null && 'elevation' in sketchPlane)) {
+    return 0
+  }
+
+  const elevation = (sketchPlane as Record<string, unknown>).elevation
+  return typeof elevation === 'number' && Number.isFinite(elevation) ? elevation : 0
+}
+
 export const SketchLineRenderer = ({ node }: { node: SketchLineNode }) => {
   const ref = useRef<Group>(null!)
   const handlers = useNodeEvents(node, 'sketch-line')
@@ -182,7 +196,7 @@ export const SketchLineRenderer = ({ node }: { node: SketchLineNode }) => {
 
   return (
     <group
-      position={[0, SKETCH_LINE_Y_OFFSET, 0]}
+      position={[0, getSketchPlaneElevation(node) + SKETCH_LINE_Y_OFFSET, 0]}
       ref={ref}
       renderOrder={60}
       visible={canRenderLine}
