@@ -20,7 +20,15 @@ import {
 
 import { useViewer } from '@pascal-app/viewer'
 import { useCallback, useEffect, useRef } from 'react'
-import { type BufferGeometry, Color, type Material, type Mesh, type Object3D } from 'three'
+import {
+  type BufferGeometry,
+  Color,
+  type Material,
+  Matrix3,
+  type Mesh,
+  type Object3D,
+  Vector3,
+} from 'three'
 import { sfxEmitter } from '../../lib/sfx-bus'
 import useEditor, {
   type MaterialTargetRole,
@@ -30,6 +38,7 @@ import useEditor, {
 import { boxSelectHandled } from '../tools/select/box-select-tool'
 
 const FEATURE_TOP_FACE_HIT_TOLERANCE = 0.06
+const FEATURE_FACE_NORMAL_THRESHOLD = 0.45
 
 const isNodeInCurrentLevel = (node: AnyNode): boolean => {
   const currentLevelId = useViewer.getState().selection.levelId
@@ -211,6 +220,53 @@ function isFeatureTopFaceHit(event: NodeEvent<FeatureNode>): boolean {
   return hitNearTop && (normalY === undefined || normalY > 0.5)
 }
 
+function getFeatureSideFaceSketchPlane(event: NodeEvent<FeatureNode>) {
+  const normal = event.normal
+  if (!normal) {
+    return null
+  }
+
+  const object = getEventObject(event)
+  object.updateWorldMatrix(true, false)
+
+  const worldNormal = new Vector3(...normal)
+    .applyNormalMatrix(new Matrix3().getNormalMatrix(object.matrixWorld))
+    .normalize()
+  if (Math.abs(worldNormal.y) > FEATURE_FACE_NORMAL_THRESHOLD) {
+    return null
+  }
+
+  const vAxis = new Vector3(0, 1, 0)
+    .addScaledVector(worldNormal, -worldNormal.dot(new Vector3(0, 1, 0)))
+    .normalize()
+  if (vAxis.lengthSq() <= 1e-6) {
+    return null
+  }
+
+  const uAxis = new Vector3().crossVectors(vAxis, worldNormal).normalize()
+  const origin = event.position as [number, number, number]
+  const dominantAxis = Math.abs(worldNormal.x) >= Math.abs(worldNormal.z) ? 'x' : 'z'
+  const positiveSide = dominantAxis === 'x' ? worldNormal.x >= 0 : worldNormal.z >= 0
+
+  return {
+    kind: 'feature-face' as const,
+    targetNodeId: event.node.id as AnyNodeId,
+    space: 'scene' as const,
+    origin,
+    uAxis: uAxis.toArray() as [number, number, number],
+    vAxis: vAxis.toArray() as [number, number, number],
+    normal: worldNormal.toArray() as [number, number, number],
+    label:
+      dominantAxis === 'x'
+        ? positiveSide
+          ? '右侧面'
+          : '左侧面'
+        : positiveSide
+          ? '前侧面'
+          : '后侧面',
+  }
+}
+
 function activateFeatureTopFaceSketch(feature: FeatureNode) {
   const editor = useEditor.getState()
   const viewer = useViewer.getState()
@@ -227,6 +283,26 @@ function activateFeatureTopFaceSketch(feature: FeatureNode) {
   editor.setTool('sketch-line')
   editor.setSelectedMaterialTarget(null)
   viewer.setSelection({ selectedIds: [] })
+}
+
+function activateFeatureSideFaceSketch(event: NodeEvent<FeatureNode>) {
+  const sketchPlane = getFeatureSideFaceSketchPlane(event)
+  if (!sketchPlane) {
+    return false
+  }
+
+  const editor = useEditor.getState()
+  const viewer = useViewer.getState()
+
+  editor.setSketchPlane(sketchPlane)
+  editor.setViewMode('split')
+  editor.setPhase('structure')
+  editor.setStructureLayer('elements')
+  editor.setMode('build')
+  editor.setTool('sketch-line')
+  editor.setSelectedMaterialTarget(null)
+  viewer.setSelection({ selectedIds: [] })
+  return true
 }
 
 const HIGHLIGHT_PROFILES = {
@@ -760,6 +836,15 @@ export const SelectionManager = () => {
       ) {
         event.stopPropagation()
         activateFeatureTopFaceSketch(node)
+        return
+      }
+
+      if (
+        node.type === 'feature' &&
+        isNodeInCurrentLevel(node) &&
+        activateFeatureSideFaceSketch(event as NodeEvent<FeatureNode>)
+      ) {
+        event.stopPropagation()
         return
       }
 

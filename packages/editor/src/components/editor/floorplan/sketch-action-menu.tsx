@@ -263,6 +263,8 @@ type BuildSketchCircleActionMenuExtraActionsArgs = {
   onOffset: ActionHandler
   onMirror: ActionHandler
   onLinearPattern: ActionHandler
+  onCreateProfileExtrude: ActionHandler
+  onCutProfile: ActionHandler
 }
 
 export function buildSketchCircleActionMenuExtraActions({
@@ -281,12 +283,29 @@ export function buildSketchCircleActionMenuExtraActions({
   onOffset,
   onMirror,
   onLinearPattern,
+  onCreateProfileExtrude,
+  onCutProfile,
 }: BuildSketchCircleActionMenuExtraActionsArgs): NodeActionMenuExtraAction[] {
   const isAllFixed =
     circles.length > 0 && circles.every((circle) => circle.relations?.includes('fixed'))
   const isAllConstruction = circles.length > 0 && circles.every((circle) => circle.construction)
+  const canUseCircleProfile = circles.length === 1 && !circles[0]?.construction
 
   return [
+    {
+      id: 'sketch-profile-extrude',
+      label: '拉伸',
+      icon: <Icon height={16} icon="mdi:cube-outline" width={16} />,
+      onClick: onCreateProfileExtrude,
+      disabled: !canUseCircleProfile,
+    },
+    {
+      id: 'sketch-profile-cut',
+      label: '切割',
+      icon: <Icon height={16} icon="mdi:selection-remove" width={16} />,
+      onClick: onCutProfile,
+      disabled: !canUseCircleProfile,
+    },
     {
       id: 'sketch-circle-set-radius',
       label: '智能尺寸',

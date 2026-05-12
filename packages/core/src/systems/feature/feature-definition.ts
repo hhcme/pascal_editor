@@ -1,23 +1,24 @@
 import type {
-  FeatureCut,
-  FeatureDefinition,
   FeatureBody,
   FeatureCombineStep,
-  FeatureExtrudeCutStep,
-  FeatureExtrudeStep,
+  FeatureCut,
+  FeatureDefinition,
   FeatureDraftStep,
   FeatureEdgeTreatmentStep,
+  FeatureExtrudeCutStep,
+  FeatureExtrudeStep,
   FeatureHoleStep,
-  FeatureShellStep,
+  FeatureLoftStep,
   FeatureMirrorStep,
   FeatureNode,
   FeaturePatternStep,
   FeatureProfile,
   FeatureReferenceGeometry,
   FeatureRevolveStep,
+  FeatureShellStep,
+  FeatureSketchPlane,
   FeatureStep,
   FeatureSweepStep,
-  FeatureLoftStep,
 } from '../../schema'
 import { generateId } from '../../schema/base'
 
@@ -115,7 +116,15 @@ export function getRenderableFeatureStep(node: FeatureNode): RenderableFeatureSt
 
 export function getExtrudeCutSteps(node: FeatureNode): FeatureExtrudeCutStep[] {
   return getFeatureDefinition(node).steps.filter(
-    (step): step is FeatureExtrudeCutStep => !step.suppressed && step.kind === 'extrude-cut',
+    (step): step is FeatureExtrudeCutStep =>
+      !step.suppressed && step.kind === 'extrude-cut' && step.sketchPlane?.kind !== 'feature-face',
+  )
+}
+
+export function getFeatureFaceCutSteps(node: FeatureNode): FeatureExtrudeCutStep[] {
+  return getFeatureDefinition(node).steps.filter(
+    (step): step is FeatureExtrudeCutStep =>
+      !step.suppressed && step.kind === 'extrude-cut' && step.sketchPlane?.kind === 'feature-face',
   )
 }
 
@@ -182,18 +191,24 @@ export function getFeatureTimelineSteps(node: FeatureNode): FeatureStep[] {
 export function createExtrudeCutStepFromProfile(
   profile: FeatureProfile,
   index: number,
+  options: { sketchPlane?: FeatureSketchPlane; targetIds?: string[] } = {},
 ): FeatureStep {
+  const isFeatureFaceCut = options.sketchPlane?.kind === 'feature-face'
   return {
     id: generateId('feature_step'),
     kind: 'extrude-cut',
-    name: `切割 ${index + 1}`,
+    name: `${isFeatureFaceCut ? '侧面切割' : '切割'} ${index + 1}`,
     operation: 'subtract',
     profile,
-    targetIds: [],
+    sketchPlane: options.sketchPlane,
+    targetIds: options.targetIds ?? [],
     throughAll: true,
     suppressed: false,
     references: buildProfileReferences(profile),
-    rebuild: { status: 'ok' },
+    rebuild: {
+      status: 'ok',
+      message: isFeatureFaceCut ? 'V1 记录侧面草图 through-all 切除。' : undefined,
+    },
   }
 }
 
@@ -487,7 +502,8 @@ export function createCombineStep(args: {
   toolBodyIds: string[]
   index: number
 }): FeatureCombineStep {
-  const operationLabel = args.operation === 'add' ? '合并' : args.operation === 'subtract' ? '相减' : '相交'
+  const operationLabel =
+    args.operation === 'add' ? '合并' : args.operation === 'subtract' ? '相减' : '相交'
   return {
     id: generateId('feature_step'),
     kind: 'combine',
@@ -547,7 +563,10 @@ export function updateFeatureBodyTranslationX(
   }
 }
 
-export function deleteFeatureBody(definition: FeatureDefinition, bodyId: string): FeatureDefinition {
+export function deleteFeatureBody(
+  definition: FeatureDefinition,
+  bodyId: string,
+): FeatureDefinition {
   if (definition.bodies.length <= 1) {
     return {
       ...definition,
@@ -568,13 +587,11 @@ export function deleteFeatureBody(definition: FeatureDefinition, bodyId: string)
     const toolBodyIds = step.toolBodyIds.filter((toolBodyId) => toolBodyId !== bodyId)
     if (toolBodyIds.length === 0) continue
 
-    nextSteps.push(
-      {
-        ...step,
-        toolBodyIds,
-        rebuild: { ...step.rebuild, status: 'warning', message: '实体删除后已更新组合引用。' },
-      } as FeatureStep,
-    )
+    nextSteps.push({
+      ...step,
+      toolBodyIds,
+      rebuild: { ...step.rebuild, status: 'warning', message: '实体删除后已更新组合引用。' },
+    } as FeatureStep)
   }
 
   return {
@@ -775,18 +792,21 @@ export function rebuildFeatureDefinition(
               : failedDependencyCount > 0
                 ? `${failedDependencyCount} 个上游步骤失败。`
                 : missingCount > 0
-                ? `${missingCount} 个引用缺失。`
-                : '重建通过。',
+                  ? `${missingCount} 个引用缺失。`
+                  : '重建通过。',
         rebuiltAt,
         sourceHash,
       },
     } as FeatureStep
   })
 
-  const diagnosedDefinition = hydrateFeatureBodies({
-    ...initialDefinition,
-    steps: diagnosedSteps,
-  }, options)
+  const diagnosedDefinition = hydrateFeatureBodies(
+    {
+      ...initialDefinition,
+      steps: diagnosedSteps,
+    },
+    options,
+  )
 
   if (initialDefinition !== definition && definition.bodies.length === 0) {
     warningCount += 1
@@ -832,11 +852,7 @@ function hydrateFeatureBodies(
   }
 }
 
-function createFeatureSourceHash(input: {
-  steps: number
-  bodies: number
-  references: number
-}) {
+function createFeatureSourceHash(input: { steps: number; bodies: number; references: number }) {
   return `steps:${input.steps}|bodies:${input.bodies}|refs:${input.references}`
 }
 

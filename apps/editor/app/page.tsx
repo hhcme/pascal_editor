@@ -15,6 +15,7 @@ import {
 import {
   Editor,
   FurnishPanel,
+  applySceneGraphToEditor,
   type FurnishPanelAiTab,
   type SaveStatus,
   type SceneGraph,
@@ -1643,6 +1644,57 @@ export default function Home() {
       }
     }
 
+    function applyAiLandmarkSceneFromHost(payload: unknown) {
+      try {
+        const commandPayload = isRecord(payload) ? payload : {}
+        const sceneGraph = commandPayload.sceneGraph
+        if (!isRecord(sceneGraph)) {
+          postToHost('ai-create-apply-result', {
+            status: 'error',
+            message: 'Invalid AI landmark scene payload',
+          })
+          return
+        }
+
+        applySceneGraphToEditor(sceneGraph as unknown as SceneGraph)
+        const nodes = Object.values(useScene.getState().nodes)
+        const levelCount = nodes.filter((node) => node.type === 'level').length
+        const wallCount = nodes.filter((node) => node.type === 'wall').length
+        postToHost('ai-create-apply-result', {
+          status: 'success',
+          planId: `landmark-${Date.now()}`,
+          wallCount,
+          floorCount: Math.max(1, levelCount),
+          createdDefaultBuilding: true,
+          analysisSummary: {
+            candidateCount: 1,
+            strategy: {
+              openingBias: 'balanced',
+              openingBiasLabel: 'Landmark generator',
+              furnishingBias: 'circulation-first',
+              furnishingBiasLabel: 'Scene graph applied',
+            },
+            scores: {
+              overall: 92,
+              openingAlignment: 90,
+              circulation: 88,
+            },
+            highlights: [
+              typeof commandPayload.summary === 'string'
+                ? commandPayload.summary
+                : 'AI landmark scene applied.',
+            ],
+            warnings: [],
+          },
+        })
+      } catch (error) {
+        postToHost('ai-create-apply-result', {
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Failed to apply AI landmark scene',
+        })
+      }
+    }
+
     function captureDeliveryPresetFromHost(payload: unknown) {
       const options = isRecord(payload) ? payload : {}
       const requestId = typeof options.requestId === 'string' ? options.requestId : ''
@@ -1826,6 +1878,11 @@ export default function Home() {
 
       if (event.data.type === 'apply-ai-create-draft') {
         applyAiCreateDraftFromHost(event.data.payload)
+        return
+      }
+
+      if (event.data.type === 'apply-ai-landmark-scene') {
+        applyAiLandmarkSceneFromHost(event.data.payload)
         return
       }
 

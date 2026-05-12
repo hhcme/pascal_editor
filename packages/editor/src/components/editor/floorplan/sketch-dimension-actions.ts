@@ -54,11 +54,7 @@ function getActiveSketchPlaneMetadata(): Record<string, unknown> {
   }
 
   return {
-    sketchPlane: {
-      kind: plane.kind,
-      targetNodeId: plane.targetNodeId,
-      elevation: plane.elevation,
-    },
+    sketchPlane: plane,
   }
 }
 

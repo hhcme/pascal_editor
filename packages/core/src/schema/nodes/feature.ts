@@ -2,6 +2,7 @@ import dedent from 'dedent'
 import { z } from 'zod'
 import { BaseNode, nodeType, objectId } from '../base'
 import { MaterialSchema } from '../material'
+import { SketchCircleNode } from './sketch-circle'
 import { SketchLineNode } from './sketch-line'
 
 export const FeatureKind = z.enum([
@@ -42,11 +43,34 @@ export const FeatureRebuildState = z.object({
   sourceHash: z.string().optional(),
 })
 
-export const FeatureProfile = z.object({
+export const FeatureProfileHole = z.object({
   kind: z.literal('sketch-profile'),
   lineIds: z.array(SketchLineNode.shape.id).default([]),
+  circleIds: z.array(SketchCircleNode.shape.id).default([]),
   points: z.array(z.tuple([z.number(), z.number()])).min(3),
 })
+
+export const FeatureProfile = FeatureProfileHole.extend({
+  holes: z.array(FeatureProfileHole).default([]),
+})
+
+export const FeatureSketchPlane = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('feature-top'),
+    targetNodeId: z.string(),
+    elevation: z.number(),
+  }),
+  z.object({
+    kind: z.literal('feature-face'),
+    targetNodeId: z.string(),
+    space: z.enum(['target-local', 'scene']).optional(),
+    origin: z.tuple([z.number(), z.number(), z.number()]),
+    uAxis: z.tuple([z.number(), z.number(), z.number()]),
+    vAxis: z.tuple([z.number(), z.number(), z.number()]),
+    normal: z.tuple([z.number(), z.number(), z.number()]),
+    label: z.string().optional(),
+  }),
+])
 
 export const FeatureCut = z.object({
   id: objectId('feature_cut'),
@@ -86,6 +110,7 @@ export const FeatureExtrudeCutStep = FeatureStepBase.extend({
   kind: z.literal('extrude-cut'),
   operation: z.literal('subtract').default('subtract'),
   profile: FeatureProfile,
+  sketchPlane: FeatureSketchPlane.optional(),
   targetIds: z.array(z.string()).default([]),
   depth: z.number().positive().optional(),
   throughAll: z.boolean().default(true),
@@ -307,12 +332,14 @@ export type FeatureNode = z.infer<typeof FeatureNode>
 export type FeatureOperation = z.infer<typeof FeatureOperation>
 export type FeaturePatternStep = z.infer<typeof FeaturePatternStep>
 export type FeatureProfile = z.infer<typeof FeatureProfile>
+export type FeatureProfileHole = z.infer<typeof FeatureProfileHole>
 export type FeatureRebuildState = z.infer<typeof FeatureRebuildState>
 export type FeatureReferenceGeometry = z.infer<typeof FeatureReferenceGeometry>
 export type FeatureReferenceStatus = z.infer<typeof FeatureReferenceStatus>
 export type FeatureRevolveCutStep = z.infer<typeof FeatureRevolveCutStep>
 export type FeatureRevolveStep = z.infer<typeof FeatureRevolveStep>
 export type FeatureShellStep = z.infer<typeof FeatureShellStep>
+export type FeatureSketchPlane = z.infer<typeof FeatureSketchPlane>
 export type FeatureStep = z.infer<typeof FeatureStep>
 export type FeatureStepStatus = z.infer<typeof FeatureStepStatus>
 export type FeatureSweepStep = z.infer<typeof FeatureSweepStep>

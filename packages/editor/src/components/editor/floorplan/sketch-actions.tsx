@@ -99,12 +99,16 @@ function getActiveSketchPlaneMetadata(): Record<string, unknown> {
   }
 
   return {
-    sketchPlane: {
-      kind: plane.kind,
-      targetNodeId: plane.targetNodeId,
-      elevation: plane.elevation,
-    },
+    sketchPlane: plane,
   }
+}
+
+function isNumberTuple3(value: unknown): value is [number, number, number] {
+  return (
+    Array.isArray(value) &&
+    value.length === 3 &&
+    value.every((entry) => typeof entry === 'number' && Number.isFinite(entry))
+  )
 }
 
 function getSketchPlaneFromNode(
@@ -119,18 +123,45 @@ function getSketchPlaneFromNode(
     return null
   }
 
+  if (rawPlane.kind === 'feature-top') {
+    if (
+      typeof rawPlane.targetNodeId !== 'string' ||
+      !(typeof rawPlane.elevation === 'number' && Number.isFinite(rawPlane.elevation))
+    ) {
+      return null
+    }
+
+    return {
+      kind: 'feature-top',
+      targetNodeId: rawPlane.targetNodeId as AnyNodeId,
+      elevation: rawPlane.elevation,
+    }
+  }
+
+  if (rawPlane.kind !== 'feature-face') {
+    return null
+  }
+
   if (
-    rawPlane.kind !== 'feature-top' ||
     typeof rawPlane.targetNodeId !== 'string' ||
-    !(typeof rawPlane.elevation === 'number' && Number.isFinite(rawPlane.elevation))
+    !isNumberTuple3(rawPlane.origin) ||
+    !isNumberTuple3(rawPlane.uAxis) ||
+    !isNumberTuple3(rawPlane.vAxis) ||
+    !isNumberTuple3(rawPlane.normal)
   ) {
     return null
   }
 
   return {
-    kind: 'feature-top',
+    kind: 'feature-face',
     targetNodeId: rawPlane.targetNodeId as AnyNodeId,
-    elevation: rawPlane.elevation,
+    space:
+      rawPlane.space === 'scene' || rawPlane.space === 'target-local' ? rawPlane.space : undefined,
+    origin: rawPlane.origin,
+    uAxis: rawPlane.uAxis,
+    vAxis: rawPlane.vAxis,
+    normal: rawPlane.normal,
+    label: typeof rawPlane.label === 'string' ? rawPlane.label : undefined,
   }
 }
 
@@ -145,7 +176,33 @@ function getSketchPlaneFromProfile(
     }
   }
 
+  for (const circleId of profile.circleIds ?? []) {
+    const plane = getSketchPlaneFromNode(nodes[circleId])
+    if (plane) {
+      return plane
+    }
+  }
+
   return null
+}
+
+function getSketchPlaneBaseElevation(plane: SketchPlane | null) {
+  return plane?.kind === 'feature-top' ? plane.elevation : 0
+}
+
+function buildFeatureProfileFromSketchProfile(profile: SketchProfile) {
+  return {
+    kind: 'sketch-profile' as const,
+    lineIds: profile.lineIds,
+    circleIds: profile.circleIds ?? [],
+    points: profile.points,
+    holes: (profile.holes ?? []).map((hole) => ({
+      kind: 'sketch-profile' as const,
+      lineIds: hole.lineIds,
+      circleIds: hole.circleIds ?? [],
+      points: hole.points,
+    })),
+  }
 }
 
 function polygonArea(points: Array<[number, number]>) {
@@ -653,6 +710,7 @@ export function useFloorplanSketchActions({
       const unsupportedReason = getSketchProfileUnsupportedReason(
         selectedSketchProfile,
         sketchProfiles,
+        { allowHoles: true },
       )
       if (unsupportedReason) {
         showWallEditFeedback(unsupportedReason)
@@ -728,17 +786,14 @@ export function useFloorplanSketchActions({
         name: `拉伸 ${featureCount + 1}`,
         kind: 'extrude',
         operation: 'add',
-        profile: {
-          kind: 'sketch-profile',
-          lineIds: selectedSketchProfile.lineIds,
-          points: selectedSketchProfile.points,
-        },
+        profile: buildFeatureProfileFromSketchProfile(selectedSketchProfile),
         depth: DEFAULT_SKETCH_EXTRUDE_DEPTH,
-        baseElevation: sketchPlane?.elevation ?? 0,
+        baseElevation: getSketchPlaneBaseElevation(sketchPlane),
         metadata: {
           sketchSource: {
             kind: 'profile',
             lineIds: selectedSketchProfile.lineIds,
+            circleIds: selectedSketchProfile.circleIds ?? [],
           },
           ...(sketchPlane
             ? {
@@ -785,6 +840,10 @@ export function useFloorplanSketchActions({
 
       const { createNode, nodes } = useScene.getState()
       const sketchPlane = getSketchPlaneFromProfile(selectedSketchProfile, nodes)
+      if (sketchPlane?.kind === 'feature-face') {
+        showWallEditFeedback('实体面草图暂不支持旋转，请使用拉伸生成凸台。')
+        return
+      }
       const featureCount = Object.values(nodes).filter((node) => node.type === 'feature').length
       const axisLine = getSelectedRevolveAxisLine(selectedSketchLineList, selectedSketchProfile)
       const profileAxisX = getProfileMinX(selectedSketchProfile.points)
@@ -796,10 +855,11 @@ export function useFloorplanSketchActions({
         profile: {
           kind: 'sketch-profile',
           lineIds: selectedSketchProfile.lineIds,
+          circleIds: selectedSketchProfile.circleIds ?? [],
           points: selectedSketchProfile.points,
         },
         depth: DEFAULT_SKETCH_EXTRUDE_DEPTH,
-        baseElevation: sketchPlane?.elevation ?? 0,
+        baseElevation: getSketchPlaneBaseElevation(sketchPlane),
         revolveAxisX: Number.isFinite(revolveAxisX) ? revolveAxisX : 0,
         revolveAxisLineId: axisLine?.id,
         revolveAngle: DEFAULT_SKETCH_REVOLVE_ANGLE,
@@ -807,6 +867,7 @@ export function useFloorplanSketchActions({
           sketchSource: {
             kind: 'profile',
             lineIds: selectedSketchProfile.lineIds,
+            circleIds: selectedSketchProfile.circleIds ?? [],
           },
           ...(sketchPlane
             ? {
@@ -861,6 +922,50 @@ export function useFloorplanSketchActions({
       const { nodes, updateNodes } = useScene.getState()
       const profilePoints = selectedSketchProfile.points.map(([x, z]) => [x, z] as [number, number])
       const sketchPlane = getSketchPlaneFromProfile(selectedSketchProfile, nodes)
+      if (sketchPlane?.kind === 'feature-face') {
+        const targetNode = nodes[sketchPlane.targetNodeId]
+        if (!(targetNode?.type === 'feature' && targetNode.parentId === levelId)) {
+          showWallEditFeedback('未找到这个实体面对应的拉伸体。')
+          return
+        }
+
+        const cut = FeatureCutSchema.parse({
+          profile: {
+            kind: 'sketch-profile',
+            lineIds: selectedSketchProfile.lineIds,
+            circleIds: selectedSketchProfile.circleIds ?? [],
+            points: profilePoints,
+          },
+        })
+        const definition =
+          targetNode.definition ?? createFeatureDefinitionFromLegacyNode(targetNode)
+        const faceCutCount = definition.steps.filter(
+          (step) => step.kind === 'extrude-cut' && step.sketchPlane?.kind === 'feature-face',
+        ).length
+        const faceCutStep = createExtrudeCutStepFromProfile(cut.profile, faceCutCount, {
+          sketchPlane,
+          targetIds: [targetNode.id],
+        })
+        updateNodes([
+          {
+            id: targetNode.id as AnyNodeId,
+            data: {
+              definition: {
+                ...definition,
+                steps: [...definition.steps, faceCutStep],
+                rebuild: {
+                  status: 'warning',
+                  message: '侧面切除步骤已添加，等待重建。',
+                },
+              },
+            } as Partial<AnyNode>,
+          },
+        ])
+        useScene.getState().dirtyNodes.add(targetNode.id as AnyNodeId)
+        sfxEmitter.emit('sfx:structure-build')
+        setSelection({ selectedIds: [targetNode.id] })
+        return
+      }
       const updates: Array<{ id: AnyNodeId; data: Partial<AnyNode> }> = []
       const targetIds: AnyNodeId[] = []
 
@@ -912,6 +1017,7 @@ export function useFloorplanSketchActions({
             profile: {
               kind: 'sketch-profile',
               lineIds: selectedSketchProfile.lineIds,
+              circleIds: selectedSketchProfile.circleIds ?? [],
               points: profilePoints,
             },
           })
@@ -927,7 +1033,10 @@ export function useFloorplanSketchActions({
             : undefined
           updates.push({
             id: node.id as AnyNodeId,
-            data: { cuts: [...node.cuts, cut], ...(definition ? { definition } : {}) } as Partial<AnyNode>,
+            data: {
+              cuts: [...node.cuts, cut],
+              ...(definition ? { definition } : {}),
+            } as Partial<AnyNode>,
           })
           targetIds.push(node.id as AnyNodeId)
         }
@@ -1423,8 +1532,12 @@ export function useFloorplanSketchActions({
       onOffset: handleSelectedSketchCircleOffset,
       onMirror: handleSelectedSketchCircleMirror,
       onLinearPattern: handleSelectedSketchCircleLinearPattern,
+      onCreateProfileExtrude: createExtrudeFromSelectedSketchProfile,
+      onCutProfile: cutFromSelectedSketchProfile,
     })
   }, [
+    createExtrudeFromSelectedSketchProfile,
+    cutFromSelectedSketchProfile,
     handleSelectedSketchCircleLinearPattern,
     handleSelectedSketchCircleMirror,
     handleSelectedSketchCircleOffset,

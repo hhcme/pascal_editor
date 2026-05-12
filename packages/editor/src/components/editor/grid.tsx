@@ -16,6 +16,8 @@ const FINE_GRID_CAMERA_FADE_START = 24
 const FINE_GRID_CAMERA_FADE_END = 48
 const SECTION_GRID_CAMERA_FADE_START = 56
 const SECTION_GRID_CAMERA_FADE_END = 88
+const AXIS_LINE_WIDTH = 0.045
+const AXIS_RENDER_ORDER = GRID_RENDER_ORDER + 1
 
 export const Grid = ({
   cellSize = 0.5,
@@ -187,6 +189,30 @@ export const Grid = ({
       visible={showGrid}
     >
       <planeGeometry args={[fadeDistance * 2, fadeDistance * 2]} />
+      <mesh layers={EDITOR_LAYER} position-z={0.002} renderOrder={AXIS_RENDER_ORDER}>
+        <planeGeometry args={[fadeDistance * 2, AXIS_LINE_WIDTH]} />
+        <meshBasicMaterial
+          color={theme === 'dark' ? '#ff7a7a' : '#d93025'}
+          depthWrite={false}
+          transparent
+        />
+      </mesh>
+      <mesh layers={EDITOR_LAYER} position-z={0.003} renderOrder={AXIS_RENDER_ORDER}>
+        <planeGeometry args={[AXIS_LINE_WIDTH, fadeDistance * 2]} />
+        <meshBasicMaterial
+          color={theme === 'dark' ? '#69a7ff' : '#1a73e8'}
+          depthWrite={false}
+          transparent
+        />
+      </mesh>
+      <mesh layers={EDITOR_LAYER} position-z={0.004} renderOrder={AXIS_RENDER_ORDER}>
+        <circleGeometry args={[0.16, 32]} />
+        <meshBasicMaterial
+          color={theme === 'dark' ? '#f8fafc' : '#111827'}
+          depthWrite={false}
+          transparent
+        />
+      </mesh>
     </mesh>
   )
 }

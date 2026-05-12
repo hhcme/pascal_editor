@@ -36,6 +36,7 @@ Supported V0 behavior:
 - Floorplan distance dimensions now support the same direct-edit flow as line/circle dimensions: smart-dimension clicks open input immediately, and double-clicking opens numeric edit.
 - Endpoint context menus can attach a line endpoint to the nearest straight sketch line interior, line midpoint, or circle/arc point, with lightweight persistence across target edits.
 - Endpoint drag and whole-line move in the floorplan, including lightweight coincident endpoint propagation.
+- Endpoint drag and whole-line move preview now resolves lightweight line-to-line and coincident constraints before commit, so equal-length, parallel, perpendicular, collinear, and coincident relationships stay visible while dragging.
 - Selected or hovered sketch lines show relation badges and coincident endpoint markers in the floorplan.
 - Selected or hovered sketch circles/arcs show relation badges in the floorplan.
 - Sketch relation badges can also be pinned visible globally from the sketch inspector.
@@ -55,6 +56,11 @@ Supported V0 behavior:
 - Single closed-loop profile cut into containing slabs, ceilings, or V0 extrude feature bodies.
 - Selected V0 extrusion features can enter a top-face sketch plane from the feature inspector.
 - V0 extrusion top faces can also be double-clicked in the 3D view to enter that top-face sketch plane.
+- V0 extrusion side faces can be double-clicked in the 3D view to enter a lightweight face sketch plane; new sketch lines store a `feature-face` plane and render on that selected face in 3D.
+- Feature-face sketch mode gives the 2D panel a face-local U/V workplane: only that face's sketch entities are shown/editable, the selected face boundary is outlined, and wall/floorplan snapping is suppressed.
+- Closed profiles drawn on a V0 extrusion side face can create a lightweight face-normal extrusion preview.
+- Closed profiles drawn on a V0 extrusion side face can create a lightweight through-all side cut preview on the target feature.
+- Side-face cuts are recorded as V1 `extrude-cut` timeline steps with a `feature-face` sketch plane, while the viewer applies them through the side-face CSG preview path.
 - Top-face sketch entities store `metadata.sketchPlane`, and generated extrusions use that plane height as `baseElevation`.
 - The sketch command bar shows the active top-face plane and elevation while drawing on a V0 extrusion top face.
 - V0 extrusion features can select their source sketch, refresh the profile snapshot from source lines, and manage through-cut entries from the feature inspector.
@@ -101,20 +107,23 @@ Supported V0 behavior:
   changing the legacy V0 feature shape again.
 - Generated walls/slabs/zones store `metadata.sketchSource` with the source sketch line ids.
 - Generated extrusion features store a sketch profile snapshot plus source sketch line ids.
+- Generated extrusion/revolve features auto-sync their base profile snapshot when the source
+  sketch still resolves to the same closed profile; matching cut profile snapshots also refresh.
 
 Known guardrails:
 
 - Filled profile conversion rejects nested loops because holes are not represented yet.
 - Profile conversion works one closed loop at a time.
-- Extrude V0 uses the selected profile snapshot and does not yet rebuild automatically when the source sketch changes.
+- Extrude V0 uses a profile snapshot, with automatic refresh for still-closed source profiles.
 - Cut V0 is a vertical through-cut and automatically targets containing slabs, ceilings, and V0 extrude features.
-- Feature editing V0 supports manual refresh from source sketch lines, but does not automatically track topology changes or recreate missing source geometry.
+- Feature editing V0 supports automatic and manual refresh from source sketch lines, but does not recreate missing source geometry.
 - Feature history V0 is informational and action-oriented; it is not yet a reorderable parametric timeline.
-- Feature history sync V0 is still manual; it detects source changes in the inspector but does not rebuild automatically in the background. The V1 timeline records rebuild status, but automatic rebuild execution is still disabled by default.
+- Feature history sync V0 refreshes base/cut profile snapshots when source topology is still valid. The V1 timeline records rebuild status, but full dependency-sorted rebuild execution is still limited.
 - Revolve V0 uses a selected vertical construction line as the source axis when available, otherwise defaults to the profile minimum X; it supports manual axis X and sweep angle editing, but does not yet support arbitrary-angle sketch axes.
 - Revolve axis reassignment V0 only accepts vertical construction sketch lines.
-- Top-face sketch V0 only supports horizontal extrusion top faces; arbitrary side faces and direct 3D face drawing are not implemented yet.
-- Constraint solving is lightweight and relation-based; endpoint, tangent, equal-radius, and concentric edits propagate directly, but there is no general solver yet.
+- Top-face sketch V0 supports horizontal extrusion top faces; arbitrary non-extrusion faces and direct 3D face drawing are not implemented yet.
+- Feature-face sketch V0 supports a face-local 2D workplane, line placement, 3D display, lightweight face-normal add extrusions, and V1-recorded lightweight through-all side cuts on vertical extrusion side faces, but solver-backed/topology-aware face cuts are still future work.
+- Constraint solving is lightweight and relation-based; endpoint, line-to-line, tangent, equal-radius, and concentric edits propagate directly, but there is no general solver yet.
 - Hole V1 is a simple vertical through-hole only; blind, counterbore, and countersink
   parameters are represented in schema but not rebuilt as stepped/countersunk geometry yet.
 - Mirror and pattern V1 are visual feature instances using default planes/axes. Per-instance

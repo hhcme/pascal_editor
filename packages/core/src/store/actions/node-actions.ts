@@ -23,6 +23,88 @@ type WallMergePlan = {
 let pendingRafId: number | null = null
 let pendingUpdates: Set<AnyNodeId> = new Set()
 
+function profileReferencesDeletedSketch(
+  profile: unknown,
+  deletedIds: ReadonlySet<AnyNodeId>,
+): boolean {
+  if (!(profile && typeof profile === 'object')) {
+    return false
+  }
+
+  const candidate = profile as {
+    lineIds?: unknown
+    circleIds?: unknown
+    holes?: unknown
+  }
+  const lineIds = Array.isArray(candidate.lineIds) ? candidate.lineIds : []
+  const circleIds = Array.isArray(candidate.circleIds) ? candidate.circleIds : []
+
+  if (
+    lineIds.some((id) => typeof id === 'string' && deletedIds.has(id as AnyNodeId)) ||
+    circleIds.some((id) => typeof id === 'string' && deletedIds.has(id as AnyNodeId))
+  ) {
+    return true
+  }
+
+  if (!Array.isArray(candidate.holes)) {
+    return false
+  }
+
+  return candidate.holes.some((hole) => profileReferencesDeletedSketch(hole, deletedIds))
+}
+
+function featureDependsOnDeletedSketch(node: AnyNode, deletedIds: ReadonlySet<AnyNodeId>): boolean {
+  if (node.type !== 'feature') {
+    return false
+  }
+
+  const feature = node as AnyNode & {
+    profile?: unknown
+    revolveAxisLineId?: unknown
+    definition?: {
+      steps?: unknown
+    }
+  }
+
+  if (profileReferencesDeletedSketch(feature.profile, deletedIds)) {
+    return true
+  }
+
+  if (
+    typeof feature.revolveAxisLineId === 'string' &&
+    deletedIds.has(feature.revolveAxisLineId as AnyNodeId)
+  ) {
+    return true
+  }
+
+  const steps = feature.definition?.steps
+  if (!Array.isArray(steps)) {
+    return false
+  }
+
+  return steps.some((step) => {
+    if (!(step && typeof step === 'object')) {
+      return false
+    }
+
+    const candidate = step as {
+      kind?: unknown
+      profile?: unknown
+      revolveAxisLineId?: unknown
+    }
+
+    if (candidate.kind !== 'extrude' && candidate.kind !== 'revolve') {
+      return false
+    }
+
+    return (
+      profileReferencesDeletedSketch(candidate.profile, deletedIds) ||
+      (typeof candidate.revolveAxisLineId === 'string' &&
+        deletedIds.has(candidate.revolveAxisLineId as AnyNodeId))
+    )
+  })
+}
+
 function pointsEqual(a: [number, number], b: [number, number], tolerance = 1e-6) {
   const dx = a[0] - b[0]
   const dz = a[1] - b[1]
@@ -373,6 +455,20 @@ export const deleteNodesAction = (
     for (const id of ids) collect(id)
     for (const plan of mergePlans) {
       allIds.add(plan.secondaryWallId)
+    }
+
+    let foundDependentFeature = true
+    while (foundDependentFeature) {
+      foundDependentFeature = false
+      for (const node of Object.values(nextNodes)) {
+        if (!node || allIds.has(node.id as AnyNodeId)) {
+          continue
+        }
+        if (featureDependsOnDeletedSketch(node, allIds)) {
+          collect(node.id as AnyNodeId)
+          foundDependentFeature = true
+        }
+      }
     }
 
     for (const plan of mergePlans) {

@@ -26,14 +26,10 @@ import {
   getCoincidentSketchEndpointRefs,
   type SketchEndpointSnapTarget,
 } from '../../tools/sketch/sketch-coincident'
-import { clearSketchLineTangentIfGeometryChanges } from '../../tools/sketch/sketch-line-tangent'
-import { buildResolvedSketchLineUpdateSet } from '../../tools/sketch/sketch-line-resolution'
 import { buildSketchLineGeometryDimensionData } from '../../tools/sketch/sketch-dimensions'
-import {
-  getSketchLineLength2D,
-  isSketchLineLongEnough,
-  type SketchPlanPoint,
-} from '../../tools/sketch/sketch-geometry'
+import { isSketchLineLongEnough, type SketchPlanPoint } from '../../tools/sketch/sketch-geometry'
+import { buildResolvedSketchLineUpdateSet } from '../../tools/sketch/sketch-line-resolution'
+import { clearSketchLineTangentIfGeometryChanges } from '../../tools/sketch/sketch-line-tangent'
 import type { WallPlanPoint } from '../../tools/wall/wall-drafting'
 
 export type SketchLineEditMode = 'start' | 'end' | 'line' | 'curve'
@@ -209,6 +205,72 @@ function buildSketchLineEditDraft(
   }
 }
 
+function buildConstraintResolvedLineUpdates(args: {
+  draft: SketchLineEditDraft
+  lines: SketchLineNode[]
+  circles: SketchCircleNode[]
+}) {
+  const { draft, lines, circles } = args
+  const lineById = new Map(lines.map((line) => [line.id, line] as const))
+  const circleById = new Map(circles.map((circle) => [circle.id, circle] as const))
+  const baseUpdates = draft.lineUpdates ?? [
+    {
+      lineId: draft.lineId,
+      start: draft.start,
+      end: draft.end,
+      curveOffset: draft.curveOffset,
+    },
+  ]
+
+  const resolved = buildResolvedSketchLineUpdateSet({
+    linesById: lineById,
+    circlesById: circleById,
+    initialUpdates: baseUpdates.map((update) => ({
+      id: update.lineId,
+      data: {
+        start: update.start,
+        end: update.end,
+        curveOffset: update.curveOffset,
+      },
+    })),
+  })
+  if (!resolved.ok) {
+    return resolved
+  }
+
+  const nextLineById = new Map(lineById)
+  for (const update of resolved.updates) {
+    const line = nextLineById.get(update.id)
+    if (!line) {
+      continue
+    }
+    nextLineById.set(update.id, {
+      ...line,
+      ...update.data,
+    })
+  }
+
+  const updates: SketchLineEditUpdate[] = []
+  for (const update of resolved.updates) {
+    const line = nextLineById.get(update.id)
+    if (!line) {
+      continue
+    }
+
+    updates.push({
+      lineId: line.id,
+      start: line.start,
+      end: line.end,
+      curveOffset: line.curveOffset ?? 0,
+    })
+  }
+
+  return {
+    ok: true as const,
+    updates,
+  }
+}
+
 function relationArrayEqual(a: SketchLineNode['relations'], b: SketchLineNode['relations']) {
   return a.length === b.length && a.every((relation, index) => relation === b[index])
 }
@@ -288,10 +350,12 @@ export function useFloorplanSketchEdit({
   const [sketchLineEditDraft, setSketchLineEditDraft] = useState<SketchLineEditDraft | null>(null)
   const dragStateRef = useRef<SketchLineDragState | null>(null)
   const draftRef = useRef<SketchLineEditDraft | null>(null)
+  const previewFailureRef = useRef<string | null>(null)
 
   const clearSketchLineEdit = useCallback(() => {
     dragStateRef.current = null
     draftRef.current = null
+    previewFailureRef.current = null
     setSketchLineEditDraft(null)
   }, [])
 
@@ -410,6 +474,34 @@ export function useFloorplanSketchEdit({
         previousDraft.curveOffset === nextDraft.curveOffset
       ) {
         return
+      }
+
+      const resolvedPreview = buildConstraintResolvedLineUpdates({
+        draft: nextDraft,
+        lines: sketchLines,
+        circles: sketchCircles,
+      })
+      if (!resolvedPreview.ok) {
+        if (previewFailureRef.current !== resolvedPreview.reason) {
+          previewFailureRef.current = resolvedPreview.reason
+          showWallEditFeedback(resolvedPreview.reason)
+        }
+        return
+      }
+      previewFailureRef.current = null
+
+      const selectedPreviewUpdate = resolvedPreview.updates.find(
+        (update) => update.lineId === nextDraft.lineId,
+      )
+      if (selectedPreviewUpdate && (dragState.mode === 'start' || dragState.mode === 'end')) {
+        cursorPoint = selectedPreviewUpdate[dragState.mode]
+      }
+      nextDraft = {
+        ...nextDraft,
+        start: selectedPreviewUpdate?.start ?? nextDraft.start,
+        end: selectedPreviewUpdate?.end ?? nextDraft.end,
+        curveOffset: selectedPreviewUpdate?.curveOffset ?? nextDraft.curveOffset,
+        lineUpdates: resolvedPreview.updates,
       }
 
       dragState.draft = nextDraft

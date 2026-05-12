@@ -43,7 +43,6 @@ export {
   type Space,
   wallTouchesOthers,
 } from './lib/space-detection'
-export { baseMaterial, glassMaterial } from './materials'
 export {
   getCatalogMaterialById,
   getLibraryMaterialIdFromRef,
@@ -64,6 +63,7 @@ export {
   type MaterialCatalogSource,
   toLibraryMaterialRef,
 } from './material-library'
+export { baseMaterial, glassMaterial } from './materials'
 export * from './schema'
 export {
   type ControlValue,
@@ -71,23 +71,22 @@ export {
   useInteractive,
 } from './store/use-interactive'
 export { default as useLiveTransforms, type LiveTransform } from './store/use-live-transforms'
-export { FenceSystem } from './systems/fence/fence-system'
 export { clearSceneHistory, default as useScene } from './store/use-scene'
 export { CeilingSystem } from './systems/ceiling/ceiling-system'
 export { DoorSystem } from './systems/door/door-system'
 export {
   createCircularPatternStep,
+  createCombineStep,
   createDefaultChamferStep,
   createDefaultDraftStep,
+  createDefaultFeatureBody,
   createDefaultFilletStep,
   createDefaultLoftStep,
   createDefaultShellStep,
   createDefaultSweepStep,
-  createDefaultFeatureBody,
   createDerivedFeatureBody,
-  createCombineStep,
-  createFeatureDefinitionFromLegacyNode,
   createExtrudeCutStepFromProfile,
+  createFeatureDefinitionFromLegacyNode,
   createHoleStep,
   createLinearPatternStep,
   createMirrorStep,
@@ -97,13 +96,13 @@ export {
   deleteFeatureBody,
   diagnoseFeatureDefinition,
   ensureDefaultFeatureBody,
-  moveFeatureStep,
-  rebuildFeatureDefinition,
-  getExtrudeCutSteps,
-  getDraftSteps,
+  type FeatureRebuildOptions,
   getCombineSteps,
+  getDraftSteps,
   getEdgeTreatmentSteps,
+  getExtrudeCutSteps,
   getFeatureDefinition,
+  getFeatureFaceCutSteps,
   getFeatureProfileCenter,
   getFeatureTimelineSteps,
   getHoleSteps,
@@ -113,44 +112,17 @@ export {
   getRenderableFeatureStep,
   getShellSteps,
   getSweepSteps,
+  moveFeatureStep,
+  type RenderableFeatureStep,
+  rebuildFeatureDefinition,
   setFeatureBodyVisible,
   setPatternInstanceSkipped,
   updateCombineStepBodies,
   updateFeatureBodyTranslationX,
-  type RenderableFeatureStep,
-  type FeatureRebuildOptions,
 } from './systems/feature/feature-definition'
+export { FenceSystem } from './systems/fence/fence-system'
 export { ItemSystem } from './systems/item/item-system'
 export { RoofSystem } from './systems/roof/roof-system'
-export { SlabSystem } from './systems/slab/slab-system'
-export { StairSystem } from './systems/stair/stair-system'
-export {
-  DEFAULT_WALL_HEIGHT,
-  DEFAULT_WALL_THICKNESS,
-  getWallPlanFootprint,
-  getWallThickness,
-} from './systems/wall/wall-footprint'
-export {
-  getClampedWallCurveOffset,
-  getMaxWallCurveOffset,
-  getWallChordFrame,
-  getWallCurveFrameAt,
-  getWallCurveLength,
-  getWallMidpointHandlePoint,
-  getWallStraightSnapOffset,
-  getWallSurfacePolygon,
-  isCurvedWall,
-  normalizeWallCurveOffset,
-  sampleWallCenterline,
-} from './systems/wall/wall-curve'
-export {
-  calculateLevelMiters,
-  getWallMiterBoundaryPoints,
-  type Point2D,
-  type WallMiterBoundaryPoints,
-  pointToKey,
-  type WallMiterData,
-} from './systems/wall/wall-mitering'
 export {
   getSketchCircleArcSweep,
   getSketchCircleBounds,
@@ -158,8 +130,8 @@ export {
   getSketchCirclePointAt,
   isSketchCircleArc,
   isSketchCircleRadiusValid,
-  sampleSketchCircleCenterline,
   type SketchCircleBounds,
+  sampleSketchCircleCenterline,
 } from './systems/sketch/sketch-circle-curve'
 export {
   getClampedSketchLineCurveOffset,
@@ -174,6 +146,35 @@ export {
   normalizeSketchLineCurveOffset,
   sampleSketchLineCenterline,
 } from './systems/sketch/sketch-line-curve'
+export { SlabSystem } from './systems/slab/slab-system'
+export { StairSystem } from './systems/stair/stair-system'
+export {
+  getClampedWallCurveOffset,
+  getMaxWallCurveOffset,
+  getWallChordFrame,
+  getWallCurveFrameAt,
+  getWallCurveLength,
+  getWallMidpointHandlePoint,
+  getWallStraightSnapOffset,
+  getWallSurfacePolygon,
+  isCurvedWall,
+  normalizeWallCurveOffset,
+  sampleWallCenterline,
+} from './systems/wall/wall-curve'
+export {
+  DEFAULT_WALL_HEIGHT,
+  DEFAULT_WALL_THICKNESS,
+  getWallPlanFootprint,
+  getWallThickness,
+} from './systems/wall/wall-footprint'
+export {
+  calculateLevelMiters,
+  getWallMiterBoundaryPoints,
+  type Point2D,
+  pointToKey,
+  type WallMiterBoundaryPoints,
+  type WallMiterData,
+} from './systems/wall/wall-mitering'
 export { WallSystem } from './systems/wall/wall-system'
 export { WindowSystem } from './systems/window/window-system'
 export type { SceneGraph } from './utils/clone-scene-graph'

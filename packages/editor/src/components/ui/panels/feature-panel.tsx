@@ -66,7 +66,14 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import useEditor, { type SketchPlane } from '../../../store/use-editor'
-import { detectClosedSketchProfiles } from '../../tools/sketch/sketch-geometry'
+import {
+  getSourceSketchLines,
+  getSourceStatus,
+  haveSameProfilePoints,
+  rebuildProfileFromSourceGeometry,
+  type SourceStatus,
+  syncFeatureProfileFromSketchProfile,
+} from '../../tools/sketch/feature-source-sync'
 import { ActionButton, ActionGroup } from '../controls/action-button'
 import { InspectorStat, InspectorSummary } from '../controls/inspector-summary'
 import { PanelSection } from '../controls/panel-section'
@@ -183,23 +190,12 @@ function calculatePolygonArea(polygon: Array<[number, number]>): number {
   return Math.abs(area) / 2
 }
 
-function haveSameLineIds(first: readonly string[], second: readonly string[]) {
-  if (first.length !== second.length) return false
-  const secondIds = new Set(second)
-  return first.every((id) => secondIds.has(id))
-}
-
-function haveSameProfilePoints(
-  first: readonly [number, number][],
-  second: readonly [number, number][],
-) {
-  if (first.length !== second.length) return false
-
-  return first.every((point, index) => {
-    const other = second[index]
-    if (!other) return false
-    return Math.hypot(point[0] - other[0], point[1] - other[1]) <= 1e-4
-  })
+function isNumberTuple3(value: unknown): value is [number, number, number] {
+  return (
+    Array.isArray(value) &&
+    value.length === 3 &&
+    value.every((entry) => typeof entry === 'number' && Number.isFinite(entry))
+  )
 }
 
 function getSketchPlaneFromMetadata(metadata: unknown): SketchPlane | null {
@@ -213,18 +209,43 @@ function getSketchPlaneFromMetadata(metadata: unknown): SketchPlane | null {
   }
 
   const plane = rawPlane as Record<string, unknown>
+  if (plane.kind === 'feature-top') {
+    if (
+      typeof plane.targetNodeId !== 'string' ||
+      !(typeof plane.elevation === 'number' && Number.isFinite(plane.elevation))
+    ) {
+      return null
+    }
+
+    return {
+      kind: 'feature-top',
+      targetNodeId: plane.targetNodeId as AnyNodeId,
+      elevation: plane.elevation,
+    }
+  }
+
+  if (plane.kind !== 'feature-face') {
+    return null
+  }
+
   if (
-    plane.kind !== 'feature-top' ||
     typeof plane.targetNodeId !== 'string' ||
-    !(typeof plane.elevation === 'number' && Number.isFinite(plane.elevation))
+    !isNumberTuple3(plane.origin) ||
+    !isNumberTuple3(plane.uAxis) ||
+    !isNumberTuple3(plane.vAxis) ||
+    !isNumberTuple3(plane.normal)
   ) {
     return null
   }
 
   return {
-    kind: 'feature-top',
+    kind: 'feature-face',
     targetNodeId: plane.targetNodeId as AnyNodeId,
-    elevation: plane.elevation,
+    origin: plane.origin,
+    uAxis: plane.uAxis,
+    vAxis: plane.vAxis,
+    normal: plane.normal,
+    label: typeof plane.label === 'string' ? plane.label : undefined,
   }
 }
 
@@ -240,15 +261,6 @@ function getSketchPlaneFromLineIds(
   }
 
   return null
-}
-
-function getSourceSketchLines(
-  nodes: Record<string, AnyNode>,
-  lineIds: readonly string[],
-): SketchLineNode[] {
-  return lineIds
-    .map((lineId) => nodes[lineId])
-    .filter((line): line is SketchLineNode => line?.type === 'sketch-line')
 }
 
 function getRevolveAxisLine(
@@ -269,53 +281,6 @@ function isRevolveAxisLineCandidate(line: SketchLineNode) {
   const dx = Math.abs(line.end[0] - line.start[0])
   const dy = Math.abs(line.end[1] - line.start[1])
   return Boolean(line.construction && dy > REVOLVE_AXIS_LINE_EPSILON && dx <= REVOLVE_AXIS_LINE_EPSILON)
-}
-
-function rebuildProfileFromSourceLines(
-  nodes: Record<string, AnyNode>,
-  lineIds: readonly string[],
-) {
-  const sourceLines = getSourceSketchLines(nodes, lineIds)
-  if (sourceLines.length !== lineIds.length || sourceLines.length < 3) {
-    return null
-  }
-
-  return (
-    detectClosedSketchProfiles(sourceLines).find((profile) =>
-      haveSameLineIds(profile.lineIds, lineIds),
-    ) ?? null
-  )
-}
-
-type SourceStatus = {
-  canRefresh: boolean
-  label: string
-  tone: 'ok' | 'warning' | 'danger'
-}
-
-function getSourceStatus(
-  nodes: Record<string, AnyNode>,
-  lineIds: readonly string[],
-  snapshotPoints: readonly [number, number][],
-): SourceStatus {
-  const sourceLines = getSourceSketchLines(nodes, lineIds)
-  if (sourceLines.length !== lineIds.length) {
-    return { canRefresh: false, label: '来源缺失', tone: 'danger' }
-  }
-
-  const rebuiltProfile = rebuildProfileFromSourceLines(nodes, lineIds)
-  if (!rebuiltProfile) {
-    return { canRefresh: false, label: '未闭合', tone: 'warning' }
-  }
-
-  if (
-    haveSameLineIds(rebuiltProfile.lineIds, lineIds) &&
-    haveSameProfilePoints(rebuiltProfile.points, snapshotPoints)
-  ) {
-    return { canRefresh: false, label: '已同步', tone: 'ok' }
-  }
-
-  return { canRefresh: true, label: '可更新', tone: 'warning' }
 }
 
 function SourceStatusBadge({ status }: { status: SourceStatus }) {
@@ -428,18 +393,14 @@ export function FeaturePanel() {
   const handleRebuildProfile = useCallback(() => {
     if (!node) return
 
-    const rebuiltProfile = rebuildProfileFromSourceLines(nodes, node.profile.lineIds)
+    const rebuiltProfile = rebuildProfileFromSourceGeometry(nodes, node.profile)
     if (!rebuiltProfile) {
       setFeedback('未找到完整的来源闭合草图，无法更新拉伸轮廓。')
       return
     }
 
     handleUpdate({
-      profile: {
-        ...node.profile,
-        lineIds: rebuiltProfile.lineIds,
-        points: rebuiltProfile.points,
-      },
+      profile: syncFeatureProfileFromSketchProfile(rebuiltProfile, node.profile),
     })
     setFeedback('已从来源草图更新拉伸轮廓。')
   }, [handleUpdate, node, nodes])
@@ -484,7 +445,7 @@ export function FeaturePanel() {
       const cut = node.cuts[index]
       if (!cut) return
 
-      const rebuiltProfile = rebuildProfileFromSourceLines(nodes, cut.profile.lineIds)
+      const rebuiltProfile = rebuildProfileFromSourceGeometry(nodes, cut.profile)
       if (!rebuiltProfile) {
         setFeedback(`切割 ${index + 1} 的来源草图不是完整闭合轮廓。`)
         return
@@ -494,11 +455,7 @@ export function FeaturePanel() {
         candidateIndex === index
           ? {
               ...candidate,
-              profile: {
-                ...candidate.profile,
-                lineIds: rebuiltProfile.lineIds,
-                points: rebuiltProfile.points,
-              },
+              profile: syncFeatureProfileFromSketchProfile(rebuiltProfile, candidate.profile),
             }
           : candidate,
       )
@@ -511,7 +468,7 @@ export function FeaturePanel() {
   const handleRebuildAll = useCallback(() => {
     if (!node) return
 
-    const rebuiltProfile = rebuildProfileFromSourceLines(nodes, node.profile.lineIds)
+    const rebuiltProfile = rebuildProfileFromSourceGeometry(nodes, node.profile)
     const nextUpdates: Partial<FeatureNode> = {}
     let updateCount = 0
     let failedCount = 0
@@ -519,9 +476,7 @@ export function FeaturePanel() {
     if (rebuiltProfile) {
       if (!haveSameProfilePoints(rebuiltProfile.points, node.profile.points)) {
         nextUpdates.profile = {
-          ...node.profile,
-          lineIds: rebuiltProfile.lineIds,
-          points: rebuiltProfile.points,
+          ...syncFeatureProfileFromSketchProfile(rebuiltProfile, node.profile),
         }
         updateCount += 1
       }
@@ -530,7 +485,7 @@ export function FeaturePanel() {
     }
 
     const nextCuts = node.cuts.map((cut) => {
-      const rebuiltCutProfile = rebuildProfileFromSourceLines(nodes, cut.profile.lineIds)
+      const rebuiltCutProfile = rebuildProfileFromSourceGeometry(nodes, cut.profile)
       if (!rebuiltCutProfile) {
         failedCount += 1
         return cut
@@ -543,11 +498,7 @@ export function FeaturePanel() {
       updateCount += 1
       return {
         ...cut,
-        profile: {
-          ...cut.profile,
-          lineIds: rebuiltCutProfile.lineIds,
-          points: rebuiltCutProfile.points,
-        },
+        profile: syncFeatureProfileFromSketchProfile(rebuiltCutProfile, cut.profile),
       }
     })
 
@@ -1064,13 +1015,13 @@ export function FeaturePanel() {
     cut,
     area: calculatePolygonArea(cut.profile.points),
     index,
-    status: getSourceStatus(nodes, cut.profile.lineIds, cut.profile.points),
+    status: getSourceStatus(nodes, cut.profile),
   }))
   const cutArea = cutSummaries.reduce((sum, cut) => sum + cut.area, 0)
   const netArea = Math.max(0, area - cutArea)
   const volume = netArea * node.depth
   const sourceSketchLines = getSourceSketchLines(nodes, node.profile.lineIds)
-  const profileStatus = getSourceStatus(nodes, node.profile.lineIds, node.profile.points)
+  const profileStatus = getSourceStatus(nodes, node.profile)
   const topElevation = node.baseElevation + node.depth
   const canRebuildAll =
     profileStatus.canRefresh || cutSummaries.some((summary) => summary.status.canRefresh)

@@ -23,7 +23,9 @@ export type SketchRectangleSegment = {
 
 export type SketchProfile = {
   lineIds: SketchLineNode['id'][]
+  circleIds?: SketchCircleNode['id'][]
   points: SketchPlanPoint[]
+  holes?: SketchProfile[]
 }
 
 export type SketchLineEditUpdate = {
@@ -87,10 +89,13 @@ const EPSILON = 1e-6
 const FULL_CIRCLE_RADIANS = Math.PI * 2
 
 type ProfileEdge = {
-  id: SketchLineNode['id']
-  line: SketchLineNode
+  id: SketchLineNode['id'] | SketchCircleNode['id']
+  kind: 'line' | 'arc'
   a: string
   b: string
+  line?: SketchLineNode
+  circle?: SketchCircleNode
+  points: SketchPlanPoint[]
 }
 
 function pointDistance(a: SketchPlanPoint, b: SketchPlanPoint) {
@@ -153,10 +158,7 @@ function getSketchLineStraightSnapOffset(line: Pick<SketchLineNode, 'start' | 'e
   return Math.min(0.03, Math.max(0.005, getSketchLineLength2D(line) * 0.005))
 }
 
-function normalizeCurveOffset(
-  line: Pick<SketchLineNode, 'start' | 'end'>,
-  offset: number,
-) {
+function normalizeCurveOffset(line: Pick<SketchLineNode, 'start' | 'end'>, offset: number) {
   const maxOffset = getSketchLineLength2D(line) / 2
   if (!Number.isFinite(maxOffset) || maxOffset < EPSILON) {
     return 0
@@ -175,7 +177,7 @@ export function getSketchLinePathLength2D(
     return chordLength
   }
 
-  const radius = chordLength * chordLength / (8 * curveOffset) + curveOffset / 2
+  const radius = (chordLength * chordLength) / (8 * curveOffset) + curveOffset / 2
   const centralAngle = 2 * Math.asin(Math.min(1, chordLength / (2 * radius)))
   return radius * centralAngle
 }
@@ -220,7 +222,9 @@ function isSketchCircleArcLocal(circle: Pick<SketchCircleNode, 'kind'>) {
 }
 
 function getCounterClockwiseSweep(startAngle: number, endAngle: number) {
-  return ((endAngle - startAngle) % FULL_CIRCLE_RADIANS + FULL_CIRCLE_RADIANS) % FULL_CIRCLE_RADIANS
+  return (
+    (((endAngle - startAngle) % FULL_CIRCLE_RADIANS) + FULL_CIRCLE_RADIANS) % FULL_CIRCLE_RADIANS
+  )
 }
 
 function getSketchCircleArcSweepLocal(
@@ -253,13 +257,18 @@ function getSketchLineIntersection(
   return addPoint(first.start, scalePoint(firstVector, t))
 }
 
-function isPointOnSketchCircleArc(circle: Pick<SketchCircleNode, 'center' | 'kind' | 'startAngle' | 'endAngle'>, point: SketchPlanPoint) {
+function isPointOnSketchCircleArc(
+  circle: Pick<SketchCircleNode, 'center' | 'kind' | 'startAngle' | 'endAngle'>,
+  point: SketchPlanPoint,
+) {
   if (!isSketchCircleArcLocal(circle)) {
     return true
   }
 
   const start = normalizeAngle(circle.startAngle)
-  const target = normalizeAngle(Math.atan2(point[1] - circle.center[1], point[0] - circle.center[0]))
+  const target = normalizeAngle(
+    Math.atan2(point[1] - circle.center[1], point[0] - circle.center[0]),
+  )
   const sweep = getSketchCircleArcSweepLocal(circle)
   const offset = getCounterClockwiseSweep(start, target)
   return offset <= sweep + EPSILON || Math.abs(offset - FULL_CIRCLE_RADIANS) <= EPSILON
@@ -273,6 +282,24 @@ function getSketchCirclePointAtAngle(
     circle.center[0] + Math.cos(angle) * circle.radius,
     circle.center[1] + Math.sin(angle) * circle.radius,
   ]
+}
+
+function getSketchCircleArcPoints(circle: SketchCircleNode): SketchPlanPoint[] {
+  const sweep = getSketchCircleArcSweepLocal(circle)
+  const segments = Math.max(8, Math.ceil(48 * (sweep / FULL_CIRCLE_RADIANS)))
+  return Array.from({ length: segments + 1 }, (_, index) =>
+    getSketchCirclePointAtAngle(circle, circle.startAngle + sweep * (index / segments)),
+  )
+}
+
+function appendProfilePoints(target: SketchPlanPoint[], points: SketchPlanPoint[]) {
+  for (const point of points) {
+    const previous = target.at(-1)
+    if (previous && pointDistance(previous, point) <= PROFILE_KEY_TOLERANCE) {
+      continue
+    }
+    target.push(point)
+  }
 }
 
 function getSketchCircleCircleIntersectionCandidates(
@@ -295,9 +322,7 @@ function getSketchCircleCircleIntersectionCandidates(
   }
 
   const a =
-    (first.radius * first.radius -
-      second.radius * second.radius +
-      distance * distance) /
+    (first.radius * first.radius - second.radius * second.radius + distance * distance) /
     (2 * distance)
   const hSquared = first.radius * first.radius - a * a
   if (hSquared < -EPSILON) {
@@ -360,10 +385,7 @@ function getSketchLineCircleIntersectionCandidates(
   const roots =
     Math.abs(discriminant) <= EPSILON
       ? [-b / (2 * a)]
-      : [
-          (-b - Math.sqrt(discriminant)) / (2 * a),
-          (-b + Math.sqrt(discriminant)) / (2 * a),
-        ]
+      : [(-b - Math.sqrt(discriminant)) / (2 * a), (-b + Math.sqrt(discriminant)) / (2 * a)]
 
   const candidates: SketchPlanPoint[] = []
   for (const t of roots) {
@@ -454,12 +476,21 @@ function isSelfIntersectingPolygon(points: SketchPlanPoint[]) {
 }
 
 function areProfilesEqual(first: SketchProfile, second: SketchProfile) {
-  if (first.lineIds.length !== second.lineIds.length) {
+  const firstCircleIds = first.circleIds ?? []
+  const secondCircleIds = second.circleIds ?? []
+  if (
+    first.lineIds.length !== second.lineIds.length ||
+    firstCircleIds.length !== secondCircleIds.length
+  ) {
     return false
   }
 
   const secondLineIds = new Set(second.lineIds)
-  return first.lineIds.every((lineId) => secondLineIds.has(lineId))
+  const secondCircleIdSet = new Set(secondCircleIds)
+  return (
+    first.lineIds.every((lineId) => secondLineIds.has(lineId)) &&
+    firstCircleIds.every((circleId) => secondCircleIdSet.has(circleId))
+  )
 }
 
 function isPointInsidePolygon(point: SketchPlanPoint, polygon: SketchPlanPoint[]) {
@@ -489,43 +520,94 @@ function isPointInsidePolygon(point: SketchPlanPoint, polygon: SketchPlanPoint[]
 export function getSketchProfileUnsupportedReason(
   profile: SketchProfile,
   profiles: SketchProfile[],
+  options: { allowHoles?: boolean } = {},
 ) {
-  const nestedProfiles = profiles.filter((candidate) => {
-    if (areProfilesEqual(profile, candidate)) {
-      return false
-    }
-
-    const firstPoint = candidate.points[0]
-    return firstPoint ? isPointInsidePolygon(firstPoint, profile.points) : false
-  })
-
-  if (nestedProfiles.length > 0) {
+  if (!options.allowHoles && (profile.holes?.length ?? 0) > 0) {
     return '暂不支持带洞的草图轮廓。请一次只转换一个闭合轮廓。'
   }
 
   return null
 }
 
+export function buildSketchCircleProfile(circle: SketchCircleNode): SketchProfile | null {
+  if (
+    circle.visible === false ||
+    circle.construction ||
+    circle.kind !== 'circle' ||
+    !(Number.isFinite(circle.radius) && circle.radius > MIN_SKETCH_LINE_LENGTH)
+  ) {
+    return null
+  }
+
+  const segments = 64
+  const points = Array.from({ length: segments }, (_, index) => {
+    const angle = (index / segments) * FULL_CIRCLE_RADIANS
+    return getSketchCirclePointAtAngle(circle, angle)
+  })
+
+  return {
+    lineIds: [],
+    circleIds: [circle.id],
+    points,
+  }
+}
+
+export function detectClosedSketchCircleProfiles(circles: SketchCircleNode[]): SketchProfile[] {
+  return attachSketchProfileHoles(
+    circles
+      .map(buildSketchCircleProfile)
+      .filter((profile): profile is SketchProfile => Boolean(profile)),
+  )
+}
+
+function isProfileInsideProfile(inner: SketchProfile, outer: SketchProfile) {
+  if (areProfilesEqual(inner, outer)) {
+    return false
+  }
+
+  const firstPoint = inner.points[0]
+  return firstPoint ? isPointInsidePolygon(firstPoint, outer.points) : false
+}
+
+function attachSketchProfileHoles(profiles: SketchProfile[]): SketchProfile[] {
+  return profiles.map((profile) => {
+    const holes = profiles.filter((candidate) => {
+      if (!isProfileInsideProfile(candidate, profile)) {
+        return false
+      }
+
+      return !profiles.some(
+        (middle) =>
+          !areProfilesEqual(middle, profile) &&
+          !areProfilesEqual(middle, candidate) &&
+          isProfileInsideProfile(candidate, middle) &&
+          isProfileInsideProfile(middle, profile),
+      )
+    })
+
+    return holes.length > 0 ? { ...profile, holes } : profile
+  })
+}
+
 function traceProfile(args: {
   componentEdges: ProfileEdge[]
   adjacency: Map<string, ProfileEdge[]>
-  pointByKey: Map<string, SketchPlanPoint>
 }): SketchProfile | null {
-  const { componentEdges, adjacency, pointByKey } = args
+  const { componentEdges, adjacency } = args
   const firstEdge = componentEdges[0]
   if (!firstEdge) {
     return null
   }
 
   const componentEdgeIds = new Set(componentEdges.map((edge) => edge.id))
-  const usedEdgeIds = new Set<SketchLineNode['id']>([firstEdge.id])
-  const lineIds: SketchLineNode['id'][] = [firstEdge.line.id]
-  const pointKeys: string[] = [firstEdge.a]
+  const usedEdgeIds = new Set<ProfileEdge['id']>([firstEdge.id])
+  const orderedEdges: Array<{ edge: ProfileEdge; forward: boolean }> = [
+    { edge: firstEdge, forward: true },
+  ]
   let previousKey = firstEdge.a
   let currentKey = firstEdge.b
 
-  while (currentKey !== pointKeys[0]) {
-    pointKeys.push(currentKey)
+  while (currentKey !== firstEdge.a) {
     const nextEdge = (adjacency.get(currentKey) ?? []).find(
       (edge) => componentEdgeIds.has(edge.id) && !usedEdgeIds.has(edge.id),
     )
@@ -534,23 +616,40 @@ function traceProfile(args: {
     }
 
     usedEdgeIds.add(nextEdge.id)
-    lineIds.push(nextEdge.line.id)
-    const nextKey = nextEdge.a === currentKey ? nextEdge.b : nextEdge.a
+    const forward = nextEdge.a === currentKey
+    orderedEdges.push({ edge: nextEdge, forward })
+    const nextKey = forward ? nextEdge.b : nextEdge.a
     previousKey = currentKey
     currentKey = nextKey
 
-    if (pointKeys.length > componentEdges.length + 1 || currentKey === previousKey) {
+    if (orderedEdges.length > componentEdges.length + 1 || currentKey === previousKey) {
       return null
     }
   }
 
-  if (usedEdgeIds.size !== componentEdges.length || pointKeys.length < 3) {
+  if (usedEdgeIds.size !== componentEdges.length || orderedEdges.length < 2) {
     return null
   }
 
-  const points = pointKeys.map((key) => pointByKey.get(key)).filter(Boolean) as SketchPlanPoint[]
+  const points: SketchPlanPoint[] = []
+  const lineIds: SketchLineNode['id'][] = []
+  const circleIds: SketchCircleNode['id'][] = []
+  for (const { edge, forward } of orderedEdges) {
+    if (edge.kind === 'line' && edge.line) {
+      lineIds.push(edge.line.id)
+    }
+    if (edge.kind === 'arc' && edge.circle) {
+      circleIds.push(edge.circle.id)
+    }
+    appendProfilePoints(points, forward ? edge.points : [...edge.points].reverse())
+  }
+
+  if (points.length > 1 && pointDistance(points[0]!, points.at(-1)!) <= PROFILE_KEY_TOLERANCE) {
+    points.pop()
+  }
+
   if (
-    points.length !== pointKeys.length ||
+    points.length < 3 ||
     Math.abs(polygonArea(points)) <= EPSILON ||
     isSelfIntersectingPolygon(points)
   ) {
@@ -559,6 +658,7 @@ function traceProfile(args: {
 
   return {
     lineIds,
+    circleIds,
     points: polygonArea(points) < 0 ? [...points].reverse() : points,
   }
 }
@@ -589,10 +689,18 @@ export function buildSketchRectangleSegments(
   ]
 }
 
-export function detectClosedSketchProfiles(lines: SketchLineNode[]): SketchProfile[] {
+export function detectClosedSketchProfiles(
+  lines: SketchLineNode[],
+  circles: SketchCircleNode[] = [],
+): SketchProfile[] {
   const edges: ProfileEdge[] = []
   const pointByKey = new Map<string, SketchPlanPoint>()
   const adjacency = new Map<string, ProfileEdge[]>()
+  const addEdge = (edge: ProfileEdge) => {
+    edges.push(edge)
+    adjacency.set(edge.a, [...(adjacency.get(edge.a) ?? []), edge])
+    adjacency.set(edge.b, [...(adjacency.get(edge.b) ?? []), edge])
+  }
 
   for (const line of lines) {
     if (
@@ -612,13 +720,38 @@ export function detectClosedSketchProfiles(lines: SketchLineNode[]): SketchProfi
     pointByKey.set(a, pointByKey.get(a) ?? line.start)
     pointByKey.set(b, pointByKey.get(b) ?? line.end)
 
-    const edge: ProfileEdge = { id: line.id, line, a, b }
-    edges.push(edge)
-    adjacency.set(a, [...(adjacency.get(a) ?? []), edge])
-    adjacency.set(b, [...(adjacency.get(b) ?? []), edge])
+    addEdge({ id: line.id, kind: 'line', line, a, b, points: [line.start, line.end] })
   }
 
-  const visited = new Set<SketchLineNode['id']>()
+  for (const circle of circles) {
+    if (
+      circle.visible === false ||
+      circle.construction ||
+      circle.kind !== 'arc' ||
+      !(Number.isFinite(circle.radius) && circle.radius > MIN_SKETCH_LINE_LENGTH)
+    ) {
+      continue
+    }
+
+    const points = getSketchCircleArcPoints(circle)
+    const start = points[0]
+    const end = points.at(-1)
+    if (!(start && end)) {
+      continue
+    }
+
+    const a = pointKey(start)
+    const b = pointKey(end)
+    if (a === b) {
+      continue
+    }
+
+    pointByKey.set(a, pointByKey.get(a) ?? start)
+    pointByKey.set(b, pointByKey.get(b) ?? end)
+    addEdge({ id: circle.id, kind: 'arc', circle, a, b, points })
+  }
+
+  const visited = new Set<ProfileEdge['id']>()
   const profiles: SketchProfile[] = []
 
   for (const edge of edges) {
@@ -643,7 +776,7 @@ export function detectClosedSketchProfiles(lines: SketchLineNode[]): SketchProfi
       }
     }
 
-    if (componentEdges.length < 3) {
+    if (componentEdges.length < 2) {
       continue
     }
 
@@ -660,13 +793,13 @@ export function detectClosedSketchProfiles(lines: SketchLineNode[]): SketchProfi
       continue
     }
 
-    const profile = traceProfile({ componentEdges, adjacency, pointByKey })
+    const profile = traceProfile({ componentEdges, adjacency })
     if (profile) {
       profiles.push(profile)
     }
   }
 
-  return profiles
+  return attachSketchProfileHoles([...profiles, ...detectClosedSketchCircleProfiles(circles)])
 }
 
 export function buildSketchLineFilletArc(args: {
@@ -705,7 +838,10 @@ export function buildSketchLineFilletArc(args: {
   }
 
   const angle = Math.acos(
-    Math.max(-1, Math.min(1, firstDirection[0] * secondDirection[0] + firstDirection[1] * secondDirection[1])),
+    Math.max(
+      -1,
+      Math.min(1, firstDirection[0] * secondDirection[0] + firstDirection[1] * secondDirection[1]),
+    ),
   )
   if (angle <= EPSILON || angle >= Math.PI - EPSILON) {
     return { ok: false, reason: '当前草图线夹角无法创建圆角。' }
@@ -758,13 +894,11 @@ export function buildTrimExtendSketchLineToCirclePlan(args: {
     return { ok: false, reason: '草图线与目标圆或圆弧没有可用交点。' }
   }
 
-  let best:
-    | {
-        endpoint: 'start' | 'end'
-        point: SketchPlanPoint
-        movement: number
-      }
-    | null = null
+  let best: {
+    endpoint: 'start' | 'end'
+    point: SketchPlanPoint
+    movement: number
+  } | null = null
 
   for (const candidate of candidates) {
     const endpoint = getNearestEndpoint(line, candidate)
@@ -774,10 +908,7 @@ export function buildTrimExtendSketchLineToCirclePlan(args: {
       continue
     }
 
-    const movement = pointDistance(
-      endpoint === 'start' ? line.start : line.end,
-      candidate,
-    )
+    const movement = pointDistance(endpoint === 'start' ? line.start : line.end, candidate)
     if (!best || movement < best.movement) {
       best = { endpoint, point: candidate, movement }
     }
@@ -845,13 +976,11 @@ export function buildSetSketchLineTangentToCirclePlan(args: {
     return { ok: false, reason: '当前仅支持直线草图与圆或圆弧设为相切。' }
   }
 
-  let best:
-    | {
-        endpoint: 'start' | 'end'
-        point: SketchPlanPoint
-        movement: number
-      }
-    | null = null
+  let best: {
+    endpoint: 'start' | 'end'
+    point: SketchPlanPoint
+    movement: number
+  } | null = null
 
   for (const endpoint of ['start', 'end'] as const) {
     const anchor = endpoint === 'start' ? line.end : line.start
@@ -896,13 +1025,11 @@ function buildTrimExtendSketchArcFromCandidates(args: {
 
   const startPoint = getSketchCirclePointAtAngle(circle, circle.startAngle)
   const endPoint = getSketchCirclePointAtAngle(circle, circle.endAngle)
-  let best:
-    | {
-        startAngle: number
-        endAngle: number
-        movement: number
-      }
-    | null = null
+  let best: {
+    startAngle: number
+    endAngle: number
+    movement: number
+  } | null = null
 
   for (const candidate of candidates) {
     const candidateAngle = normalizeAngle(
@@ -989,12 +1116,10 @@ export function buildSetSketchLineEndpointTangentToCirclePlan(args: {
     return { ok: false, reason: '当前草图线与目标圆或圆弧无法建立有效相切。' }
   }
 
-  let best:
-    | {
-        point: SketchPlanPoint
-        movement: number
-      }
-    | null = null
+  let best: {
+    point: SketchPlanPoint
+    movement: number
+  } | null = null
 
   for (const candidate of candidates) {
     const nextStart = endpoint === 'start' ? candidate : line.start

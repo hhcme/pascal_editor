@@ -64,11 +64,22 @@ export type ViewpointEntryTarget = {
   yaw?: number
 }
 
-export type SketchPlane = {
-  kind: 'feature-top'
-  targetNodeId: AnyNodeId
-  elevation: number
-}
+export type SketchPlane =
+  | {
+      kind: 'feature-top'
+      targetNodeId: AnyNodeId
+      elevation: number
+    }
+  | {
+      kind: 'feature-face'
+      targetNodeId: AnyNodeId
+      space?: 'target-local' | 'scene'
+      origin: [number, number, number]
+      uAxis: [number, number, number]
+      vAxis: [number, number, number]
+      normal: [number, number, number]
+      label?: string
+    }
 
 export type RevolveAxisPick = {
   featureId: AnyNodeId

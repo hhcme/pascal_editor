@@ -5,7 +5,7 @@ import {
   useRegistry,
 } from '@pascal-app/core'
 import { useEffect, useMemo, useRef } from 'react'
-import { Color, DoubleSide, type Group } from 'three'
+import { Color, DoubleSide, type Group, Matrix4, Quaternion, Vector3 } from 'three'
 import { color, float } from 'three/tsl'
 import { MeshBasicNodeMaterial } from 'three/webgpu'
 import { useNodeEvents } from '../../../hooks/use-node-events'
@@ -130,6 +130,21 @@ function createHitMaterial() {
   return material
 }
 
+type RenderSketchPlane = {
+  origin: [number, number, number]
+  xAxis: [number, number, number]
+  yAxis: [number, number, number]
+  zAxis: [number, number, number]
+}
+
+function isNumberTuple3(value: unknown): value is [number, number, number] {
+  return (
+    Array.isArray(value) &&
+    value.length === 3 &&
+    value.every((entry) => typeof entry === 'number' && Number.isFinite(entry))
+  )
+}
+
 function getSketchPlaneElevation(node: SketchLineNode): number {
   const metadata = node.metadata
   if (!(typeof metadata === 'object' && metadata !== null && 'sketchPlane' in metadata)) {
@@ -143,6 +158,61 @@ function getSketchPlaneElevation(node: SketchLineNode): number {
 
   const elevation = (sketchPlane as Record<string, unknown>).elevation
   return typeof elevation === 'number' && Number.isFinite(elevation) ? elevation : 0
+}
+
+function getRenderSketchPlane(node: SketchLineNode): RenderSketchPlane {
+  const metadata = node.metadata
+  if (typeof metadata === 'object' && metadata !== null && 'sketchPlane' in metadata) {
+    const sketchPlane = (metadata as Record<string, unknown>).sketchPlane
+    if (typeof sketchPlane === 'object' && sketchPlane !== null) {
+      const plane = sketchPlane as Record<string, unknown>
+      if (
+        plane.kind === 'feature-face' &&
+        isNumberTuple3(plane.origin) &&
+        isNumberTuple3(plane.uAxis) &&
+        isNumberTuple3(plane.vAxis) &&
+        isNumberTuple3(plane.normal)
+      ) {
+        const origin = plane.origin
+        const uAxis = plane.uAxis
+        const vAxis = plane.vAxis
+        const normal = plane.normal
+        const offsetOrigin = origin.map(
+          (value, index) => value + normal[index]! * SKETCH_LINE_Y_OFFSET,
+        ) as [number, number, number]
+        return {
+          origin: offsetOrigin,
+          xAxis: uAxis,
+          yAxis: normal,
+          zAxis: vAxis,
+        }
+      }
+    }
+  }
+
+  return {
+    origin: [0, getSketchPlaneElevation(node) + SKETCH_LINE_Y_OFFSET, 0],
+    xAxis: [1, 0, 0],
+    yAxis: [0, 1, 0],
+    zAxis: [0, 0, 1],
+  }
+}
+
+function useSketchPlaneTransform(node: SketchLineNode) {
+  return useMemo(() => {
+    const plane = getRenderSketchPlane(node)
+    const matrix = new Matrix4().makeBasis(
+      new Vector3(...plane.xAxis),
+      new Vector3(...plane.yAxis),
+      new Vector3(...plane.zAxis),
+    )
+    const position = new Vector3(...plane.origin)
+    const quaternion = new Quaternion().setFromRotationMatrix(matrix)
+    return {
+      position: position.toArray() as [number, number, number],
+      quaternion,
+    }
+  }, [node])
 }
 
 export const SketchLineRenderer = ({ node }: { node: SketchLineNode }) => {
@@ -193,10 +263,12 @@ export const SketchLineRenderer = ({ node }: { node: SketchLineNode }) => {
   }, [hitMaterial])
 
   const canRenderLine = node.visible !== false && chordLength >= 1e-6
+  const planeTransform = useSketchPlaneTransform(node)
 
   return (
     <group
-      position={[0, getSketchPlaneElevation(node) + SKETCH_LINE_Y_OFFSET, 0]}
+      position={planeTransform.position}
+      quaternion={planeTransform.quaternion}
       ref={ref}
       renderOrder={60}
       visible={canRenderLine}

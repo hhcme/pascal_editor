@@ -57,6 +57,7 @@ import { CadMultiViewRenderer } from './cad-multi-view-renderer'
 import { CustomCameraControls } from './custom-camera-controls'
 import { EditorLayoutV2 } from './editor-layout-v2'
 import { ExportManager } from './export-manager'
+import { FeatureSourceSyncSystem } from './feature-source-sync-system'
 import { FirstPersonControls, FirstPersonOverlay } from './first-person-controls'
 import { FirstPersonShooterSystem } from './first-person-shooter-system'
 import {
@@ -579,6 +580,7 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
       <SunTimeFlowSystem />
       {isFirstPersonMode ? <ViewerZoneSystem /> : <ZoneSystem />}
       <CeilingSystem />
+      <FeatureSourceSyncSystem />
       <CeilingSelectionAffordanceSystem />
       <RoofEditSystem />
       <StairEditSystem />
@@ -1022,9 +1024,7 @@ export default function Editor({
                   </PanelSurfaceProvider>
                 ) : null
               }
-              inspectorWidth={
-                shouldDockMeasurementPanel ? 'clamp(340px, 24vw, 420px)' : undefined
-              }
+              inspectorWidth={shouldDockMeasurementPanel ? 'clamp(340px, 24vw, 420px)' : undefined}
               navbarSlot={navbarSlot}
               overlays={
                 !isFirstPersonMode ? (

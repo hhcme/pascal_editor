@@ -1,29 +1,30 @@
 import { isObject } from '@pascal-app/core'
-import useEditor from '../../../store/use-editor'
 
-function getGridSnapStep(): number {
-  return useEditor.getState().gridSnapStep
-}
+const INTERNAL_PLACEMENT_SNAP_STEP = 0.05
 
 function positiveModulo(value: number, divisor: number): number {
   return ((value % divisor) + divisor) % divisor
 }
 
 /**
- * Snaps a position to 0.5 grid, with an offset to align item edges to grid lines.
- * For items with dimensions like 2.5, the center would be at 1.25 from the edge,
- * which doesn't align with 0.5 grid. This adds an offset so edges align instead.
+ * Snaps a position to the internal placement precision, with an offset to align
+ * item edges to precision lines. For items with dimensions like 2.5, the center
+ * would be at 1.25 from the edge; this keeps the edge alignment stable.
  */
-export function snapToGrid(position: number, dimension: number, step = getGridSnapStep()): number {
+export function snapToGrid(
+  position: number,
+  dimension: number,
+  step = INTERNAL_PLACEMENT_SNAP_STEP,
+): number {
   const halfDim = dimension / 2
   const offset = positiveModulo(halfDim, step)
   return Math.round((position - offset) / step) * step + offset
 }
 
 /**
- * Snap a value to 0.5 increments (used for wall-local positions).
+ * Snap a value to the internal placement precision (used for wall-local positions).
  */
-export function snapToHalf(value: number, step = getGridSnapStep()): number {
+export function snapToHalf(value: number, step = INTERNAL_PLACEMENT_SNAP_STEP): number {
   return Math.round(value / step) * step
 }
 

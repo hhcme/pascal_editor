@@ -11,11 +11,11 @@ import {
 } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
 import { sfxEmitter } from '../../../lib/sfx-bus'
-import useEditor from '../../../store/use-editor'
 
 export type WallPlanPoint = [number, number]
 
 export const WALL_GRID_STEP = 0.5
+export const INTERNAL_WALL_SNAP_STEP = 0.05
 export const WALL_JOIN_SNAP_RADIUS = 0.35
 export const WALL_MIN_LENGTH = 0.01
 const DEFAULT_WALL_ANGLE_SNAP_STEP = Math.PI / 4
@@ -39,21 +39,24 @@ function distanceSquared(a: WallPlanPoint, b: WallPlanPoint): number {
 }
 
 export function getWallGridStep(): number {
-  return useEditor.getState().gridSnapStep
+  return INTERNAL_WALL_SNAP_STEP
 }
 
 export function snapScalarToGrid(value: number, step = WALL_GRID_STEP): number {
   return Math.round(value / step) * step
 }
 
-export function snapPointToGrid(point: WallPlanPoint, step = WALL_GRID_STEP): WallPlanPoint {
+export function snapPointToGrid(
+  point: WallPlanPoint,
+  step = INTERNAL_WALL_SNAP_STEP,
+): WallPlanPoint {
   return [snapScalarToGrid(point[0], step), snapScalarToGrid(point[1], step)]
 }
 
 export function snapPointTo45Degrees(
   start: WallPlanPoint,
   cursor: WallPlanPoint,
-  step = WALL_GRID_STEP,
+  step = INTERNAL_WALL_SNAP_STEP,
   angleStep = DEFAULT_WALL_ANGLE_SNAP_STEP,
 ): WallPlanPoint {
   const dx = cursor[0] - start[0]
@@ -62,10 +65,10 @@ export function snapPointTo45Degrees(
   const snappedAngle = Math.round(angle / angleStep) * angleStep
   const distance = Math.sqrt(dx * dx + dz * dz)
 
-  return snapPointToGrid([
-    start[0] + Math.cos(snappedAngle) * distance,
-    start[1] + Math.sin(snappedAngle) * distance,
-  ], step)
+  return snapPointToGrid(
+    [start[0] + Math.cos(snappedAngle) * distance, start[1] + Math.sin(snappedAngle) * distance],
+    step,
+  )
 }
 
 export function getWallAngleSnapStep(step = getWallGridStep()): number {

@@ -5,25 +5,26 @@ import type { ReactNode } from 'react'
 import { memo, useMemo, useState } from 'react'
 import { useEditorLanguage } from '../../../hooks/use-editor-language'
 import { cn } from '../../../lib/utils'
+import type { SketchPlane } from '../../../store/use-editor'
 import { Popover, PopoverContent, PopoverTrigger } from '../../ui/primitives/popover'
 import type { NodeActionMenuExtraAction } from '../node-action-menu'
 import type { SketchContextTool } from './floorplan-sketch-menus'
 
 type SketchDraftKind = 'line' | 'rectangle' | 'circle' | 'arc' | null
+type SketchWorkbenchTab = 'sketch' | 'features'
 
 type FloorplanSketchCommandBarProps = {
   activeTool: SketchContextTool | null
+  activeTab: SketchWorkbenchTab
   draftKind: SketchDraftKind
   canCommitDraft: boolean
-  sketchPlane: {
-    kind: 'feature-top'
-    elevation: number
-  } | null
+  sketchPlane: SketchPlane | null
   lineSelectionCount: number
   circleSelectionCount: number
   sketchLineActions: NodeActionMenuExtraAction[]
   sketchCircleActions: NodeActionMenuExtraAction[]
   onActivateTool: (tool: SketchContextTool) => void
+  onChangeTab: (tab: SketchWorkbenchTab) => void
   onCommitDraft: () => void
   onCancelDraft: () => void
   onExitSketch: () => void
@@ -35,12 +36,17 @@ type CommandBarCopy = {
   quickActions: string
   constraints: string
   edit: string
-  generate: string
+  sketchTab: string
+  featuresTab: string
+  solidFeatures: string
+  buildingFeatures: string
   exitSketch: string
   cancelDraft: string
   completeSketch: string
   moreActions: string
+  closedSketchRequired: string
   topFacePlane: (elevation: number) => string
+  facePlane: (label?: string) => string
   readyStatus: string
   activeToolStatus: (toolLabel: string) => string
   draftStatus: (draftLabel: string) => string
@@ -60,12 +66,17 @@ const COPY: Record<'zh-CN' | 'en', CommandBarCopy> = {
     quickActions: '常用',
     constraints: '约束',
     edit: '编辑',
-    generate: '生成',
+    sketchTab: '草图',
+    featuresTab: '特征',
+    solidFeatures: '实体特征',
+    buildingFeatures: '建筑特征',
     exitSketch: '退出草图',
     cancelDraft: '取消草稿',
     completeSketch: '完成草图',
     moreActions: '更多',
+    closedSketchRequired: '需要选择闭合草图',
     topFacePlane: (elevation) => `顶面 · ${elevation.toFixed(2)} m`,
+    facePlane: (label) => `实体面 · ${label ?? '侧面'}`,
     readyStatus: '选择工具或开始绘制',
     activeToolStatus: (toolLabel) => `当前工具：${toolLabel}`,
     draftStatus: (draftLabel) => `正在绘制${draftLabel}`,
@@ -84,12 +95,17 @@ const COPY: Record<'zh-CN' | 'en', CommandBarCopy> = {
     quickActions: 'Quick',
     constraints: 'Constraints',
     edit: 'Edit',
-    generate: 'Generate',
+    sketchTab: 'Sketch',
+    featuresTab: 'Features',
+    solidFeatures: 'Solid Features',
+    buildingFeatures: 'Building Features',
     exitSketch: 'Exit Sketch',
     cancelDraft: 'Cancel Draft',
     completeSketch: 'Finish Sketch',
     moreActions: 'More',
+    closedSketchRequired: 'Select a closed sketch',
     topFacePlane: (elevation) => `Top face · ${elevation.toFixed(2)} m`,
+    facePlane: (label) => `Face · ${label ?? 'Side'}`,
     readyStatus: 'Choose a tool or start sketching',
     activeToolStatus: (toolLabel) => `Current tool: ${toolLabel}`,
     draftStatus: (draftLabel) => `Drawing ${draftLabel}`,
@@ -197,16 +213,17 @@ const CIRCLE_EDIT_ACTION_IDS = [
   'sketch-circle-linear-pattern',
 ] as const
 
-const LINE_PROFILE_GENERATE_ACTION_IDS = [
+const SOLID_FEATURE_ACTION_IDS = [
   'sketch-profile-extrude',
   'sketch-profile-revolve',
   'sketch-profile-cut',
+] as const
+
+const BUILDING_FEATURE_ACTION_IDS = [
   'sketch-profile-walls',
   'sketch-profile-slab',
   'sketch-profile-zone',
 ] as const
-
-const LINE_GENERATE_ACTION_IDS = ['sketch-line-create-wall'] as const
 
 const TOOLBAR_ACTION_LABELS: Record<string, ToolbarActionLabelOverride> = {
   'sketch-line-set-length': { 'zh-CN': '尺寸', en: 'Size' },
@@ -225,6 +242,15 @@ const TOOLBAR_ACTION_LABELS: Record<string, ToolbarActionLabelOverride> = {
   'sketch-line-perpendicular': { 'zh-CN': '垂直', en: 'Perp' },
   'sketch-line-linear-pattern': { 'zh-CN': '阵列', en: 'Pattern' },
   'sketch-circle-linear-pattern': { 'zh-CN': '阵列', en: 'Pattern' },
+}
+
+const FEATURE_ACTION_ICONS: Record<string, string> = {
+  'sketch-profile-extrude': 'mdi:cube-outline',
+  'sketch-profile-revolve': 'mdi:rotate-360',
+  'sketch-profile-cut': 'mdi:selection-remove',
+  'sketch-profile-walls': 'mdi:walls',
+  'sketch-profile-slab': 'mdi:layers-plus',
+  'sketch-profile-zone': 'mdi:shape-square-plus',
 }
 
 function HeaderButton({
@@ -330,7 +356,6 @@ function resolveDraftCommitLabel(copy: CommandBarCopy, kind: SketchDraftKind) {
       return copy.commitCircle
     case 'arc':
       return copy.commitArc
-    case 'line':
     default:
       return copy.commitLine
   }
@@ -410,6 +435,33 @@ function pickActions(
       return labelOverride ? { ...action, label: labelOverride } : action
     })
     .filter((action): action is NodeActionMenuExtraAction => Boolean(action))
+}
+
+function pickFeatureActions(
+  actionById: ReadonlyMap<string, NodeActionMenuExtraAction>,
+  ids: readonly string[],
+  language: 'zh-CN' | 'en',
+) {
+  return ids.map((id): NodeActionMenuExtraAction => {
+    const action = actionById.get(id)
+    if (action) {
+      const labelOverride = TOOLBAR_ACTION_LABELS[id]?.[language]
+      return labelOverride ? { ...action, label: labelOverride } : action
+    }
+
+    return {
+      id,
+      label: TOOLBAR_ACTION_LABELS[id]?.[language] ?? id,
+      icon: (
+        <Icon
+          height={16}
+          icon={FEATURE_ACTION_ICONS[id] ?? 'mdi:cursor-default-click'}
+          width={16}
+        />
+      ),
+      disabled: true,
+    }
+  })
 }
 
 function invokeAction(action: NodeActionMenuExtraAction) {
@@ -507,6 +559,7 @@ function RibbonGroup({
             key={action.id}
             label={action.label}
             onClick={action.onClick ? () => invokeAction(action) : undefined}
+            title={action.disabled ? copy.closedSketchRequired : action.label}
           />
         ))}
         <OverflowRibbonButton actions={overflowActions} copy={copy} />
@@ -518,6 +571,7 @@ function RibbonGroup({
 
 export const FloorplanSketchCommandBar = memo(function FloorplanSketchCommandBar({
   activeTool,
+  activeTab,
   draftKind,
   canCommitDraft,
   sketchPlane,
@@ -526,6 +580,7 @@ export const FloorplanSketchCommandBar = memo(function FloorplanSketchCommandBar
   sketchLineActions,
   sketchCircleActions,
   onActivateTool,
+  onChangeTab,
   onCommitDraft,
   onCancelDraft,
   onExitSketch,
@@ -558,10 +613,6 @@ export const FloorplanSketchCommandBar = memo(function FloorplanSketchCommandBar
       return []
     }
 
-    const generateIds = sketchLineActionById.has('sketch-profile-walls')
-      ? LINE_PROFILE_GENERATE_ACTION_IDS
-      : LINE_GENERATE_ACTION_IDS
-
     return [
       {
         id: 'line-quick',
@@ -582,16 +633,10 @@ export const FloorplanSketchCommandBar = memo(function FloorplanSketchCommandBar
         actions: pickActions(sketchLineActionById, LINE_EDIT_ACTION_IDS, language),
         maxVisibleActions: 4,
       },
-      {
-        id: 'line-generate',
-        label: copy.generate,
-        actions: pickActions(sketchLineActionById, generateIds, language),
-      },
     ]
   }, [
     copy.constraints,
     copy.edit,
-    copy.generate,
     copy.quickActions,
     language,
     lineSelectionCount,
@@ -632,6 +677,22 @@ export const FloorplanSketchCommandBar = memo(function FloorplanSketchCommandBar
   ])
 
   const activeContextGroups = showLineContext ? lineContextGroups : circleContextGroups
+  const featureActionById = showCircleContext ? sketchCircleActionById : sketchLineActionById
+  const featureGroups = useMemo<ToolbarGroup[]>(
+    () => [
+      {
+        id: 'solid-features',
+        label: copy.solidFeatures,
+        actions: pickFeatureActions(featureActionById, SOLID_FEATURE_ACTION_IDS, language),
+      },
+      {
+        id: 'building-features',
+        label: copy.buildingFeatures,
+        actions: pickFeatureActions(featureActionById, BUILDING_FEATURE_ACTION_IDS, language),
+      },
+    ],
+    [copy.buildingFeatures, copy.solidFeatures, featureActionById, language],
+  )
 
   return (
     <div className="pointer-events-none absolute top-4 right-4 left-4 z-30">
@@ -640,6 +701,32 @@ export const FloorplanSketchCommandBar = memo(function FloorplanSketchCommandBar
           <div className="flex flex-col gap-2 border-border/60 border-b px-4 py-2 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0 flex flex-wrap items-center gap-2 text-xs">
               <span className="shrink-0 font-semibold text-primary">{copy.title}</span>
+              <div className="ml-1 flex shrink-0 items-center rounded-md border border-border/70 bg-background/50 p-0.5">
+                <button
+                  className={cn(
+                    'h-6 rounded px-2 font-medium text-[11px] transition-colors',
+                    activeTab === 'sketch'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                  )}
+                  onClick={() => onChangeTab('sketch')}
+                  type="button"
+                >
+                  {copy.sketchTab}
+                </button>
+                <button
+                  className={cn(
+                    'h-6 rounded px-2 font-medium text-[11px] transition-colors',
+                    activeTab === 'features'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                  )}
+                  onClick={() => onChangeTab('features')}
+                  type="button"
+                >
+                  {copy.featuresTab}
+                </button>
+              </div>
               {activeTool ? (
                 <>
                   <span className="text-border">/</span>
@@ -653,6 +740,14 @@ export const FloorplanSketchCommandBar = memo(function FloorplanSketchCommandBar
                   <span className="text-border">/</span>
                   <span className="shrink-0 rounded border border-primary/20 bg-primary/10 px-2 py-0.5 font-medium text-[11px] text-primary">
                     {copy.topFacePlane(sketchPlane.elevation)}
+                  </span>
+                </>
+              ) : null}
+              {sketchPlane?.kind === 'feature-face' ? (
+                <>
+                  <span className="text-border">/</span>
+                  <span className="shrink-0 rounded border border-primary/20 bg-primary/10 px-2 py-0.5 font-medium text-[11px] text-primary">
+                    {copy.facePlane(sketchPlane.label)}
                   </span>
                 </>
               ) : null}
@@ -678,30 +773,46 @@ export const FloorplanSketchCommandBar = memo(function FloorplanSketchCommandBar
 
           <div className="border-border/60 border-t px-4 py-2">
             <div className="flex flex-wrap items-start gap-3">
-              <div className="relative flex shrink-0 flex-col items-center gap-1.5 pr-3 after:absolute after:top-1 after:right-0 after:bottom-4 after:w-px after:bg-border/60">
-                <div className="flex items-start gap-1">
-                  {SKETCH_TOOL_BUTTONS.map((tool) => (
-                    <ToolRibbonButton
-                      active={activeTool === tool.id}
-                      iconSrc={tool.iconSrc}
-                      key={tool.id}
-                      label={tool.labels[language]}
-                      onClick={() => onActivateTool(tool.id)}
+              {activeTab === 'sketch' ? (
+                <>
+                  <div className="relative flex shrink-0 flex-col items-center gap-1.5 pr-3 after:absolute after:top-1 after:right-0 after:bottom-4 after:w-px after:bg-border/60">
+                    <div className="flex items-start gap-1">
+                      {SKETCH_TOOL_BUTTONS.map((tool) => (
+                        <ToolRibbonButton
+                          active={activeTool === tool.id}
+                          iconSrc={tool.iconSrc}
+                          key={tool.id}
+                          label={tool.labels[language]}
+                          onClick={() => onActivateTool(tool.id)}
+                        />
+                      ))}
+                    </div>
+                    <span className="text-[10px] text-muted-foreground leading-none">
+                      {copy.draw}
+                    </span>
+                  </div>
+
+                  {activeContextGroups.map((group) => (
+                    <RibbonGroup
+                      actions={group.actions}
+                      copy={copy}
+                      key={group.id}
+                      label={group.label}
+                      maxVisibleActions={group.maxVisibleActions}
                     />
                   ))}
-                </div>
-                <span className="text-[10px] text-muted-foreground leading-none">{copy.draw}</span>
-              </div>
-
-              {activeContextGroups.map((group) => (
-                <RibbonGroup
-                  actions={group.actions}
-                  copy={copy}
-                  key={group.id}
-                  label={group.label}
-                  maxVisibleActions={group.maxVisibleActions}
-                />
-              ))}
+                </>
+              ) : (
+                featureGroups.map((group) => (
+                  <RibbonGroup
+                    actions={group.actions}
+                    copy={copy}
+                    key={group.id}
+                    label={group.label}
+                    maxVisibleActions={group.maxVisibleActions}
+                  />
+                ))
+              )}
             </div>
           </div>
         </div>

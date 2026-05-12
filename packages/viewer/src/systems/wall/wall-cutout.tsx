@@ -13,6 +13,17 @@ const WALL_CUTAWAY_DOT_DEAD_BAND = 0.12
 const VISIBLE_WALL_RENDER_ORDER = 0
 const TRANSPARENT_WALL_RENDER_ORDER = 32
 
+function isCutawayDisabled(wallNode: WallNode): boolean {
+  const metadata = wallNode.metadata
+  return Boolean(
+    metadata &&
+      typeof metadata === 'object' &&
+      !Array.isArray(metadata) &&
+      'disableCutaway' in metadata &&
+      metadata.disableCutaway === true,
+  )
+}
+
 function getWallHideState(
   wallNode: WallNode,
   wallMesh: Mesh,
@@ -20,6 +31,10 @@ function getWallHideState(
   cameraDir: Vector3,
   previousHideWall: boolean | undefined,
 ): boolean {
+  if (isCutawayDisabled(wallNode)) {
+    return false
+  }
+
   let hideWall = wallNode.frontSide === 'interior' && wallNode.backSide === 'interior'
 
   if (wallMode === 'up') {
