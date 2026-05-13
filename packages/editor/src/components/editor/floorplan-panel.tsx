@@ -798,14 +798,10 @@ function doesSketchNodeMatchActivePlane(
   node: { metadata?: unknown },
   activePlane: SketchPlane | null,
 ) {
-  if (activePlane?.kind !== 'feature-face') {
-    return true
-  }
+  const nodePlaneSignature = getSketchPlaneSignature(getSketchPlaneFromMetadata(node.metadata))
+  const activePlaneSignature = getSketchPlaneSignature(activePlane)
 
-  return (
-    getSketchPlaneSignature(getSketchPlaneFromMetadata(node.metadata)) ===
-    getSketchPlaneSignature(activePlane)
-  )
+  return nodePlaneSignature === activePlaneSignature
 }
 
 function doesSketchDimensionReferenceMatchActivePlane(
@@ -6470,24 +6466,20 @@ export function FloorplanPanel() {
         .filter((node): node is SketchDimensionNode => node?.type === 'sketch-dimension')
     }),
   )
+  const isFeatureSketchActive =
+    sketchPlane?.kind === 'feature-top' || sketchPlane?.kind === 'feature-face'
   const isFeatureFaceSketchActive = sketchPlane?.kind === 'feature-face'
   const activeSketchPlaneSignature = useMemo(
     () => getSketchPlaneSignature(sketchPlane),
     [sketchPlane],
   )
   const activeSketchLines = useMemo(
-    () =>
-      sketchLines.filter((line) =>
-        doesSketchNodeMatchActivePlane(line, isFeatureFaceSketchActive ? sketchPlane : null),
-      ),
-    [isFeatureFaceSketchActive, sketchLines, sketchPlane],
+    () => sketchLines.filter((line) => doesSketchNodeMatchActivePlane(line, sketchPlane)),
+    [sketchLines, sketchPlane],
   )
   const activeSketchCircles = useMemo(
-    () =>
-      sketchCircles.filter((circle) =>
-        doesSketchNodeMatchActivePlane(circle, isFeatureFaceSketchActive ? sketchPlane : null),
-      ),
-    [isFeatureFaceSketchActive, sketchCircles, sketchPlane],
+    () => sketchCircles.filter((circle) => doesSketchNodeMatchActivePlane(circle, sketchPlane)),
+    [sketchCircles, sketchPlane],
   )
   const activeSketchLineIdSet = useMemo(
     () => new Set(activeSketchLines.map((line) => line.id)),
@@ -6498,10 +6490,6 @@ export function FloorplanPanel() {
     [activeSketchCircles],
   )
   const activeSketchDimensions = useMemo(() => {
-    if (!isFeatureFaceSketchActive) {
-      return sketchDimensions
-    }
-
     return sketchDimensions.filter(
       (dimension) =>
         doesSketchDimensionReferenceMatchActivePlane(
@@ -6515,7 +6503,7 @@ export function FloorplanPanel() {
           activeSketchCircleIdSet,
         ),
     )
-  }, [activeSketchCircleIdSet, activeSketchLineIdSet, isFeatureFaceSketchActive, sketchDimensions])
+  }, [activeSketchCircleIdSet, activeSketchLineIdSet, sketchDimensions])
   const zones = useScene(
     useShallow((state) => {
       if (!levelId) {
@@ -7342,17 +7330,17 @@ export function FloorplanPanel() {
     () => (faceSketchOutline.length >= 3 ? formatPolygonPoints(faceSketchOutline) : null),
     [faceSketchOutline],
   )
-  const sketchSnapWalls = isFeatureFaceSketchActive ? [] : walls
-  const sketchContextWallPolygons = isFeatureFaceSketchActive ? [] : displayWallPolygons
-  const sketchContextSlabPolygons = isFeatureFaceSketchActive ? [] : displaySlabPolygons
-  const sketchContextCeilingPolygons = isFeatureFaceSketchActive ? [] : displayCeilingPolygons
-  const sketchContextFencePolygons = isFeatureFaceSketchActive ? [] : fencePolygons
-  const sketchContextOpeningPolygons = isFeatureFaceSketchActive ? [] : openingsPolygons
-  const sketchContextItemEntries = isFeatureFaceSketchActive ? [] : floorplanItemEntries
-  const sketchContextStairEntries = isFeatureFaceSketchActive ? [] : floorplanStairEntries
-  const sketchContextZonePolygons = isFeatureFaceSketchActive ? [] : displayZonePolygons
+  const sketchSnapWalls = isFeatureSketchActive ? [] : walls
+  const sketchContextWallPolygons = isFeatureSketchActive ? [] : displayWallPolygons
+  const sketchContextSlabPolygons = isFeatureSketchActive ? [] : displaySlabPolygons
+  const sketchContextCeilingPolygons = isFeatureSketchActive ? [] : displayCeilingPolygons
+  const sketchContextFencePolygons = isFeatureSketchActive ? [] : fencePolygons
+  const sketchContextOpeningPolygons = isFeatureSketchActive ? [] : openingsPolygons
+  const sketchContextItemEntries = isFeatureSketchActive ? [] : floorplanItemEntries
+  const sketchContextStairEntries = isFeatureSketchActive ? [] : floorplanStairEntries
+  const sketchContextZonePolygons = isFeatureSketchActive ? [] : displayZonePolygons
 
-  const isSiteEditActive = !isFeatureFaceSketchActive && phase === 'site'
+  const isSiteEditActive = !isFeatureSketchActive && phase === 'site'
   const isWallBuildActive = phase === 'structure' && mode === 'build' && tool === 'wall'
   const isSketchLineBuildActive =
     phase === 'structure' &&
@@ -7512,9 +7500,9 @@ export function FloorplanPanel() {
     floorplanSelectionTool === 'click' &&
     !movingNode &&
     structureLayer !== 'zones' &&
-    !isFeatureFaceSketchActive
+    !isFeatureSketchActive
   const canInteractElementFloorplanGeometry =
-    !isFeatureFaceSketchActive && (isDeleteMode || canSelectElementFloorplanGeometry)
+    !isFeatureSketchActive && (isDeleteMode || canSelectElementFloorplanGeometry)
   const canSelectActiveSketchGeometry =
     mode === 'select' &&
     floorplanSelectionTool === 'click' &&
@@ -7532,46 +7520,46 @@ export function FloorplanPanel() {
     canSelectActiveSketchGeometry ||
     isSketchDimensionActive
   const canInteractFloorplanSlabs =
-    !isFeatureFaceSketchActive && (isDeleteMode || canSelectElementFloorplanGeometry)
+    !isFeatureSketchActive && (isDeleteMode || canSelectElementFloorplanGeometry)
   const canInteractFloorplanCeilings =
-    !isFeatureFaceSketchActive && (isDeleteMode || canSelectElementFloorplanGeometry)
+    !isFeatureSketchActive && (isDeleteMode || canSelectElementFloorplanGeometry)
   const canInteractFloorplanFences =
-    !isFeatureFaceSketchActive && (isDeleteMode || canSelectElementFloorplanGeometry)
+    !isFeatureSketchActive && (isDeleteMode || canSelectElementFloorplanGeometry)
   const canInteractWithGuides =
-    !isFeatureFaceSketchActive && showGuides && canSelectElementFloorplanGeometry
+    !isFeatureSketchActive && showGuides && canSelectElementFloorplanGeometry
   const canSelectFloorplanZones =
     mode === 'select' &&
     floorplanSelectionTool === 'click' &&
     !movingNode &&
     structureLayer === 'zones' &&
-    !isFeatureFaceSketchActive
+    !isFeatureSketchActive
   const canInteractFloorplanZones = isDeleteMode || canSelectFloorplanZones
   const isFloorplanStructureContextActive = phase === 'structure' && structureLayer !== 'zones'
   const isFloorplanFurnishContextActive = phase === 'furnish'
   const isFloorplanItemContextActive =
     isFloorplanFurnishContextActive || isFloorplanStructureContextActive
   const canSelectFloorplanStairs =
-    !isFeatureFaceSketchActive &&
+    !isFeatureSketchActive &&
     ((mode === 'select' &&
       floorplanSelectionTool === 'click' &&
       !movingNode &&
       isFloorplanStructureContextActive) ||
       isDeleteMode)
   const canSelectFloorplanItems =
-    !isFeatureFaceSketchActive &&
+    !isFeatureSketchActive &&
     ((mode === 'select' &&
       floorplanSelectionTool === 'click' &&
       !movingNode &&
       isFloorplanItemContextActive) ||
       isDeleteMode)
   const canFocusFloorplanStairs =
-    !isFeatureFaceSketchActive &&
+    !isFeatureSketchActive &&
     mode === 'select' &&
     floorplanSelectionTool === 'click' &&
     !movingNode &&
     isFloorplanStructureContextActive
   const canFocusFloorplanItems =
-    !isFeatureFaceSketchActive &&
+    !isFeatureSketchActive &&
     mode === 'select' &&
     floorplanSelectionTool === 'click' &&
     !movingNode &&
@@ -7579,21 +7567,21 @@ export function FloorplanPanel() {
   const visibleSitePolygon = phase === 'site' ? displaySitePolygon : null
   const shouldShowSiteBoundaryHandles = isSiteEditActive && visibleSitePolygon !== null
   const shouldShowPersistentWallEndpointHandles =
-    !isFeatureFaceSketchActive && mode === 'select' && !movingNode
+    !isFeatureSketchActive && mode === 'select' && !movingNode
   const shouldShowSlabBoundaryHandles =
-    !isFeatureFaceSketchActive &&
+    !isFeatureSketchActive &&
     mode === 'select' &&
     !movingNode &&
     floorplanSelectionTool === 'click' &&
     selectedSlabEntry !== null
   const shouldShowCeilingBoundaryHandles =
-    !isFeatureFaceSketchActive &&
+    !isFeatureSketchActive &&
     mode === 'select' &&
     !movingNode &&
     floorplanSelectionTool === 'click' &&
     selectedCeilingEntry !== null
   const shouldShowZoneBoundaryHandles =
-    !isFeatureFaceSketchActive && canSelectFloorplanZones && selectedZoneEntry !== null
+    !isFeatureSketchActive && canSelectFloorplanZones && selectedZoneEntry !== null
   const showZonePolygons = true // Zone polygons always visible (labels always clickable)
   const visibleZonePolygons = displayZonePolygons
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds])
@@ -8149,7 +8137,7 @@ export function FloorplanPanel() {
       ...sketchCircleDraftCenterline,
       ...sketchArcDraftCenterline,
     ]
-    const allPoints = isFeatureFaceSketchActive
+    const allPoints = isFeatureSketchActive
       ? sketchPoints
       : [
           ...(visibleSitePolygon ? visibleSitePolygon.polygon : []),
@@ -8206,7 +8194,7 @@ export function FloorplanPanel() {
     fencePolygons,
     floorplanItemEntries,
     floorplanStairEntries,
-    isFeatureFaceSketchActive,
+    isFeatureSketchActive,
     svgAspectRatio,
     sketchArcDraftCenterline,
     sketchCircleDraftCenterline,
@@ -12090,14 +12078,7 @@ export function FloorplanPanel() {
     setMode('build')
     setTool(null)
     setSketchPlane(null)
-  }, [
-    clearDraft,
-    resetSketchOperations,
-    setMode,
-    setSketchPlane,
-    setTool,
-    setWallSketchSnapResult,
-  ])
+  }, [clearDraft, resetSketchOperations, setMode, setSketchPlane, setTool, setWallSketchSnapResult])
 
   const isSketchWorkbenchActive = useMemo(
     () =>
@@ -15053,7 +15034,7 @@ export function FloorplanPanel() {
                     activeGuideInteractionMode={activeGuideInteractionMode}
                     calibrationGuideId={calibrationDraft?.guideId ?? null}
                     detectionRegionGuideId={detectionRegionDraftGuideId}
-                    guides={displayGuides}
+                    guides={isFeatureSketchActive ? [] : displayGuides}
                     isInteractive={canInteractWithGuides}
                     onGuideCalibrationPoint={handleGuideCalibrationPoint}
                     onGuideDetectionRegionStart={handleGuideDetectionRegionStart}
@@ -15071,7 +15052,7 @@ export function FloorplanPanel() {
                     sitePolygon={visibleSitePolygon}
                   />
 
-                  {deliveryOverlays.showPerimeterGuides && (
+                  {!isFeatureSketchActive && deliveryOverlays.showPerimeterGuides && (
                     <FloorplanPerimeterGuideLayer
                       guides={deliveryPerimeterGuides}
                       palette={palette}
@@ -15213,14 +15194,17 @@ export function FloorplanPanel() {
                     palette={palette}
                     selectedIdSet={selectedIdSet}
                     stairEntries={
-                      isFeatureFaceSketchActive
+                      isFeatureSketchActive
                         ? sketchContextStairEntries
                         : renderedFloorplanStairEntries
                     }
                   />
 
                   {deliveryOverlays.showRoomArea && (
-                    <FloorplanZoneAreaLabelLayer unit={unit} zonePolygons={displayZonePolygons} />
+                    <FloorplanZoneAreaLabelLayer
+                      unit={unit}
+                      zonePolygons={sketchContextZonePolygons}
+                    />
                   )}
 
                   {deliveryOverlays.showRoomName && (
