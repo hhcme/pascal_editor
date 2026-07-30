@@ -59,6 +59,7 @@ import { createPortal, flushSync } from 'react-dom'
 import { useShallow } from 'zustand/react/shallow'
 import { type EditorLanguage, useEditorLanguage } from '../../hooks/use-editor-language'
 import { markToolCancelConsumed } from '../../hooks/use-keyboard'
+import { getGuideCalibrationDisplayPoints } from '../../lib/guide-calibration'
 import { getPerimeterGuidesForNode, type PerimeterGuide } from '../../lib/measurement'
 import { sfxEmitter } from '../../lib/sfx-bus'
 import { cn } from '../../lib/utils'
@@ -169,7 +170,7 @@ import {
   type FloorplanSketchLineEntry,
   useFloorplanSketchActions,
 } from './floorplan/sketch-actions'
-import { FloorplanSketchCommandBar } from './floorplan/sketch-command-bar'
+import { FloorplanSketchCommandBar, type SketchPlaneRecord } from './floorplan/sketch-command-bar'
 import { useFloorplanSketchEdit } from './floorplan/sketch-edit'
 import {
   FloorplanSketchCircleLayer,
@@ -203,8 +204,8 @@ const EDITOR_CURSOR = "url('/cursor.svg') 4 2, default"
 const FLOORPLAN_CURSOR_INDICATOR_LINE_HEIGHT = 18
 const FLOORPLAN_CURSOR_BADGE_OFFSET_X = 14
 const FLOORPLAN_CURSOR_BADGE_OFFSET_Y = 14
-const FLOORPLAN_CURSOR_MARKER_CORE_RADIUS = 0.06
-const FLOORPLAN_CURSOR_MARKER_GLOW_RADIUS = 0.2
+const FLOORPLAN_CURSOR_MARKER_CORE_SCREEN_RADIUS = 3.5
+const FLOORPLAN_CURSOR_MARKER_GLOW_SCREEN_RADIUS = 10
 const FLOORPLAN_MARQUEE_OUTLINE_WIDTH = 0.055
 const FLOORPLAN_MARQUEE_GLOW_WIDTH = 0.14
 const FLOORPLAN_HOVER_TRANSITION = 'opacity 180ms cubic-bezier(0.2, 0, 0, 1)'
@@ -736,14 +737,17 @@ function getSketchPlaneSignature(plane: SketchPlane | null | undefined): string 
     return `feature-top:${plane.targetNodeId}:${plane.elevation}`
   }
 
+  const normal = plane.normal
+  const origin = plane.origin
+  const planeOffset = normal[0] * origin[0] + normal[1] * origin[1] + normal[2] * origin[2]
+  const formatPlaneNumber = (value: number) => (Math.round(value * 10000) / 10000).toString()
+
   return [
     'feature-face',
     plane.targetNodeId,
     plane.space ?? 'target-local',
-    ...plane.origin,
-    ...plane.uAxis,
-    ...plane.vAxis,
-    ...plane.normal,
+    ...normal.map(formatPlaneNumber),
+    formatPlaneNumber(planeOffset),
   ].join(':')
 }
 
@@ -792,6 +796,14 @@ function getSketchPlaneFromMetadata(metadata: unknown): SketchPlane | null {
   }
 
   return null
+}
+
+function getSketchPlaneRecordLabel(plane: SketchPlane, index: number): string {
+  if (plane.kind === 'feature-top') {
+    return `顶面草图 ${index + 1}`
+  }
+
+  return `${plane.label ?? '实体面'}草图 ${index + 1}`
 }
 
 function doesSketchNodeMatchActivePlane(
@@ -3842,7 +3854,7 @@ const FloorplanGuideDetectionOverlay = memo(function FloorplanGuideDetectionOver
 
   return (
     <g data-delivery-role="guide-detection">
-      {candidates.walls.map((wall) => {
+      {candidates.walls.map((wall, wallIndex) => {
         const isApplied = Boolean(candidates.appliedWallIds?.[wall.id])
         const isSelected = selectedWallIds.has(wall.id)
         const isHovered =
@@ -3851,14 +3863,29 @@ const FloorplanGuideDetectionOverlay = memo(function FloorplanGuideDetectionOver
             (opening) =>
               opening.id === hoveredDetectionCandidateId && opening.wallCandidateId === wall.id,
           )
+        const strokeColor = isApplied ? '#16a34a' : '#f97316'
+        const deltaX = wall.end[0] - wall.start[0]
+        const deltaY = wall.end[1] - wall.start[1]
+        const wallLength = Math.hypot(deltaX, deltaY)
+        const labelOffset = 0.22
+        const labelCenter = {
+          x: toSvgX(
+            (wall.start[0] + wall.end[0]) / 2 -
+              (wallLength > 0 ? (deltaY / wallLength) * labelOffset : 0),
+          ),
+          y: toSvgY(
+            (wall.start[1] + wall.end[1]) / 2 +
+              (wallLength > 0 ? (deltaX / wallLength) * labelOffset : 0),
+          ),
+        }
 
         return (
           <g key={wall.id}>
             <line
-              opacity={isHovered ? 0.32 : isSelected ? 0.2 : 0.08}
+              opacity={isHovered ? 0.48 : isSelected ? 0.3 : 0.1}
               pointerEvents="none"
-              stroke={isApplied ? '#16a34a' : '#f97316'}
-              strokeWidth={isHovered ? '0.32' : '0.24'}
+              stroke={strokeColor}
+              strokeWidth={isHovered ? '10' : '8'}
               vectorEffect="non-scaling-stroke"
               x1={toSvgX(wall.start[0])}
               x2={toSvgX(wall.end[0])}
@@ -3875,10 +3902,10 @@ const FloorplanGuideDetectionOverlay = memo(function FloorplanGuideDetectionOver
               onPointerLeave={() => setHoveredDetectionCandidateId(null)}
               opacity={isHovered ? 1 : isSelected ? 1 : 0.32}
               pointerEvents="stroke"
-              stroke={isApplied ? '#16a34a' : '#f97316'}
-              strokeDasharray={isApplied || isSelected ? undefined : '0.12 0.08'}
+              stroke={strokeColor}
+              strokeDasharray={isApplied || isSelected ? undefined : '10 7'}
               strokeLinecap="round"
-              strokeWidth={isHovered ? '0.12' : '0.08'}
+              strokeWidth={isHovered ? '4' : '3'}
               style={{ cursor: 'pointer' }}
               vectorEffect="non-scaling-stroke"
               x1={toSvgX(wall.start[0])}
@@ -3886,6 +3913,30 @@ const FloorplanGuideDetectionOverlay = memo(function FloorplanGuideDetectionOver
               y1={toSvgY(wall.start[1])}
               y2={toSvgY(wall.end[1])}
             />
+            <circle
+              cx={labelCenter.x}
+              cy={labelCenter.y}
+              fill={strokeColor}
+              opacity={isHovered ? 1 : isSelected ? 0.96 : 0.5}
+              pointerEvents="none"
+              r={isHovered ? '0.19' : '0.16'}
+              stroke="#ffffff"
+              strokeWidth="0.035"
+              vectorEffect="non-scaling-stroke"
+            />
+            <text
+              dominantBaseline="central"
+              fill="#ffffff"
+              fontFamily="ui-sans-serif, system-ui, sans-serif"
+              fontSize="0.14"
+              fontWeight="800"
+              pointerEvents="none"
+              textAnchor="middle"
+              x={labelCenter.x}
+              y={labelCenter.y}
+            >
+              {wallIndex + 1}
+            </text>
           </g>
         )
       })}
@@ -6473,6 +6524,45 @@ export function FloorplanPanel() {
     () => getSketchPlaneSignature(sketchPlane),
     [sketchPlane],
   )
+  const sketchPlaneRecords = useMemo<SketchPlaneRecord[]>(() => {
+    const recordBySignature = new Map<
+      string,
+      {
+        count: number
+        sketchPlane: SketchPlane
+      }
+    >()
+
+    for (const node of [...sketchLines, ...sketchCircles]) {
+      const nodeSketchPlane = getSketchPlaneFromMetadata(node.metadata)
+      if (!nodeSketchPlane) {
+        continue
+      }
+
+      const signature = getSketchPlaneSignature(nodeSketchPlane)
+      if (!signature) {
+        continue
+      }
+
+      const existingRecord = recordBySignature.get(signature)
+      if (existingRecord) {
+        existingRecord.count += 1
+      } else {
+        recordBySignature.set(signature, {
+          count: 1,
+          sketchPlane: nodeSketchPlane,
+        })
+      }
+    }
+
+    return [...recordBySignature.entries()].map(([signature, record], index) => ({
+      id: signature,
+      label: getSketchPlaneRecordLabel(record.sketchPlane, index),
+      count: record.count,
+      sketchPlane: record.sketchPlane,
+      active: signature === activeSketchPlaneSignature,
+    }))
+  }, [activeSketchPlaneSignature, sketchCircles, sketchLines])
   const activeSketchLines = useMemo(
     () => sketchLines.filter((line) => doesSketchNodeMatchActivePlane(line, sketchPlane)),
     [sketchLines, sketchPlane],
@@ -6733,7 +6823,7 @@ export function FloorplanPanel() {
     if (calibrationDraft?.guideId === selectedGuide.id) {
       return calibrationDraft.points
     }
-    return selectedGuide.calibration?.points ? [...selectedGuide.calibration.points] : []
+    return getGuideCalibrationDisplayPoints(selectedGuide.calibration)
   }, [calibrationDraft, selectedGuide])
   useEffect(() => {
     if (!calibrationDraft) {
@@ -8297,6 +8387,13 @@ export function FloorplanPanel() {
   )
   const floorplanOpeningHitTolerance = useMemo(
     () => floorplanWorldUnitsPerPixel * (FLOORPLAN_OPENING_HIT_STROKE_WIDTH / 2),
+    [floorplanWorldUnitsPerPixel],
+  )
+  const floorplanCursorMarkerRadius = useMemo(
+    () => ({
+      core: floorplanWorldUnitsPerPixel * FLOORPLAN_CURSOR_MARKER_CORE_SCREEN_RADIUS,
+      glow: floorplanWorldUnitsPerPixel * FLOORPLAN_CURSOR_MARKER_GLOW_SCREEN_RADIUS,
+    }),
     [floorplanWorldUnitsPerPixel],
   )
   const selectedOpeningActionMenuPosition = useMemo(
@@ -12077,14 +12174,38 @@ export function FloorplanPanel() {
     setSketchWorkbenchTab('features')
     setMode('build')
     setTool(null)
-    setSketchPlane(null)
-  }, [clearDraft, resetSketchOperations, setMode, setSketchPlane, setTool, setWallSketchSnapResult])
+  }, [clearDraft, resetSketchOperations, setMode, setTool, setWallSketchSnapResult])
+
+  const handleSelectSketchPlaneRecord = useCallback(
+    (record: SketchPlaneRecord) => {
+      resetSketchOperations()
+      clearDraft()
+      setWallSketchSnapResult(null)
+      setSketchPlane(record.sketchPlane)
+      setSketchWorkbenchTab('sketch')
+      setPhase('structure')
+      setStructureLayer('elements')
+      setMode('build')
+      setTool('sketch-line')
+    },
+    [
+      clearDraft,
+      resetSketchOperations,
+      setMode,
+      setPhase,
+      setSketchPlane,
+      setStructureLayer,
+      setTool,
+      setWallSketchSnapResult,
+    ],
+  )
 
   const isSketchWorkbenchActive = useMemo(
     () =>
       phase === 'structure' &&
       structureLayer === 'elements' &&
       (isSketchStructureTool(tool) ||
+        Boolean(sketchPlane) ||
         selectedSketchLineList.length > 0 ||
         selectedSketchCircleList.length > 0 ||
         activeSketchDraftKind !== null ||
@@ -12096,6 +12217,7 @@ export function FloorplanPanel() {
       selectedSketchCircleList.length,
       selectedSketchLineList.length,
       sketchCircleEditOperation,
+      sketchPlane,
       sketchLineEditOperation,
       structureLayer,
       tool,
@@ -14910,7 +15032,9 @@ export function FloorplanPanel() {
                 onChangeTab={setSketchWorkbenchTab}
                 onCommitDraft={commitSketchContextDraft}
                 onExitSketch={handleExitSketchWorkbench}
+                onSelectSketchPlaneRecord={handleSelectSketchPlaneRecord}
                 sketchPlane={sketchPlane}
+                sketchPlaneRecords={sketchPlaneRecords}
                 sketchCircleActions={sketchCircleActionMenuExtraActions}
                 sketchLineActions={sketchLineActionMenuExtraActions}
               />
@@ -15578,15 +15702,15 @@ export function FloorplanPanel() {
                         cx={toSvgX(cursorPoint[0])}
                         cy={toSvgY(cursorPoint[1])}
                         fill={floorplanCursorColor}
-                        fillOpacity={0.25}
-                        r={FLOORPLAN_CURSOR_MARKER_GLOW_RADIUS}
+                        fillOpacity={0.16}
+                        r={floorplanCursorMarkerRadius.glow}
                       />
                       <circle
                         cx={toSvgX(cursorPoint[0])}
                         cy={toSvgY(cursorPoint[1])}
                         fill={floorplanCursorColor}
-                        fillOpacity={0.9}
-                        r={FLOORPLAN_CURSOR_MARKER_CORE_RADIUS}
+                        fillOpacity={0.82}
+                        r={floorplanCursorMarkerRadius.core}
                       />
                     </g>
                   )}

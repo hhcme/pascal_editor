@@ -13,16 +13,52 @@ import type {
   GuideDetectionOpeningCandidate,
   GuideDetectionWallCandidate,
 } from '../store/use-delivery'
+import { hasStrongColorBoundaryAcrossRasterWall } from './guide-detection-color'
+import {
+  alignPerimeterRasterWallsToBroadLocalEvidence,
+  closeRectangularRasterWallPerimeter,
+  filterRasterWallThicknessOutliers,
+  filterShortDanglingRasterWalls,
+  filterShortParallelShadowRasterWalls,
+  getDoorSwingEvidence,
+  mergeAdjacentParallelRasterWalls,
+  mergeCollinearRasterWallCandidates,
+  refineWideDenseBands,
+} from './guide-detection-geometry'
+
+export { hasStrongColorBoundaryAcrossRasterWall } from './guide-detection-color'
+export type {
+  DoorSwingEvidence,
+  RasterWallGeometryCandidate,
+  RectangularPerimeterResult,
+} from './guide-detection-geometry'
+export {
+  alignPerimeterRasterWallsToBroadLocalEvidence,
+  closeRectangularRasterWallPerimeter,
+  filterRasterWallThicknessOutliers,
+  filterShortDanglingRasterWalls,
+  filterShortParallelShadowRasterWalls,
+  getDoorSwingEvidence,
+  mergeAdjacentParallelRasterWalls,
+  mergeCollinearRasterWallCandidates,
+  refineWideDenseBands,
+} from './guide-detection-geometry'
 
 type WallNodeId = Extract<AnyNodeId, `wall_${string}`>
 
 const GUIDE_BASE_WIDTH = 10
 const DARK_THRESHOLD = 170
 const MAX_DARK_THRESHOLD = 224
+const ADAPTIVE_DARK_PERCENTILE = 0.04
+const DEFAULT_DARK_PERCENTILE = 0.16
+const COLOR_FILL_CHANNEL_SPREAD = 18
+const COLOR_FILL_MIN_BRIGHTNESS = 96
+const COLOR_FILL_RATIO_THRESHOLD = 0.06
 const MIN_WALL_LENGTH_PX = 18
 const MIN_WALL_THICKNESS_PX = 3
 const MIN_GAP_LENGTH_PX = 8
 const WALL_DENSITY_THRESHOLD = 0.14
+const COLOR_FILL_WALL_DENSITY_THRESHOLD = 0.11
 const WALL_SOLIDITY_THRESHOLD = 0.58
 const WALL_SEGMENT_GAP_TOLERANCE_PX = 128
 const THIN_LINE_WALL_DENSITY_THRESHOLD = 0.045
@@ -38,8 +74,10 @@ const FRAME_TOUCH_MARGIN_RATIO = 0.04
 const FRAME_MAX_THICKNESS_PX = 6
 const REDUNDANT_WALL_BAND_OVERLAP_RATIO = 0.7
 const REDUNDANT_WALL_SEGMENT_OVERLAP_RATIO = 0.82
+const COLLINEAR_WALL_MAX_GAP_RATIO = 0.16
 const DOMINANT_THICK_WALL_MIN_PX = 6
 const DECORATIVE_THIN_WALL_RATIO = 0.45
+const COLOR_FILL_DECORATIVE_THIN_WALL_RATIO = 0.65
 const STRUCTURE_BOUNDS_DENSITY_RATIO = 0.018
 const STRUCTURE_BOUNDS_GAP_TOLERANCE_PX = 56
 const STRUCTURE_BOUNDS_MARGIN_RATIO = 0.018
@@ -49,6 +87,13 @@ const WALL_CONNECTION_CENTER_TOLERANCE_PX = 8
 const SECONDARY_WALL_COMPONENT_MIN_SCORE_RATIO = 0.18
 const SECONDARY_SINGLE_WALL_COMPONENT_MIN_SCORE_RATIO = 0.35
 const SECONDARY_WALL_COMPONENT_MIN_MEMBER_COUNT = 2
+const SUPPLEMENTAL_WALL_MIN_LENGTH_RATIO = 0.08
+const SUPPLEMENTAL_WALL_CONNECTION_TOLERANCE_PX = 12
+const SUPPLEMENTAL_WALL_COLLINEAR_GAP_PX = 24
+const SUPPLEMENTAL_PARALLEL_GAP_PX = 12
+const SUPPLEMENTAL_PARALLEL_MAX_THICKNESS_PX = 8
+const MIN_WALL_ENDPOINT_SUPPORT_PX = 4
+const WALL_ENDPOINT_GAP_TOLERANCE_PX = 2
 const MIN_OPENING_EDGE_BUFFER_PX = 8
 const MIN_OPENING_FLANK_SUPPORT_PX = 10
 const OPENING_SUPPORT_RATIO = 0.46
@@ -62,7 +107,14 @@ const MIN_VOID_OPENING_STRUCTURAL_RATIO = 0.24
 const OPENING_SIGNAL_GAP_TOLERANCE_PX = 4
 const DOOR_SWING_MIN_WIDTH_METERS = 0.48
 const DOOR_SWING_MAX_WIDTH_METERS = 1.35
-const DOOR_SWING_SIGNAL_DENSITY = 0.004
+const COLOR_PLAN_DOOR_SWING_MAX_WIDTH_METERS = 1.6
+const MAX_INTERIOR_UNSUPPORTED_SPAN_METERS = 1.75
+const MIN_SPLIT_WALL_LENGTH_METERS = 0.8
+const UNSUPPORTED_WALL_SIGNAL_GAP_TOLERANCE_PX = 6
+const UNSUPPORTED_WALL_MIN_RATIO = 0.72
+const SUPPLEMENTAL_SPAN_MIN_STRUCTURAL_DENSITY = 0.5
+const OCCLUDED_BRIDGE_MAX_GAP_RATIO = 0.09
+const OCCLUDED_BRIDGE_MIN_STRUCTURAL_DENSITY = 0.18
 
 type GuideDimensions = {
   height: number
@@ -84,11 +136,17 @@ type Range = {
 export type RasterWallCandidate = {
   axis: 'horizontal' | 'vertical'
   band: Range
+  boundaryAnchored?: boolean
   id: string
+  maxCollinearGap?: number
+  occludedSpans?: Range[]
+  openingSampleBand?: Range
+  parallelEvidenceSupported?: boolean
+  perimeterConnector?: boolean
   segment: Range
 }
 
-type StructuralWallMasks = {
+export type StructuralWallMasks = {
   combined: Uint8ClampedArray
   horizontal: Uint8ClampedArray
   vertical: Uint8ClampedArray
@@ -99,20 +157,27 @@ type StructuralBounds = {
   y: Range
 }
 
-type OpeningSignalCandidate = {
+export type OpeningSignalCandidate = {
   mode: 'framed' | 'void'
   range: Range
+}
+
+export type EvaluatedOpeningSignalCandidate = OpeningSignalCandidate & {
+  hasDoorSwing: boolean
 }
 
 type WallSamplingOptions = {
   boundsMode: 'ink' | 'primary'
   densityThreshold: number
+  decorativeThinWallRatio: number
   idPrefix: string
   minBandThickness: number
   minSegmentCoverageRatio: number
   minSegmentLength: number
+  refineWideBands?: boolean
   segmentGapTolerance: number
   solidityThreshold: number
+  trimIsolatedEndpoints?: boolean
 }
 
 export type GuideDetectionImageData = {
@@ -124,7 +189,7 @@ export type GuideDetectionImageData = {
 export type GuideDetectionDebugSnapshot = {
   candidates: GuideDetectionCandidates
   darkThreshold: number
-  detectionMode: 'structural' | 'thin-line'
+  detectionMode: 'hybrid' | 'structural' | 'thin-line'
   guideDimensions: GuideDimensions
   masks: {
     rawDark: Uint8ClampedArray
@@ -133,14 +198,24 @@ export type GuideDetectionDebugSnapshot = {
     structuralVertical: Uint8ClampedArray
   }
   rasterWalls: RasterWallCandidate[]
+  rasterWallStages: {
+    deduped: RasterWallCandidate[]
+    merged: RasterWallCandidate[]
+    sampled: RasterWallCandidate[]
+    thicknessFiltered: RasterWallCandidate[]
+  }
   sampleDimensions: GuideDimensions
   sampleOffset: { x: number; y: number }
+  splitWallIds: string[]
   structureBounds: StructuralBounds
+  supplementalRasterWalls: RasterWallCandidate[]
+  supplementedWallIds: string[]
 }
 
 const structuralWallSamplingOptions: WallSamplingOptions = {
   boundsMode: 'primary',
   densityThreshold: WALL_DENSITY_THRESHOLD,
+  decorativeThinWallRatio: DECORATIVE_THIN_WALL_RATIO,
   idPrefix: 'wall',
   minBandThickness: MIN_WALL_THICKNESS_PX,
   minSegmentCoverageRatio: 0.58,
@@ -149,9 +224,18 @@ const structuralWallSamplingOptions: WallSamplingOptions = {
   solidityThreshold: WALL_SOLIDITY_THRESHOLD,
 }
 
+const colorFillStructuralWallSamplingOptions: WallSamplingOptions = {
+  ...structuralWallSamplingOptions,
+  densityThreshold: COLOR_FILL_WALL_DENSITY_THRESHOLD,
+  decorativeThinWallRatio: COLOR_FILL_DECORATIVE_THIN_WALL_RATIO,
+  refineWideBands: true,
+  trimIsolatedEndpoints: true,
+}
+
 const thinLineWallSamplingOptions: WallSamplingOptions = {
   boundsMode: 'ink',
   densityThreshold: THIN_LINE_WALL_DENSITY_THRESHOLD,
+  decorativeThinWallRatio: DECORATIVE_THIN_WALL_RATIO,
   idPrefix: 'thin-wall',
   minBandThickness: MIN_WALL_THICKNESS_PX,
   minSegmentCoverageRatio: 0.42,
@@ -268,14 +352,80 @@ export function groupDenseRangesWithGapTolerance(
   return ranges
 }
 
-export function getAdaptiveDarkThreshold(brightness: Uint8ClampedArray) {
+export function groupCoveredRangesWithGapTolerance(
+  values: number[],
+  threshold: number,
+  minLength: number,
+  maxGapLength: number,
+  minCoverageRatio: number,
+  trimIsolatedEndpoints = false,
+) {
+  const broadRanges = groupDenseRangesWithGapTolerance(values, threshold, minLength, maxGapLength)
+  const strictGapLength = Math.max(4, Math.min(24, Math.round(maxGapLength * 0.2)))
+
+  return broadRanges.flatMap((untrimmedRange) => {
+    const supportedLength = values
+      .slice(untrimmedRange.start, untrimmedRange.end + 1)
+      .filter((value) => value >= threshold).length
+    if (supportedLength / getRangeLength(untrimmedRange) < minCoverageRatio) {
+      return groupDenseRangesWithGapTolerance(
+        values.slice(untrimmedRange.start, untrimmedRange.end + 1),
+        threshold,
+        minLength,
+        strictGapLength,
+      )
+        .map((strictRange) => ({
+          start: untrimmedRange.start + strictRange.start,
+          end: untrimmedRange.start + strictRange.end,
+        }))
+        .filter((strictRange) => {
+          const strictSupportedLength = values
+            .slice(strictRange.start, strictRange.end + 1)
+            .filter((value) => value >= threshold).length
+          return strictSupportedLength / getRangeLength(strictRange) >= minCoverageRatio
+        })
+    }
+
+    if (!trimIsolatedEndpoints) {
+      return [untrimmedRange]
+    }
+
+    const endpointSupportRanges = groupDenseRangesWithGapTolerance(
+      values.slice(untrimmedRange.start, untrimmedRange.end + 1),
+      threshold,
+      MIN_WALL_ENDPOINT_SUPPORT_PX,
+      WALL_ENDPOINT_GAP_TOLERANCE_PX,
+    )
+    const range =
+      endpointSupportRanges.length > 0
+        ? {
+            start: untrimmedRange.start + endpointSupportRanges[0]!.start,
+            end:
+              untrimmedRange.start + endpointSupportRanges[endpointSupportRanges.length - 1]!.end,
+          }
+        : untrimmedRange
+
+    if (getRangeLength(range) < minLength) {
+      return []
+    }
+
+    return [range]
+  })
+}
+
+export function getAdaptiveDarkThreshold(
+  brightness: Uint8ClampedArray,
+  percentile = DEFAULT_DARK_PERCENTILE,
+) {
   const histogram = new Uint32Array(256)
 
   for (const value of brightness) {
     histogram[value] = (histogram[value] ?? 0) + 1
   }
 
-  const targetRank = Math.max(0, Math.floor(brightness.length * 0.16) - 1)
+  // Colored room fills can occupy a large part of a rendered plan. Callers use
+  // a smaller percentile for those images so fills do not merge into wall bands.
+  const targetRank = Math.max(0, Math.floor(brightness.length * percentile) - 1)
   let cumulative = 0
   let percentileValue = 255
 
@@ -338,6 +488,31 @@ function buildBrightnessMap(imageData: GuideDetectionImageData) {
   }
 
   return brightness
+}
+
+function getColoredFillRatio(imageData: GuideDetectionImageData) {
+  let coloredPixels = 0
+  const pixelCount = imageData.width * imageData.height
+
+  for (let index = 0; index < pixelCount; index += 1) {
+    const offset = index * 4
+    const alpha = (imageData.data[offset + 3] ?? 255) / 255
+    const r = (imageData.data[offset] ?? 255) * alpha + 255 * (1 - alpha)
+    const g = (imageData.data[offset + 1] ?? 255) * alpha + 255 * (1 - alpha)
+    const b = (imageData.data[offset + 2] ?? 255) * alpha + 255 * (1 - alpha)
+    const maxChannel = Math.max(r, g, b)
+    const minChannel = Math.min(r, g, b)
+    const brightness = r * 0.299 + g * 0.587 + b * 0.114
+
+    if (
+      maxChannel - minChannel >= COLOR_FILL_CHANNEL_SPREAD &&
+      brightness >= COLOR_FILL_MIN_BRIGHTNESS
+    ) {
+      coloredPixels += 1
+    }
+  }
+
+  return coloredPixels / Math.max(pixelCount, 1)
 }
 
 function buildBinaryDarkMask(
@@ -457,6 +632,17 @@ function combineMasks(left: Uint8ClampedArray, right: Uint8ClampedArray) {
   }
 
   return combined
+}
+
+function combineStructuralWallMasks(
+  primary: StructuralWallMasks,
+  supplemental: StructuralWallMasks,
+): StructuralWallMasks {
+  return {
+    combined: combineMasks(primary.combined, supplemental.combined),
+    horizontal: combineMasks(primary.horizontal, supplemental.horizontal),
+    vertical: combineMasks(primary.vertical, supplemental.vertical),
+  }
 }
 
 function buildIntegralMask(mask: Uint8ClampedArray, dimensions: GuideDimensions) {
@@ -606,11 +792,12 @@ function sampleHorizontalWalls(
     return count
   })
 
-  const bands = groupDenseRanges(
-    rowCounts,
-    Math.max(dimensions.width * options.densityThreshold, options.minSegmentLength),
-    options.minBandThickness,
+  const densityThreshold = Math.max(
+    dimensions.width * options.densityThreshold,
+    options.minSegmentLength,
   )
+  const sampledBands = groupDenseRanges(rowCounts, densityThreshold, options.minBandThickness)
+  const bands = sampledBands
 
   return bands.flatMap((band, bandIndex) => {
     const columnCounts = Array.from({ length: dimensions.width }, (_, x) => {
@@ -621,18 +808,14 @@ function sampleHorizontalWalls(
       return count
     })
 
-    const segments = groupDenseRangesWithGapTolerance(
+    const segments = groupCoveredRangesWithGapTolerance(
       columnCounts,
       Math.max((band.end - band.start + 1) * options.solidityThreshold, 1),
       options.minSegmentLength,
       options.segmentGapTolerance,
-    ).filter((segment) => {
-      const supportThreshold = Math.max((band.end - band.start + 1) * options.solidityThreshold, 1)
-      const supportedLength = columnCounts
-        .slice(segment.start, segment.end + 1)
-        .filter((count) => count >= supportThreshold).length
-      return supportedLength / getRangeLength(segment) >= options.minSegmentCoverageRatio
-    })
+      options.minSegmentCoverageRatio,
+      options.trimIsolatedEndpoints,
+    )
 
     return segments.map((segment, segmentIndex) => ({
       id: `${options.idPrefix}-h-${bandIndex}-${segmentIndex}`,
@@ -656,13 +839,22 @@ function sampleVerticalWalls(
     return count
   })
 
-  const bands = groupDenseRanges(
-    columnCounts,
-    Math.max(dimensions.height * options.densityThreshold, options.minSegmentLength),
-    options.minBandThickness,
+  const densityThreshold = Math.max(
+    dimensions.height * options.densityThreshold,
+    options.minSegmentLength,
   )
+  const sampledBands = groupDenseRanges(columnCounts, densityThreshold, options.minBandThickness)
+  const bands = options.refineWideBands
+    ? refineWideDenseBands(columnCounts, sampledBands, densityThreshold, options.minBandThickness)
+    : sampledBands
 
   return bands.flatMap((band, bandIndex) => {
+    const isRefinedBand = sampledBands.some(
+      (sampledBand) =>
+        sampledBand.start <= band.start &&
+        sampledBand.end >= band.end &&
+        getRangeLength(sampledBand) > getRangeLength(band),
+    )
     const rowCounts = Array.from({ length: dimensions.height }, (_, y) => {
       let count = 0
       for (let x = band.start; x <= band.end; x += 1) {
@@ -671,23 +863,20 @@ function sampleVerticalWalls(
       return count
     })
 
-    const segments = groupDenseRangesWithGapTolerance(
+    const segments = groupCoveredRangesWithGapTolerance(
       rowCounts,
       Math.max((band.end - band.start + 1) * options.solidityThreshold, 1),
       options.minSegmentLength,
-      options.segmentGapTolerance,
-    ).filter((segment) => {
-      const supportThreshold = Math.max((band.end - band.start + 1) * options.solidityThreshold, 1)
-      const supportedLength = rowCounts
-        .slice(segment.start, segment.end + 1)
-        .filter((count) => count >= supportThreshold).length
-      return supportedLength / getRangeLength(segment) >= options.minSegmentCoverageRatio
-    })
+      isRefinedBand ? Math.min(options.segmentGapTolerance, 16) : options.segmentGapTolerance,
+      options.minSegmentCoverageRatio,
+      options.trimIsolatedEndpoints,
+    )
 
     return segments.map((segment, segmentIndex) => ({
       id: `${options.idPrefix}-v-${bandIndex}-${segmentIndex}`,
       axis: 'vertical' as const,
       band,
+      ...(isRefinedBand ? { maxCollinearGap: 16 } : {}),
       segment,
     }))
   })
@@ -917,10 +1106,14 @@ export function filterDisconnectedRasterWalls(
     const isStrongSingleWallComponent =
       component.indexes.length === 1 &&
       component.score >= bestScore * SECONDARY_SINGLE_WALL_COMPONENT_MIN_SCORE_RATIO
+    const hasBoundaryAnchoredWall = component.indexes.some(
+      (index) => rasterCandidates[index]?.boundaryAnchored,
+    )
 
     if (
       isPrimaryComponent ||
-      (retainSecondaryComponents && (isSupportedSecondaryComponent || isStrongSingleWallComponent))
+      (retainSecondaryComponents &&
+        (isSupportedSecondaryComponent || isStrongSingleWallComponent || hasBoundaryAnchoredWall))
     ) {
       for (const index of component.indexes) {
         keepIndexes.add(index)
@@ -931,7 +1124,475 @@ export function filterDisconnectedRasterWalls(
   return rasterCandidates.filter((_, index) => keepIndexes.has(index))
 }
 
-function filterDecorativeThinRasterWalls(rasterCandidates: RasterWallCandidate[]) {
+function isNearRangeEndpoint(value: number, range: Range, tolerance: number) {
+  return Math.abs(value - range.start) <= tolerance || Math.abs(value - range.end) <= tolerance
+}
+
+function findCollinearSupplementTarget(
+  candidate: RasterWallCandidate,
+  walls: RasterWallCandidate[],
+) {
+  return walls
+    .filter((wall) => {
+      if (wall.axis !== candidate.axis) {
+        return false
+      }
+
+      const bandTolerance = Math.max(
+        6,
+        Math.round((getRangeLength(wall.band) + getRangeLength(candidate.band)) / 2),
+      )
+      return (
+        Math.abs(getRangeCenter(wall.band) - getRangeCenter(candidate.band)) <= bandTolerance &&
+        getRangeGap(wall.segment, candidate.segment) <= SUPPLEMENTAL_WALL_COLLINEAR_GAP_PX
+      )
+    })
+    .sort(
+      (left, right) =>
+        Math.abs(getRangeCenter(left.band) - getRangeCenter(candidate.band)) -
+        Math.abs(getRangeCenter(right.band) - getRangeCenter(candidate.band)),
+    )[0]
+}
+
+function getSupplementalOrthogonalConnections(
+  candidate: RasterWallCandidate,
+  walls: RasterWallCandidate[],
+  connectionTolerance: number,
+) {
+  const candidateCenter = getRangeCenter(candidate.band)
+
+  return walls
+    .filter((wall) => wall.axis !== candidate.axis)
+    .map((wall) => {
+      const wallCenter = getRangeCenter(wall.band)
+      const candidateEndpoint =
+        Math.abs(wallCenter - candidate.segment.start) <= connectionTolerance
+          ? 'start'
+          : Math.abs(wallCenter - candidate.segment.end) <= connectionTolerance
+            ? 'end'
+            : null
+      if (
+        !candidateEndpoint ||
+        candidateCenter < wall.segment.start - connectionTolerance ||
+        candidateCenter > wall.segment.end + connectionTolerance
+      ) {
+        return null
+      }
+
+      return {
+        candidateEndpoint,
+        terminatesWall: isNearRangeEndpoint(candidateCenter, wall.segment, connectionTolerance),
+      }
+    })
+    .filter(
+      (connection): connection is { candidateEndpoint: 'end' | 'start'; terminatesWall: boolean } =>
+        !!connection,
+    )
+}
+
+function getRasterSpanStructuralDensity(
+  candidate: RasterWallCandidate,
+  segment: Range,
+  axisMask: Uint8ClampedArray,
+  dimensions: GuideDimensions,
+) {
+  let supportedPixels = 0
+  let sampledPixels = 0
+  for (let along = segment.start; along <= segment.end; along += 1) {
+    for (let across = candidate.band.start; across <= candidate.band.end; across += 1) {
+      const x = candidate.axis === 'horizontal' ? along : across
+      const y = candidate.axis === 'horizontal' ? across : along
+      if (x < 0 || x >= dimensions.width || y < 0 || y >= dimensions.height) {
+        continue
+      }
+      sampledPixels += 1
+      supportedPixels += axisMask[y * dimensions.width + x] === 1 ? 1 : 0
+    }
+  }
+  return supportedPixels / Math.max(sampledPixels, 1)
+}
+
+export function bridgeRasterWallsAcrossAnchoredOcclusions(
+  primaryWalls: RasterWallCandidate[],
+  structuralMasks: Pick<StructuralWallMasks, 'horizontal' | 'vertical'>,
+  dimensions: GuideDimensions,
+  protectedIds = new Set<string>(),
+) {
+  const walls = primaryWalls.map((wall) => ({
+    ...wall,
+    band: { ...wall.band },
+    occludedSpans: wall.occludedSpans?.map((span) => ({ ...span })),
+    openingSampleBand: wall.openingSampleBand ? { ...wall.openingSampleBand } : undefined,
+    segment: { ...wall.segment },
+  }))
+  const removedIds = new Set<string>()
+  const bridgedWallIds = new Set<string>()
+  const maximumGapByAxis = {
+    horizontal: Math.max(MIN_WALL_LENGTH_PX, dimensions.width * OCCLUDED_BRIDGE_MAX_GAP_RATIO),
+    vertical: Math.max(MIN_WALL_LENGTH_PX, dimensions.height * OCCLUDED_BRIDGE_MAX_GAP_RATIO),
+  }
+  const connectionTolerance = Math.max(
+    SUPPLEMENTAL_WALL_CONNECTION_TOLERANCE_PX,
+    Math.round(Math.min(dimensions.width, dimensions.height) * 0.015),
+  )
+
+  const getAnchor = (candidate: RasterWallCandidate, along: number) =>
+    walls.find((wall) => {
+      if (removedIds.has(wall.id) || wall.axis === candidate.axis) {
+        return false
+      }
+      const wallCenter = getRangeCenter(wall.band)
+      const candidateCenter = getRangeCenter(candidate.band)
+      return (
+        Math.abs(wallCenter - along) <= connectionTolerance &&
+        candidateCenter >= wall.segment.start - connectionTolerance &&
+        candidateCenter <= wall.segment.end + connectionTolerance
+      )
+    })
+
+  for (const candidate of walls) {
+    if (
+      removedIds.has(candidate.id) ||
+      protectedIds.has(candidate.id) ||
+      candidate.maxCollinearGap === undefined
+    ) {
+      continue
+    }
+
+    const target = walls
+      .filter((wall) => {
+        if (
+          wall === candidate ||
+          removedIds.has(wall.id) ||
+          protectedIds.has(wall.id) ||
+          wall.axis !== candidate.axis ||
+          wall.maxCollinearGap === undefined ||
+          wall.segment.start <= candidate.segment.end
+        ) {
+          return false
+        }
+        const bandTolerance = Math.max(
+          6,
+          Math.round((getRangeLength(candidate.band) + getRangeLength(wall.band)) / 2),
+        )
+        return (
+          Math.abs(getRangeCenter(candidate.band) - getRangeCenter(wall.band)) <= bandTolerance &&
+          getRangeGap(candidate.segment, wall.segment) <= maximumGapByAxis[candidate.axis]
+        )
+      })
+      .sort((left, right) => left.segment.start - right.segment.start)[0]
+    if (!target) {
+      continue
+    }
+
+    const startAnchor = getAnchor(candidate, candidate.segment.end)
+    const endAnchor = getAnchor(target, target.segment.start)
+    if (!startAnchor || !endAnchor || startAnchor.id === endAnchor.id) {
+      continue
+    }
+
+    const gapSegment = {
+      start: candidate.segment.end + 1,
+      end: target.segment.start - 1,
+    }
+    const axisMask =
+      candidate.axis === 'horizontal' ? structuralMasks.horizontal : structuralMasks.vertical
+    if (
+      getRasterSpanStructuralDensity(candidate, gapSegment, axisMask, dimensions) <
+      OCCLUDED_BRIDGE_MIN_STRUCTURAL_DENSITY
+    ) {
+      continue
+    }
+
+    candidate.band =
+      getRangeLength(candidate.band) <= getRangeLength(target.band)
+        ? { ...candidate.band }
+        : { ...target.band }
+    candidate.occludedSpans = [
+      ...(candidate.occludedSpans ?? []),
+      gapSegment,
+      ...(target.occludedSpans ?? []),
+    ]
+    candidate.segment = mergeRanges(candidate.segment, target.segment)
+    removedIds.add(target.id)
+    bridgedWallIds.add(candidate.id)
+  }
+
+  return {
+    bridgedWallIds,
+    walls: walls.filter((wall) => !removedIds.has(wall.id)),
+  }
+}
+
+export function supplementRasterWallCandidates(
+  primaryWalls: RasterWallCandidate[],
+  supplementalWalls: RasterWallCandidate[],
+  dimensions: GuideDimensions,
+  structuralMasks?: Pick<StructuralWallMasks, 'horizontal' | 'vertical'>,
+) {
+  const walls = primaryWalls.map((wall) => ({
+    ...wall,
+    band: { ...wall.band },
+    segment: { ...wall.segment },
+  }))
+  const supplementedWallIds = new Set<string>()
+  const minimumLength = Math.max(
+    MIN_WALL_LENGTH_PX,
+    Math.round(Math.min(dimensions.width, dimensions.height) * SUPPLEMENTAL_WALL_MIN_LENGTH_RATIO),
+  )
+  const connectionTolerance = Math.max(
+    SUPPLEMENTAL_WALL_CONNECTION_TOLERANCE_PX,
+    Math.round(Math.min(dimensions.width, dimensions.height) * 0.015),
+  )
+  let pending = mergeParallelThinRasterWallCandidates(supplementalWalls)
+    .filter((wall) => getRangeLength(wall.segment) >= minimumLength)
+    .map((wall) => ({
+      ...wall,
+      band: { ...wall.band },
+      segment: { ...wall.segment },
+    }))
+
+  for (let pass = 0; pass < 3 && pending.length > 0; pass += 1) {
+    const remaining: RasterWallCandidate[] = []
+    let changed = false
+
+    for (const candidate of pending) {
+      const collinearTarget = findCollinearSupplementTarget(candidate, walls)
+      if (collinearTarget) {
+        const connections = getSupplementalOrthogonalConnections(
+          candidate,
+          walls,
+          connectionTolerance,
+        )
+        const extendsStart = candidate.segment.start < collinearTarget.segment.start
+        const extendsEnd = candidate.segment.end > collinearTarget.segment.end
+        const extendsSupportedStart =
+          extendsStart && connections.some((connection) => connection.candidateEndpoint === 'start')
+        const extendsSupportedEnd =
+          extendsEnd && connections.some((connection) => connection.candidateEndpoint === 'end')
+
+        if (extendsSupportedStart || extendsSupportedEnd) {
+          collinearTarget.segment = {
+            start: extendsSupportedStart ? candidate.segment.start : collinearTarget.segment.start,
+            end: extendsSupportedEnd ? candidate.segment.end : collinearTarget.segment.end,
+          }
+          supplementedWallIds.add(collinearTarget.id)
+          changed = true
+        }
+        continue
+      }
+
+      const connections = getSupplementalOrthogonalConnections(
+        candidate,
+        walls,
+        connectionTolerance,
+      )
+      const connectedEndpoints = new Set(
+        connections.map((connection) => connection.candidateEndpoint),
+      )
+      if (
+        connectedEndpoints.size === 2 &&
+        connections.some((connection) => connection.terminatesWall)
+      ) {
+        walls.push(candidate)
+        supplementedWallIds.add(candidate.id)
+        changed = true
+        continue
+      }
+
+      if (connectedEndpoints.size === 2 && structuralMasks) {
+        const candidateCenter = getRangeCenter(candidate.band)
+        const anchorCenters = walls
+          .filter((wall) => {
+            if (wall.axis === candidate.axis) {
+              return false
+            }
+
+            const wallCenter = getRangeCenter(wall.band)
+            return (
+              wallCenter >= candidate.segment.start - connectionTolerance &&
+              wallCenter <= candidate.segment.end + connectionTolerance &&
+              candidateCenter >= wall.segment.start - connectionTolerance &&
+              candidateCenter <= wall.segment.end + connectionTolerance
+            )
+          })
+          .map((wall) => getRangeCenter(wall.band))
+          .sort((left, right) => left - right)
+          .filter((center, index, centers) => index === 0 || center - centers[index - 1]! > 2)
+        const axisMask =
+          candidate.axis === 'horizontal' ? structuralMasks.horizontal : structuralMasks.vertical
+        const denseSpans = anchorCenters.slice(0, -1).flatMap((start, index) => {
+          const end = anchorCenters[index + 1]!
+          const segment = {
+            start: Math.max(candidate.segment.start, Math.round(start)),
+            end: Math.min(candidate.segment.end, Math.round(end)),
+          }
+          if (getRangeLength(segment) < minimumLength) {
+            return []
+          }
+
+          if (
+            getRasterSpanStructuralDensity(candidate, segment, axisMask, dimensions) <
+            SUPPLEMENTAL_SPAN_MIN_STRUCTURAL_DENSITY
+          ) {
+            return []
+          }
+
+          return [
+            {
+              ...candidate,
+              id: `${candidate.id}:anchored:${index + 1}`,
+              segment,
+            },
+          ]
+        })
+
+        if (denseSpans.length > 0) {
+          walls.push(...denseSpans)
+          for (const wall of denseSpans) {
+            supplementedWallIds.add(wall.id)
+          }
+          changed = true
+          continue
+        }
+      }
+
+      remaining.push(candidate)
+    }
+
+    pending = remaining
+    if (!changed) {
+      break
+    }
+  }
+
+  return {
+    supplementedWallIds,
+    walls: dedupeRasterWallCandidates(walls),
+  }
+}
+
+export function mergeParallelThinRasterWallCandidates(
+  candidates: RasterWallCandidate[],
+): RasterWallCandidate[] {
+  const merged: RasterWallCandidate[] = []
+
+  for (const candidate of [...candidates].sort((left, right) => {
+    if (left.axis !== right.axis) {
+      return left.axis.localeCompare(right.axis)
+    }
+    return left.band.start - right.band.start
+  })) {
+    const target = merged.find((existing) => {
+      if (
+        existing.axis !== candidate.axis ||
+        getRangeLength(existing.band) > SUPPLEMENTAL_PARALLEL_MAX_THICKNESS_PX ||
+        getRangeLength(candidate.band) > SUPPLEMENTAL_PARALLEL_MAX_THICKNESS_PX ||
+        getRangeGap(existing.band, candidate.band) > SUPPLEMENTAL_PARALLEL_GAP_PX
+      ) {
+        return false
+      }
+
+      const overlap = getRangeOverlapLength(existing.segment, candidate.segment)
+      const minimumSpan = Math.min(
+        getRangeLength(existing.segment),
+        getRangeLength(candidate.segment),
+      )
+      return overlap / Math.max(minimumSpan, 1) >= 0.82
+    })
+
+    if (target) {
+      target.band = mergeRanges(target.band, candidate.band)
+      target.segment = mergeRanges(target.segment, candidate.segment)
+      continue
+    }
+
+    merged.push({
+      ...candidate,
+      band: { ...candidate.band },
+      segment: { ...candidate.segment },
+    })
+  }
+
+  return merged
+}
+
+export function extendRasterWallCandidatesWithThinLineSupport(
+  primaryWalls: RasterWallCandidate[],
+  thinLineMasks: StructuralWallMasks,
+  dimensions: GuideDimensions,
+  structureBounds: StructuralBounds,
+) {
+  const walls = primaryWalls.map((wall) => ({
+    ...wall,
+    band: { ...wall.band },
+    segment: { ...wall.segment },
+  }))
+  const supplementedWallIds = new Set<string>()
+  const minimumExistingWallLength = Math.max(
+    MIN_WALL_LENGTH_PX,
+    Math.round(Math.min(dimensions.width, dimensions.height) * SUPPLEMENTAL_WALL_MIN_LENGTH_RATIO),
+  )
+
+  for (const wall of walls) {
+    if (getRangeLength(wall.segment) < minimumExistingWallLength) {
+      continue
+    }
+
+    const bandCenter = getRangeCenter(wall.band)
+    const bounds = wall.axis === 'horizontal' ? structureBounds.y : structureBounds.x
+    const crossAxisLength = wall.axis === 'horizontal' ? dimensions.height : dimensions.width
+    const edgeTolerance = Math.max(24, Math.round(crossAxisLength * 0.04))
+    if (
+      Math.abs(bandCenter - bounds.start) > edgeTolerance &&
+      Math.abs(bandCenter - bounds.end) > edgeTolerance
+    ) {
+      continue
+    }
+
+    const axisLength = wall.axis === 'horizontal' ? dimensions.width : dimensions.height
+    const axisMask = wall.axis === 'horizontal' ? thinLineMasks.horizontal : thinLineMasks.vertical
+    const supportValues = Array.from({ length: axisLength }, (_, axisIndex) => {
+      let support = 0
+      for (let bandIndex = wall.band.start; bandIndex <= wall.band.end; bandIndex += 1) {
+        const x = wall.axis === 'horizontal' ? axisIndex : bandIndex
+        const y = wall.axis === 'horizontal' ? bandIndex : axisIndex
+        if (axisMask[y * dimensions.width + x] === 1) {
+          support += 1
+        }
+      }
+      return support
+    })
+    const supportThreshold = Math.min(2, Math.max(1, getRangeLength(wall.band)))
+    const supportedRanges = groupCoveredRangesWithGapTolerance(
+      supportValues,
+      supportThreshold,
+      MIN_WALL_LENGTH_PX,
+      32,
+      0.42,
+    )
+
+    for (const supportedRange of supportedRanges) {
+      if (getRangeGap(wall.segment, supportedRange) > SUPPLEMENTAL_WALL_COLLINEAR_GAP_PX) {
+        continue
+      }
+
+      const mergedSegment = mergeRanges(wall.segment, supportedRange)
+      if (mergedSegment.start !== wall.segment.start || mergedSegment.end !== wall.segment.end) {
+        wall.segment = mergedSegment
+        supplementedWallIds.add(wall.id)
+      }
+    }
+  }
+
+  return { supplementedWallIds, walls }
+}
+
+export function filterDecorativeThinRasterWalls(
+  rasterCandidates: RasterWallCandidate[],
+  decorativeThinWallRatio = DECORATIVE_THIN_WALL_RATIO,
+  dimensions?: GuideDimensions,
+) {
   const thickBands = rasterCandidates
     .map((candidate) => getRangeLength(candidate.band))
     .filter((thickness) => thickness >= DOMINANT_THICK_WALL_MIN_PX)
@@ -944,12 +1605,46 @@ function filterDecorativeThinRasterWalls(rasterCandidates: RasterWallCandidate[]
   const dominantThickness = thickBands[Math.floor(thickBands.length * 0.5)]!
   const minAcceptedThickness = Math.max(
     MIN_WALL_THICKNESS_PX,
-    Math.round(dominantThickness * DECORATIVE_THIN_WALL_RATIO),
+    Math.round(dominantThickness * decorativeThinWallRatio),
   )
 
-  return rasterCandidates.filter(
-    (candidate) => getRangeLength(candidate.band) >= minAcceptedThickness,
+  const minimumBoundaryThickness = Math.max(
+    MIN_WALL_THICKNESS_PX,
+    Math.ceil(dominantThickness * 0.58),
   )
+
+  return rasterCandidates.flatMap((candidate) => {
+    const thickness = getRangeLength(candidate.band)
+    if (thickness >= minAcceptedThickness) {
+      return [candidate]
+    }
+    if (!dimensions || thickness < minimumBoundaryThickness) {
+      return []
+    }
+
+    const axisLength = candidate.axis === 'horizontal' ? dimensions.width : dimensions.height
+    if (getRangeLength(candidate.segment) < axisLength * 0.18) {
+      return []
+    }
+
+    const perpendicularCenters = rasterCandidates
+      .filter(
+        (wall) => wall.axis !== candidate.axis && getRangeLength(wall.band) >= minAcceptedThickness,
+      )
+      .map((wall) => getRangeCenter(wall.band))
+    if (perpendicularCenters.length < 2) {
+      return []
+    }
+
+    const boundaryStart = Math.min(...perpendicularCenters)
+    const boundaryEnd = Math.max(...perpendicularCenters)
+    const boundaryTolerance = Math.max(18, axisLength * 0.025)
+    const isBoundaryAnchored =
+      isNearRangeEndpoint(boundaryStart, candidate.segment, boundaryTolerance) ||
+      isNearRangeEndpoint(boundaryEnd, candidate.segment, boundaryTolerance)
+
+    return isBoundaryAnchored ? [{ ...candidate, boundaryAnchored: true }] : []
+  })
 }
 
 function sumRange(values: number[], range: Range) {
@@ -1131,17 +1826,222 @@ function sampleRasterWallCandidates(
   )
   const thicknessFilteredCandidates =
     options.boundsMode === 'primary'
-      ? filterDecorativeThinRasterWalls(sampledCandidates)
+      ? filterDecorativeThinRasterWalls(
+          sampledCandidates,
+          options.decorativeThinWallRatio,
+          sampleDimensions,
+        )
       : sampledCandidates
-  const rasterWalls = filterDisconnectedRasterWalls(
-    dedupeRasterWallCandidates(thicknessFilteredCandidates),
-    true,
-  )
+  const mergedCandidates = mergeCollinearRasterWallCandidates(thicknessFilteredCandidates, {
+    horizontal: Math.max(
+      options.segmentGapTolerance,
+      Math.round(sampleDimensions.width * COLLINEAR_WALL_MAX_GAP_RATIO),
+    ),
+    vertical: Math.max(
+      options.segmentGapTolerance,
+      Math.round(sampleDimensions.height * COLLINEAR_WALL_MAX_GAP_RATIO),
+    ),
+  })
+  const dedupedCandidates = dedupeRasterWallCandidates(mergedCandidates)
+  const rasterWalls = filterDisconnectedRasterWalls(dedupedCandidates, true)
 
   return {
     rasterWalls,
+    rasterWallStages: {
+      deduped: dedupedCandidates,
+      merged: mergedCandidates,
+      sampled: sampledCandidates,
+      thicknessFiltered: thicknessFilteredCandidates,
+    },
     structureBounds,
   }
+}
+
+export function refineWideSteppedHorizontalPerimeter(
+  perimeter: {
+    perimeterWallIds: Set<string>
+    walls: RasterWallCandidate[]
+  },
+  horizontalMask: Uint8ClampedArray,
+  dimensions: GuideDimensions,
+) {
+  const walls = perimeter.walls.map((wall) => ({
+    ...wall,
+    band: { ...wall.band },
+    segment: { ...wall.segment },
+  }))
+  const perimeterWallIds = new Set(perimeter.perimeterWallIds)
+  const rowCounts = Array.from({ length: dimensions.height }, (_, y) => {
+    let count = 0
+    for (let x = 0; x < dimensions.width; x += 1) {
+      count += horizontalMask[y * dimensions.width + x] === 1 ? 1 : 0
+    }
+    return count
+  })
+  const minimumWideBandThickness = Math.max(30, dimensions.height * 0.025)
+  const segmentGapTolerance = Math.min(
+    WALL_SEGMENT_GAP_TOLERANCE_PX,
+    Math.max(16, Math.round(dimensions.width * 0.12)),
+  )
+
+  for (const wall of [...walls]) {
+    if (
+      wall.axis !== 'horizontal' ||
+      !perimeterWallIds.has(wall.id) ||
+      getRangeLength(wall.band) < minimumWideBandThickness
+    ) {
+      continue
+    }
+
+    const cores = refineWideDenseBands(
+      rowCounts,
+      [wall.band],
+      Math.max(dimensions.width * COLOR_FILL_WALL_DENSITY_THRESHOLD, MIN_WALL_LENGTH_PX),
+      MIN_WALL_THICKNESS_PX,
+    )
+    if (cores.length !== 2) {
+      continue
+    }
+
+    const coreRuns = cores.map((core) => {
+      const columnCounts = Array.from({ length: dimensions.width }, (_, x) => {
+        let count = 0
+        for (let y = core.start; y <= core.end; y += 1) {
+          count += horizontalMask[y * dimensions.width + x] === 1 ? 1 : 0
+        }
+        return count
+      })
+      const segments = groupCoveredRangesWithGapTolerance(
+        columnCounts,
+        Math.max(getRangeLength(core) * WALL_SOLIDITY_THRESHOLD, 1),
+        MIN_WALL_LENGTH_PX,
+        segmentGapTolerance,
+        0.42,
+        true,
+      ).filter((segment) => segment.end >= wall.segment.start && segment.start <= wall.segment.end)
+      return { core, segments }
+    })
+    const endpointTolerance = Math.max(18, dimensions.width * 0.025)
+    const endpointEvidenceDepth = Math.max(endpointTolerance * 2, dimensions.width * 0.06)
+    const getEndpointEvidenceScore = (segments: Range[]) =>
+      segments.reduce((score, segment) => {
+        const leftSupport = Math.max(
+          0,
+          Math.min(segment.end, wall.segment.start + endpointEvidenceDepth) -
+            Math.max(segment.start, wall.segment.start) +
+            1,
+        )
+        const rightSupport = Math.max(
+          0,
+          Math.min(segment.end, wall.segment.end) -
+            Math.max(segment.start, wall.segment.end - endpointEvidenceDepth) +
+            1,
+        )
+        return score + leftSupport + rightSupport
+      }, 0)
+    const outer = [...coreRuns]
+      .filter(
+        ({ segments }) =>
+          segments.some((segment) => segment.start <= wall.segment.start + endpointTolerance) &&
+          segments.some((segment) => segment.end >= wall.segment.end - endpointTolerance),
+      )
+      .sort(
+        (left, right) =>
+          getEndpointEvidenceScore(right.segments) - getEndpointEvidenceScore(left.segments),
+      )[0]
+    const offset = coreRuns.find((candidate) => candidate !== outer)
+    if (!outer || !offset || outer.segments.length < 2 || offset.segments.length === 0) {
+      continue
+    }
+
+    const sortedOuterSegments = [...outer.segments].sort((left, right) => left.start - right.start)
+    const outerStart = sortedOuterSegments[0]!
+    const outerEnd = sortedOuterSegments[sortedOuterSegments.length - 1]!
+    const offsetSegment = [...offset.segments]
+      .filter(
+        (segment) =>
+          segment.start > outerStart.start + endpointTolerance &&
+          segment.end < outerEnd.end - endpointTolerance,
+      )
+      .sort((left, right) => getRangeLength(right) - getRangeLength(left))[0]
+    if (!offsetSegment) {
+      continue
+    }
+
+    const outerLeft = [...sortedOuterSegments]
+      .filter(
+        (segment) => segment.start <= offsetSegment.start && segment.end >= offsetSegment.start,
+      )
+      .sort((left, right) => right.end - left.end)[0]
+    const outerRight = [...sortedOuterSegments]
+      .filter((segment) => segment.start <= offsetSegment.end && segment.end >= offsetSegment.end)
+      .sort((left, right) => left.start - right.start)[0]
+    if (!outerLeft || !outerRight || outerLeft === outerRight) {
+      continue
+    }
+
+    const leftConnectorBand = {
+      start: Math.max(outerLeft.start, offsetSegment.start),
+      end: Math.min(outerLeft.end, offsetSegment.end),
+    }
+    const rightConnectorBand = {
+      start: Math.max(outerRight.start, offsetSegment.start),
+      end: Math.min(outerRight.end, offsetSegment.end),
+    }
+    if (
+      getRangeLength(leftConnectorBand) < MIN_WALL_THICKNESS_PX ||
+      getRangeLength(rightConnectorBand) < MIN_WALL_THICKNESS_PX
+    ) {
+      continue
+    }
+
+    const replacementWalls: RasterWallCandidate[] = [
+      {
+        ...wall,
+        band: { ...outer.core },
+        segment: { start: wall.segment.start, end: outerLeft.end },
+      },
+      {
+        ...wall,
+        band: { ...outer.core },
+        id: `${wall.id}:step:right`,
+        segment: { start: outerRight.start, end: wall.segment.end },
+      },
+      {
+        ...wall,
+        band: { ...offset.core },
+        id: `${wall.id}:step:offset`,
+        segment: { ...offsetSegment },
+      },
+      {
+        axis: 'vertical',
+        band: leftConnectorBand,
+        id: `${wall.id}:step:left-connector`,
+        perimeterConnector: true,
+        segment: {
+          start: Math.round(Math.min(getRangeCenter(outer.core), getRangeCenter(offset.core))),
+          end: Math.round(Math.max(getRangeCenter(outer.core), getRangeCenter(offset.core))),
+        },
+      },
+      {
+        axis: 'vertical',
+        band: rightConnectorBand,
+        id: `${wall.id}:step:right-connector`,
+        perimeterConnector: true,
+        segment: {
+          start: Math.round(Math.min(getRangeCenter(outer.core), getRangeCenter(offset.core))),
+          end: Math.round(Math.max(getRangeCenter(outer.core), getRangeCenter(offset.core))),
+        },
+      },
+    ]
+    const wallIndex = walls.findIndex((candidate) => candidate.id === wall.id)
+    walls.splice(wallIndex, 1, ...replacementWalls)
+    for (const replacement of replacementWalls) {
+      perimeterWallIds.add(replacement.id)
+    }
+  }
+
+  return { perimeterWallIds, walls }
 }
 
 function buildWallCandidates(
@@ -1151,6 +2051,16 @@ function buildWallCandidates(
   sampleOffset: { x: number; y: number },
 ): GuideDetectionWallCandidate[] {
   return rasterCandidates
+    .filter(
+      (candidate) =>
+        candidate.perimeterConnector ||
+        pxToPlanLength(
+          guide,
+          guideDimensions,
+          getRangeLength(candidate.segment),
+          candidate.axis === 'horizontal' ? 'x' : 'y',
+        ) >= 0.8,
+    )
     .map((candidate) => {
       if (candidate.axis === 'horizontal') {
         const centerY = sampleOffset.y + (candidate.band.start + candidate.band.end) / 2
@@ -1206,13 +2116,6 @@ function buildWallCandidates(
         ),
       }
     })
-    .filter((candidate) => {
-      const length = Math.hypot(
-        candidate.end[0] - candidate.start[0],
-        candidate.end[1] - candidate.start[1],
-      )
-      return length >= 0.8
-    })
 }
 
 function getRangeMean(values: number[], start: number, end: number) {
@@ -1242,40 +2145,165 @@ function getSampleSupportTarget(samples: number[], fallback: number) {
   return Math.max(1, positiveSamples[percentileIndex] ?? fallback)
 }
 
-function buildOpeningSignalCandidates(
+export function splitRasterWallsAtLongUnsupportedSpans(
+  candidates: RasterWallCandidate[],
+  masks: Pick<StructuralWallMasks, 'horizontal' | 'vertical'>,
+  dimensions: GuideDimensions,
+  maximumUnsupportedSpanByAxis: { horizontal: number; vertical: number },
+  minimumRetainedLengthByAxis: { horizontal: number; vertical: number },
+  protectedIds = new Set<string>(),
+  shouldPreserveUnsupportedRange?: (candidate: RasterWallCandidate, range: Range) => boolean,
+) {
+  const splitWallIds = new Set<string>()
+  const walls = candidates.flatMap((candidate) => {
+    if (protectedIds.has(candidate.id)) {
+      return [
+        {
+          ...candidate,
+          band: { ...candidate.band },
+          segment: { ...candidate.segment },
+        },
+      ]
+    }
+
+    const axisMask = candidate.axis === 'horizontal' ? masks.horizontal : masks.vertical
+    const supportValues = Array.from({ length: getRangeLength(candidate.segment) }, (_, offset) => {
+      const axisIndex = candidate.segment.start + offset
+      let support = 0
+      for (let bandIndex = candidate.band.start; bandIndex <= candidate.band.end; bandIndex += 1) {
+        const x = candidate.axis === 'horizontal' ? axisIndex : bandIndex
+        const y = candidate.axis === 'horizontal' ? bandIndex : axisIndex
+        if (
+          x >= 0 &&
+          x < dimensions.width &&
+          y >= 0 &&
+          y < dimensions.height &&
+          axisMask[y * dimensions.width + x] === 1
+        ) {
+          support += 1
+        }
+      }
+      return support
+    })
+    const supportTarget = getSampleSupportTarget(supportValues, getRangeLength(candidate.band))
+    const lowSupportThreshold = Math.max(
+      1,
+      Math.floor(supportTarget * (1 - VOID_OPENING_SIGNAL_RATIO)),
+    )
+    const lowSupportSignal = supportValues.map((value) => (value <= lowSupportThreshold ? 1 : 0))
+    const maximumUnsupportedSpan = maximumUnsupportedSpanByAxis[candidate.axis]
+    const unsupportedRanges = groupDenseRangesWithGapTolerance(
+      lowSupportSignal,
+      1,
+      maximumUnsupportedSpan + 1,
+      UNSUPPORTED_WALL_SIGNAL_GAP_TOLERANCE_PX,
+    )
+      .filter((range) => {
+        const unsupportedCount = lowSupportSignal
+          .slice(range.start, range.end + 1)
+          .reduce<number>((sum, value) => sum + value, 0)
+        return unsupportedCount / Math.max(getRangeLength(range), 1) >= UNSUPPORTED_WALL_MIN_RATIO
+      })
+      .map((range) => ({
+        start: candidate.segment.start + range.start,
+        end: candidate.segment.start + range.end,
+      }))
+      .filter((range) => !shouldPreserveUnsupportedRange?.(candidate, range))
+
+    if (unsupportedRanges.length === 0) {
+      return [
+        {
+          ...candidate,
+          band: { ...candidate.band },
+          segment: { ...candidate.segment },
+        },
+      ]
+    }
+
+    const retainedRanges: Range[] = []
+    let retainedStart = candidate.segment.start
+    for (const unsupportedRange of unsupportedRanges) {
+      if (unsupportedRange.start > retainedStart) {
+        retainedRanges.push({ start: retainedStart, end: unsupportedRange.start - 1 })
+      }
+      retainedStart = Math.max(retainedStart, unsupportedRange.end + 1)
+    }
+    if (retainedStart <= candidate.segment.end) {
+      retainedRanges.push({ start: retainedStart, end: candidate.segment.end })
+    }
+
+    const minimumRetainedLength = minimumRetainedLengthByAxis[candidate.axis]
+    const retainedWalls = retainedRanges
+      .filter((range) => getRangeLength(range) >= minimumRetainedLength)
+      .map((segment, index) => ({
+        ...candidate,
+        id: `${candidate.id}:part:${index + 1}`,
+        band: { ...candidate.band },
+        segment,
+      }))
+
+    splitWallIds.add(candidate.id)
+    return retainedWalls
+  })
+
+  return { splitWallIds, walls }
+}
+
+export function buildOpeningSignalCandidates(
   structuralSamples: number[],
   rawDarkSamples: number[],
   wallThicknessPx: number,
   rawSupportTargetPx = wallThicknessPx,
+  keepModesSeparate = true,
 ) {
   const missingStructural = structuralSamples.map((value) => Math.max(0, wallThicknessPx - value))
   const missingRaw = rawDarkSamples.map((value) => Math.max(0, rawSupportTargetPx - value))
-  const ranges: OpeningSignalCandidate[] = [
-    ...groupDenseRanges(
-      missingStructural,
-      Math.max(wallThicknessPx * VOID_OPENING_SIGNAL_RATIO, 1),
-      MIN_GAP_LENGTH_PX,
-    ).map((range) => ({
-      range,
-      mode: 'void' as const,
-    })),
-    ...groupDenseRanges(
-      missingRaw,
-      Math.max(rawSupportTargetPx * FRAMED_OPENING_SIGNAL_RATIO, 1),
-      MIN_GAP_LENGTH_PX,
-    ).map((range) => ({
-      range,
-      mode: 'framed' as const,
-    })),
-  ].sort((left, right) => left.range.start - right.range.start)
+  const mergeSameModeRanges = (
+    ranges: Range[],
+    mode: OpeningSignalCandidate['mode'],
+  ): OpeningSignalCandidate[] => {
+    const sortedRanges = ranges.sort((left, right) => left.start - right.start)
+    if (sortedRanges.length === 0) {
+      return []
+    }
 
-  if (ranges.length <= 1) {
-    return ranges
+    const merged: OpeningSignalCandidate[] = [{ mode, range: { ...sortedRanges[0]! } }]
+    for (const range of sortedRanges.slice(1)) {
+      const previous = merged[merged.length - 1]!
+      if (getRangeGap(previous.range, range) <= OPENING_SIGNAL_GAP_TOLERANCE_PX) {
+        previous.range = mergeRanges(previous.range, range)
+        continue
+      }
+
+      merged.push({ mode, range: { ...range } })
+    }
+    return merged
   }
 
-  const merged: OpeningSignalCandidate[] = [ranges[0]!]
+  const voidRanges = groupDenseRanges(
+    missingStructural,
+    Math.max(wallThicknessPx * VOID_OPENING_SIGNAL_RATIO, 1),
+    MIN_GAP_LENGTH_PX,
+  )
+  const framedRanges = groupDenseRanges(
+    missingRaw,
+    Math.max(rawSupportTargetPx * FRAMED_OPENING_SIGNAL_RATIO, 1),
+    MIN_GAP_LENGTH_PX,
+  )
 
-  for (const candidate of ranges.slice(1)) {
+  const separatedRanges = [
+    ...mergeSameModeRanges(voidRanges, 'void'),
+    ...mergeSameModeRanges(framedRanges, 'framed'),
+  ].sort((left, right) => left.range.start - right.range.start)
+
+  if (keepModesSeparate || separatedRanges.length <= 1) {
+    return separatedRanges
+  }
+
+  const merged: OpeningSignalCandidate[] = [
+    { ...separatedRanges[0]!, range: { ...separatedRanges[0]!.range } },
+  ]
+  for (const candidate of separatedRanges.slice(1)) {
     const previous = merged[merged.length - 1]!
     if (getRangeGap(previous.range, candidate.range) <= OPENING_SIGNAL_GAP_TOLERANCE_PX) {
       previous.range = mergeRanges(previous.range, candidate.range)
@@ -1289,36 +2317,34 @@ function buildOpeningSignalCandidates(
   return merged
 }
 
-function countMaskPixelsInRect(
-  mask: Uint8ClampedArray,
-  dimensions: GuideDimensions,
-  minX: number,
-  minY: number,
-  maxX: number,
-  maxY: number,
-) {
-  const startX = clamp(Math.floor(minX), 0, dimensions.width - 1)
-  const startY = clamp(Math.floor(minY), 0, dimensions.height - 1)
-  const endX = clamp(Math.ceil(maxX), 0, dimensions.width - 1)
-  const endY = clamp(Math.ceil(maxY), 0, dimensions.height - 1)
-
-  if (endX < startX || endY < startY) {
-    return { area: 0, count: 0 }
-  }
-
-  let count = 0
-  for (let y = startY; y <= endY; y += 1) {
-    for (let x = startX; x <= endX; x += 1) {
-      if (mask[y * dimensions.width + x] === 1) {
-        count += 1
-      }
+export function resolveOverlappingOpeningSignals<Candidate extends EvaluatedOpeningSignalCandidate>(
+  candidates: Candidate[],
+): Candidate[] {
+  return candidates.filter((candidate) => {
+    const overlappingOtherMode = candidates.filter(
+      (other) =>
+        other !== candidate &&
+        other.mode !== candidate.mode &&
+        getRangeGap(other.range, candidate.range) <= OPENING_SIGNAL_GAP_TOLERANCE_PX,
+    )
+    if (overlappingOtherMode.length === 0) {
+      return true
     }
-  }
 
-  return {
-    area: (endX - startX + 1) * (endY - startY + 1),
-    count,
-  }
+    if (candidate.mode === 'void') {
+      return (
+        candidate.hasDoorSwing ||
+        overlappingOtherMode.some(
+          (other) => getRangeLength(other.range) <= getRangeLength(candidate.range) * 1.25,
+        )
+      )
+    }
+
+    return !overlappingOtherMode.some(
+      (other) =>
+        other.hasDoorSwing || getRangeLength(candidate.range) <= getRangeLength(other.range) * 1.25,
+    )
+  })
 }
 
 function hasDoorSwingSignal(
@@ -1327,67 +2353,43 @@ function hasDoorSwingSignal(
   wall: RasterWallCandidate,
   gap: Range,
   width: number,
+  maxWidthMeters = DOOR_SWING_MAX_WIDTH_METERS,
+  requireArcEvidence = false,
 ) {
-  if (width < DOOR_SWING_MIN_WIDTH_METERS || width > DOOR_SWING_MAX_WIDTH_METERS) {
+  if (width < DOOR_SWING_MIN_WIDTH_METERS || width > maxWidthMeters) {
     return false
   }
 
-  const gapLength = getRangeLength(gap)
-  const padding = Math.max(4, Math.round(gapLength * 0.18))
-  const scanDepth = clamp(Math.round(gapLength * 1.25), 18, 110)
-  const minSignalPixels = Math.max(10, Math.round(gapLength * 0.28))
-
-  const sideRects =
+  const interiorRoomSide =
     wall.axis === 'horizontal'
-      ? [
-          {
-            minX: wall.segment.start + gap.start - padding,
-            maxX: wall.segment.start + gap.end + padding,
-            minY: wall.band.start - scanDepth,
-            maxY: wall.band.start - 3,
-          },
-          {
-            minX: wall.segment.start + gap.start - padding,
-            maxX: wall.segment.start + gap.end + padding,
-            minY: wall.band.end + 3,
-            maxY: wall.band.end + scanDepth,
-          },
-        ]
-      : [
-          {
-            minX: wall.band.start - scanDepth,
-            maxX: wall.band.start - 3,
-            minY: wall.segment.start + gap.start - padding,
-            maxY: wall.segment.start + gap.end + padding,
-          },
-          {
-            minX: wall.band.end + 3,
-            maxX: wall.band.end + scanDepth,
-            minY: wall.segment.start + gap.start - padding,
-            maxY: wall.segment.start + gap.end + padding,
-          },
-        ]
-
-  return sideRects.some((rect) => {
-    const signal = countMaskPixelsInRect(
-      rawDarkMask,
-      sampleDimensions,
-      rect.minX,
-      rect.minY,
-      rect.maxX,
-      rect.maxY,
-    )
-
-    return (
-      signal.count >= minSignalPixels &&
-      signal.count / Math.max(signal.area, 1) >= DOOR_SWING_SIGNAL_DENSITY
-    )
-  })
+      ? getRangeCenter(wall.band) < sampleDimensions.height / 2
+        ? 1
+        : -1
+      : getRangeCenter(wall.band) < sampleDimensions.width / 2
+        ? 1
+        : -1
+  const evidence = getDoorSwingEvidence(
+    rawDarkMask,
+    sampleDimensions,
+    wall,
+    gap,
+    requireArcEvidence ? [interiorRoomSide] : undefined,
+  )
+  return requireArcEvidence ? evidence.strictSignal : evidence.hasSignal
 }
 
-function getOpeningKind(mode: OpeningSignalCandidate['mode'], width: number, hasDoorSwing = false) {
+export function getOpeningKind(
+  mode: OpeningSignalCandidate['mode'],
+  width: number,
+  hasDoorSwing = false,
+  preferWindowWithoutDoorSwing = false,
+) {
   if (hasDoorSwing) {
     return 'door' as const
+  }
+
+  if (preferWindowWithoutDoorSwing) {
+    return 'window' as const
   }
 
   if (mode === 'framed') {
@@ -1408,23 +2410,43 @@ export function isGapLikelyOpening(
   wallThicknessPx: number,
   mode: OpeningSignalCandidate['mode'],
   rawSupportTargetPx = wallThicknessPx,
+  allowAdaptiveEdgeFlanks = false,
 ) {
-  const edgeBuffer = Math.max(
-    MIN_OPENING_EDGE_BUFFER_PX,
-    Math.min(18, Math.round(structuralSamples.length * 0.08)),
-  )
   if (
-    gap.start < edgeBuffer ||
-    gap.end > structuralSamples.length - 1 - edgeBuffer ||
+    gap.start < 0 ||
+    gap.end >= structuralSamples.length ||
     gap.end - gap.start + 1 < MIN_GAP_LENGTH_PX
   ) {
     return false
   }
 
-  const flankSupport = Math.max(
+  const availableLeftFlank = gap.start
+  const availableRightFlank = structuralSamples.length - 1 - gap.end
+  const edgeBuffer = Math.max(
+    MIN_OPENING_EDGE_BUFFER_PX,
+    Math.min(18, Math.round(structuralSamples.length * 0.08)),
+  )
+  if (
+    !allowAdaptiveEdgeFlanks &&
+    (gap.start < edgeBuffer || gap.end > structuralSamples.length - 1 - edgeBuffer)
+  ) {
+    return false
+  }
+
+  if (
+    availableLeftFlank < MIN_OPENING_FLANK_SUPPORT_PX ||
+    availableRightFlank < MIN_OPENING_FLANK_SUPPORT_PX
+  ) {
+    return false
+  }
+
+  const preferredFlankSupport = Math.max(
     MIN_OPENING_FLANK_SUPPORT_PX,
     Math.min(18, Math.round(structuralSamples.length * 0.1)),
   )
+  const flankSupport = allowAdaptiveEdgeFlanks
+    ? Math.min(preferredFlankSupport, availableLeftFlank, availableRightFlank)
+    : preferredFlankSupport
   const leftStart = gap.start - flankSupport
   const leftEnd = gap.start - 1
   const rightStart = gap.end + 1
@@ -1466,13 +2488,16 @@ function sampleOpeningsForWall(
   guideDimensions: GuideDimensions,
   sampleOffset: { x: number; y: number },
   wall: RasterWallCandidate,
+  useColoredPlanOpeningSemantics = false,
+  useExteriorOpeningSemantics = false,
 ): GuideDetectionOpeningCandidate[] {
+  const samplingBand = wall.openingSampleBand ?? wall.band
   const structuralSamples: number[] =
     wall.axis === 'horizontal'
       ? Array.from({ length: wall.segment.end - wall.segment.start + 1 }, (_, offset) => {
           const x = wall.segment.start + offset
           let dark = 0
-          for (let y = wall.band.start; y <= wall.band.end; y += 1) {
+          for (let y = samplingBand.start; y <= samplingBand.end; y += 1) {
             if (wallMask[y * sampleDimensions.width + x] === 1) dark += 1
           }
           return dark
@@ -1480,7 +2505,7 @@ function sampleOpeningsForWall(
       : Array.from({ length: wall.segment.end - wall.segment.start + 1 }, (_, offset) => {
           const y = wall.segment.start + offset
           let dark = 0
-          for (let x = wall.band.start; x <= wall.band.end; x += 1) {
+          for (let x = samplingBand.start; x <= samplingBand.end; x += 1) {
             if (wallMask[y * sampleDimensions.width + x] === 1) dark += 1
           }
           return dark
@@ -1491,7 +2516,7 @@ function sampleOpeningsForWall(
       ? Array.from({ length: wall.segment.end - wall.segment.start + 1 }, (_, offset) => {
           const x = wall.segment.start + offset
           let dark = 0
-          for (let y = wall.band.start; y <= wall.band.end; y += 1) {
+          for (let y = samplingBand.start; y <= samplingBand.end; y += 1) {
             if (rawDarkMask[y * sampleDimensions.width + x] === 1) dark += 1
           }
           return dark
@@ -1499,51 +2524,85 @@ function sampleOpeningsForWall(
       : Array.from({ length: wall.segment.end - wall.segment.start + 1 }, (_, offset) => {
           const y = wall.segment.start + offset
           let dark = 0
-          for (let x = wall.band.start; x <= wall.band.end; x += 1) {
+          for (let x = samplingBand.start; x <= samplingBand.end; x += 1) {
             if (rawDarkMask[y * sampleDimensions.width + x] === 1) dark += 1
           }
           return dark
         })
 
-  const wallThicknessPx = wall.band.end - wall.band.start + 1
+  const wallThicknessPx = getRangeLength(samplingBand)
+  const structuralSupportTargetPx = getSampleSupportTarget(structuralSamples, wallThicknessPx)
   const rawSupportTargetPx = getSampleSupportTarget(rawDarkSamples, wallThicknessPx)
 
-  return buildOpeningSignalCandidates(
+  const evaluatedSignals = buildOpeningSignalCandidates(
     structuralSamples,
     rawDarkSamples,
-    wallThicknessPx,
+    structuralSupportTargetPx,
     rawSupportTargetPx,
-  )
-    .map(({ mode, range }, index) => {
-      if (
-        !isGapLikelyOpening(
-          structuralSamples,
-          rawDarkSamples,
-          range,
-          wallThicknessPx,
-          mode,
-          rawSupportTargetPx,
-        )
-      ) {
-        return null
-      }
-
-      const gapLengthPx = range.end - range.start + 1
-      const width = pxToPlanLength(
-        guide,
-        guideDimensions,
-        gapLengthPx,
-        wall.axis === 'horizontal' ? 'x' : 'y',
+    useColoredPlanOpeningSemantics,
+  ).flatMap(({ mode, range }, index) => {
+    const absoluteRange = {
+      start: wall.segment.start + range.start,
+      end: wall.segment.start + range.end,
+    }
+    if (
+      wall.occludedSpans?.some(
+        (span) =>
+          getRangeOverlapLength(span, absoluteRange) / Math.max(getRangeLength(span), 1) >= 0.6,
       )
-      if (width < MIN_OPENING_WIDTH_METERS || width > MAX_OPENING_WIDTH_METERS) {
-        return null
-      }
+    ) {
+      return []
+    }
 
-      const kind = getOpeningKind(
+    if (
+      !isGapLikelyOpening(
+        structuralSamples,
+        rawDarkSamples,
+        range,
+        structuralSupportTargetPx,
         mode,
-        width,
-        hasDoorSwingSignal(rawDarkMask, sampleDimensions, wall, range, width),
+        rawSupportTargetPx,
+        useColoredPlanOpeningSemantics,
       )
+    ) {
+      return []
+    }
+
+    const gapLengthPx = range.end - range.start + 1
+    const width = pxToPlanLength(
+      guide,
+      guideDimensions,
+      gapLengthPx,
+      wall.axis === 'horizontal' ? 'x' : 'y',
+    )
+    if (width < MIN_OPENING_WIDTH_METERS || width > MAX_OPENING_WIDTH_METERS) {
+      return []
+    }
+
+    return [
+      {
+        hasDoorSwing: hasDoorSwingSignal(
+          rawDarkMask,
+          sampleDimensions,
+          wall,
+          range,
+          width,
+          useColoredPlanOpeningSemantics
+            ? COLOR_PLAN_DOOR_SWING_MAX_WIDTH_METERS
+            : DOOR_SWING_MAX_WIDTH_METERS,
+          useExteriorOpeningSemantics,
+        ),
+        index,
+        mode,
+        range,
+        width,
+      },
+    ]
+  })
+
+  return resolveOverlappingOpeningSignals(evaluatedSignals).map(
+    ({ hasDoorSwing, index, mode, range, width }) => {
+      const kind = getOpeningKind(mode, width, hasDoorSwing, useExteriorOpeningSemantics)
 
       if (wall.axis === 'horizontal') {
         const centerX = sampleOffset.x + wall.segment.start + (range.start + range.end) / 2
@@ -1570,8 +2629,8 @@ function sampleOpeningsForWall(
         height: kind === 'door' ? 2.1 : 1.5,
         yOffset: kind === 'door' ? 1.05 : 1.45,
       } satisfies GuideDetectionOpeningCandidate
-    })
-    .filter((candidate): candidate is GuideDetectionOpeningCandidate => !!candidate)
+    },
+  )
 }
 
 function buildOpeningCandidates(
@@ -1582,18 +2641,27 @@ function buildOpeningCandidates(
   guideDimensions: GuideDimensions,
   rasterWalls: RasterWallCandidate[],
   sampleOffset: { x: number; y: number },
+  supplementalMasks: StructuralWallMasks | null = null,
+  supplementedWallIds = new Set<string>(),
+  useColoredPlanOpeningSemantics = false,
+  exteriorWallIds = new Set<string>(),
 ) {
-  return rasterWalls.flatMap((wall) =>
-    sampleOpeningsForWall(
-      wall.axis === 'horizontal' ? structuralMasks.horizontal : structuralMasks.vertical,
+  return rasterWalls.flatMap((wall) => {
+    const wallMasks = supplementedWallIds.has(wall.id)
+      ? (supplementalMasks ?? structuralMasks)
+      : structuralMasks
+    return sampleOpeningsForWall(
+      wall.axis === 'horizontal' ? wallMasks.horizontal : wallMasks.vertical,
       rawDarkMask,
       sampleDimensions,
       guide,
       guideDimensions,
       sampleOffset,
       wall,
-    ),
-  )
+      useColoredPlanOpeningSemantics,
+      exteriorWallIds.has(wall.id),
+    )
+  })
 }
 
 async function loadGuideImageData(guide: GuideNode) {
@@ -1626,6 +2694,9 @@ async function loadGuideImageData(guide: GuideNode) {
 
   context.fillStyle = '#ffffff'
   context.fillRect(0, 0, width, height)
+  // Keep browser detection aligned with the offline debug runner, which uses
+  // deterministic nearest-neighbour resizing for reproducible candidates.
+  context.imageSmoothingEnabled = false
   context.drawImage(image, 0, 0, width, height)
   const guideDimensions = { width, height }
   const detectionRegion = getGuideDetectionPixelRegion(guide, guideDimensions)
@@ -1653,7 +2724,12 @@ export function buildGuideDetectionDebugSnapshot(
 ): GuideDetectionDebugSnapshot {
   const sampleDimensions = { width: imageData.width, height: imageData.height }
   const brightness = buildBrightnessMap(imageData)
-  const darkThreshold = getAdaptiveDarkThreshold(brightness)
+  const coloredFillRatio = getColoredFillRatio(imageData)
+  const isColoredPlan = coloredFillRatio >= COLOR_FILL_RATIO_THRESHOLD
+  const darkThreshold = getAdaptiveDarkThreshold(
+    brightness,
+    isColoredPlan ? ADAPTIVE_DARK_PERCENTILE : DEFAULT_DARK_PERCENTILE,
+  )
   const rawDarkMask = buildBinaryDarkMask(brightness, sampleDimensions, darkThreshold)
   const structuralMasks = buildStructuralWallMasks(brightness, sampleDimensions, darkThreshold)
   const structuralResult = sampleRasterWallCandidates(
@@ -1661,28 +2737,138 @@ export function buildGuideDetectionDebugSnapshot(
     sampleDimensions,
     guideDimensions,
     sampleOffset,
-    structuralWallSamplingOptions,
+    isColoredPlan ? colorFillStructuralWallSamplingOptions : structuralWallSamplingOptions,
+  )
+  const thinLineMasks = buildThinLineWallMasks(brightness, sampleDimensions, darkThreshold)
+  const thinLineResult = sampleRasterWallCandidates(
+    thinLineMasks,
+    sampleDimensions,
+    guideDimensions,
+    sampleOffset,
+    thinLineWallSamplingOptions,
   )
   let detectionMode: GuideDetectionDebugSnapshot['detectionMode'] = 'structural'
   let selectedMasks = structuralMasks
+  let openingMasks = structuralMasks
+  let supplementedWallIds = new Set<string>()
+  let splitWallIds = new Set<string>()
+  let exteriorWallIds = new Set<string>()
   let structureBounds = structuralResult.structureBounds
   let rasterWalls = structuralResult.rasterWalls
+  let rasterWallStages = structuralResult.rasterWallStages
 
   if (rasterWalls.length < THIN_LINE_FALLBACK_MIN_WALL_COUNT) {
-    const thinLineMasks = buildThinLineWallMasks(brightness, sampleDimensions, darkThreshold)
-    const thinLineResult = sampleRasterWallCandidates(
-      thinLineMasks,
-      sampleDimensions,
-      guideDimensions,
-      sampleOffset,
-      thinLineWallSamplingOptions,
-    )
-
     if (thinLineResult.rasterWalls.length > rasterWalls.length) {
       detectionMode = 'thin-line'
       selectedMasks = thinLineMasks
+      openingMasks = thinLineMasks
       structureBounds = thinLineResult.structureBounds
       rasterWalls = thinLineResult.rasterWalls
+      rasterWallStages = thinLineResult.rasterWallStages
+    }
+  } else if (isColoredPlan) {
+    const rectangularPerimeter = closeRectangularRasterWallPerimeter(
+      rasterWalls,
+      structuralResult.rasterWallStages.deduped,
+      sampleDimensions,
+    )
+    const perimeter = refineWideSteppedHorizontalPerimeter(
+      rectangularPerimeter,
+      structuralMasks.horizontal,
+      sampleDimensions,
+    )
+    exteriorWallIds = perimeter.perimeterWallIds
+    const perimeterAlignedWalls = alignPerimeterRasterWallsToBroadLocalEvidence(
+      perimeter.walls,
+      thinLineResult.rasterWallStages.deduped,
+      perimeter.perimeterWallIds,
+    )
+    const thicknessFilteredWalls = filterRasterWallThicknessOutliers(
+      perimeterAlignedWalls,
+      sampleDimensions,
+      perimeter.perimeterWallIds,
+    )
+    const parallelMergedWalls = mergeAdjacentParallelRasterWalls(
+      thicknessFilteredWalls,
+      8,
+      perimeter.perimeterWallIds,
+    )
+    const bridged = bridgeRasterWallsAcrossAnchoredOcclusions(
+      parallelMergedWalls,
+      structuralMasks,
+      sampleDimensions,
+      perimeter.perimeterWallIds,
+    )
+    const extended = extendRasterWallCandidatesWithThinLineSupport(
+      bridged.walls,
+      thinLineMasks,
+      sampleDimensions,
+      structuralResult.structureBounds,
+    )
+    const supplemented = supplementRasterWallCandidates(
+      extended.walls,
+      thinLineResult.rasterWallStages.deduped,
+      sampleDimensions,
+      structuralMasks,
+    )
+    const shadowFilteredWalls = filterShortParallelShadowRasterWalls(
+      supplemented.walls,
+      sampleDimensions,
+      perimeter.perimeterWallIds,
+    )
+    const { planHeight, planWidth } = getGuidePlanSize(guide, guideDimensions)
+    const splitProtectedIds = new Set([
+      ...perimeter.perimeterWallIds,
+      ...parallelMergedWalls
+        .filter((wall) => wall.parallelEvidenceSupported)
+        .map((wall) => wall.id),
+      ...bridged.bridgedWallIds,
+      ...extended.supplementedWallIds,
+      ...supplemented.supplementedWallIds,
+    ])
+    const split = splitRasterWallsAtLongUnsupportedSpans(
+      shadowFilteredWalls,
+      structuralMasks,
+      sampleDimensions,
+      {
+        horizontal: Math.max(
+          MIN_WALL_LENGTH_PX,
+          Math.round((MAX_INTERIOR_UNSUPPORTED_SPAN_METERS / planWidth) * guideDimensions.width),
+        ),
+        vertical: Math.max(
+          MIN_WALL_LENGTH_PX,
+          Math.round((MAX_INTERIOR_UNSUPPORTED_SPAN_METERS / planHeight) * guideDimensions.height),
+        ),
+      },
+      {
+        horizontal: Math.max(
+          MIN_WALL_LENGTH_PX,
+          Math.round((MIN_SPLIT_WALL_LENGTH_METERS / planWidth) * guideDimensions.width),
+        ),
+        vertical: Math.max(
+          MIN_WALL_LENGTH_PX,
+          Math.round((MIN_SPLIT_WALL_LENGTH_METERS / planHeight) * guideDimensions.height),
+        ),
+      },
+      splitProtectedIds,
+      (candidate, unsupportedRange) =>
+        hasStrongColorBoundaryAcrossRasterWall(imageData, candidate, unsupportedRange),
+    )
+    splitWallIds = split.splitWallIds
+    rasterWalls = filterShortDanglingRasterWalls(
+      split.walls,
+      sampleDimensions,
+      perimeter.perimeterWallIds,
+    )
+    const survivingWallIds = new Set(rasterWalls.map((wall) => wall.id))
+    supplementedWallIds = new Set(
+      [...extended.supplementedWallIds, ...supplemented.supplementedWallIds].filter((id) =>
+        survivingWallIds.has(id),
+      ),
+    )
+    if (supplementedWallIds.size > 0) {
+      detectionMode = 'hybrid'
+      openingMasks = combineStructuralWallMasks(structuralMasks, thinLineMasks)
     }
   }
 
@@ -1695,6 +2881,10 @@ export function buildGuideDetectionDebugSnapshot(
     guideDimensions,
     rasterWalls,
     sampleOffset,
+    openingMasks,
+    supplementedWallIds,
+    isColoredPlan,
+    exteriorWallIds,
   )
   const candidates = {
     guideId: guide.id,
@@ -1715,9 +2905,13 @@ export function buildGuideDetectionDebugSnapshot(
       structuralVertical: selectedMasks.vertical,
     },
     rasterWalls,
+    rasterWallStages,
     sampleDimensions,
     sampleOffset,
+    splitWallIds: [...splitWallIds],
     structureBounds,
+    supplementalRasterWalls: thinLineResult.rasterWallStages.deduped,
+    supplementedWallIds: [...supplementedWallIds],
   }
 }
 
@@ -1845,4 +3039,46 @@ export function applyDetectedOpenings(
   }
 
   return createdCount
+}
+
+export function applyDetectedGuideModel(
+  levelId: AnyNodeId,
+  candidates: GuideDetectionCandidates,
+  createNode: CreateNode,
+) {
+  const selectedCandidates = getSelectedGuideDetectionCandidates(candidates)
+  const selectedWallIds = new Set(selectedCandidates.walls.map((wall) => wall.id))
+  const appliedWallEntries = Object.entries(candidates.appliedWallIds ?? {}).filter(
+    ([candidateId]) => selectedWallIds.has(candidateId),
+  ) as Array<[string, WallNodeId]>
+  const wallIdMap = new Map<string, WallNodeId>(appliedWallEntries)
+  const missingWalls = selectedCandidates.walls.filter((wall) => !wallIdMap.has(wall.id))
+
+  if (missingWalls.length > 0) {
+    const createdWallIds = applyDetectedWalls(
+      levelId,
+      {
+        ...selectedCandidates,
+        selectedWallIds: missingWalls.map((wall) => wall.id),
+        walls: missingWalls,
+      },
+      createNode,
+    )
+    for (const [candidateId, wallId] of createdWallIds) {
+      wallIdMap.set(candidateId, wallId)
+    }
+  }
+
+  const openingCount = applyDetectedOpenings(
+    selectedCandidates,
+    wallIdMap,
+    createNode,
+    selectedCandidates.walls,
+  )
+
+  return {
+    openingCount,
+    wallCount: wallIdMap.size,
+    wallIdMap,
+  }
 }

@@ -33,121 +33,19 @@ import { EDITOR_LAYER } from '../../../lib/constants'
 import { sfxEmitter } from '../../../lib/sfx-bus'
 import useEditor from '../../../store/use-editor'
 import { CursorSphere } from '../shared/cursor-sphere'
+import {
+  type BoxSelectBounds,
+  pointInBounds,
+  polygonIntersectsBounds,
+  segmentIntersectsBounds,
+  sketchNodeIntersectsBounds,
+} from './box-select-geometry'
 
 /**
  * Module-level flag to prevent the SelectionManager from deselecting
  * on the grid:click that fires right after a box-select drag completes.
  */
 export let boxSelectHandled = false
-
-// ── Geometry helpers ────────────────────────────────────────────────────────
-
-type Bounds = { minX: number; maxX: number; minZ: number; maxZ: number }
-
-function pointInBounds(x: number, z: number, b: Bounds): boolean {
-  return x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ
-}
-
-function segmentsIntersect(
-  ax1: number,
-  az1: number,
-  ax2: number,
-  az2: number,
-  bx1: number,
-  bz1: number,
-  bx2: number,
-  bz2: number,
-): boolean {
-  const d1 = cross(bx1, bz1, bx2, bz2, ax1, az1)
-  const d2 = cross(bx1, bz1, bx2, bz2, ax2, az2)
-  const d3 = cross(ax1, az1, ax2, az2, bx1, bz1)
-  const d4 = cross(ax1, az1, ax2, az2, bx2, bz2)
-
-  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) {
-    return true
-  }
-
-  if (d1 === 0 && onSeg(bx1, bz1, bx2, bz2, ax1, az1)) return true
-  if (d2 === 0 && onSeg(bx1, bz1, bx2, bz2, ax2, az2)) return true
-  if (d3 === 0 && onSeg(ax1, az1, ax2, az2, bx1, bz1)) return true
-  if (d4 === 0 && onSeg(ax1, az1, ax2, az2, bx2, bz2)) return true
-
-  return false
-}
-
-function cross(ax: number, az: number, bx: number, bz: number, cx: number, cz: number): number {
-  return (bx - ax) * (cz - az) - (bz - az) * (cx - ax)
-}
-
-function onSeg(ax: number, az: number, bx: number, bz: number, cx: number, cz: number): boolean {
-  return (
-    Math.min(ax, bx) <= cx &&
-    cx <= Math.max(ax, bx) &&
-    Math.min(az, bz) <= cz &&
-    cz <= Math.max(az, bz)
-  )
-}
-
-function segmentIntersectsBounds(
-  x1: number,
-  z1: number,
-  x2: number,
-  z2: number,
-  b: Bounds,
-): boolean {
-  if (pointInBounds(x1, z1, b) || pointInBounds(x2, z2, b)) return true
-
-  const edges: [number, number, number, number][] = [
-    [b.minX, b.minZ, b.maxX, b.minZ],
-    [b.maxX, b.minZ, b.maxX, b.maxZ],
-    [b.maxX, b.maxZ, b.minX, b.maxZ],
-    [b.minX, b.maxZ, b.minX, b.minZ],
-  ]
-  for (const [ex1, ez1, ex2, ez2] of edges) {
-    if (segmentsIntersect(x1, z1, x2, z2, ex1, ez1, ex2, ez2)) return true
-  }
-  return false
-}
-
-function polygonIntersectsBounds(polygon: [number, number][], b: Bounds): boolean {
-  if (polygon.some(([x, z]) => pointInBounds(x, z, b))) return true
-
-  const corners: [number, number][] = [
-    [b.minX, b.minZ],
-    [b.maxX, b.minZ],
-    [b.maxX, b.maxZ],
-    [b.minX, b.maxZ],
-  ]
-  if (corners.some(([cx, cz]) => pointInPolygon(cx, cz, polygon))) return true
-
-  const edges: [number, number, number, number][] = [
-    [b.minX, b.minZ, b.maxX, b.minZ],
-    [b.maxX, b.minZ, b.maxX, b.maxZ],
-    [b.maxX, b.maxZ, b.minX, b.maxZ],
-    [b.minX, b.maxZ, b.minX, b.minZ],
-  ]
-  for (let i = 0; i < polygon.length; i++) {
-    const [px1, pz1] = polygon[i]!
-    const [px2, pz2] = polygon[(i + 1) % polygon.length]!
-    for (const [ex1, ez1, ex2, ez2] of edges) {
-      if (segmentsIntersect(px1, pz1, px2, pz2, ex1, ez1, ex2, ez2)) return true
-    }
-  }
-
-  return false
-}
-
-function pointInPolygon(x: number, z: number, polygon: [number, number][]): boolean {
-  let inside = false
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const [xi, zi] = polygon[i]!
-    const [xj, zj] = polygon[j]!
-    if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) {
-      inside = !inside
-    }
-  }
-  return inside
-}
 
 // ── Node-in-bounds checks ───────────────────────────────────────────────────
 
@@ -161,7 +59,7 @@ function getNodeWorldXZ(nodeId: string): [number, number] | null {
   return [_tempVec.x, _tempVec.z]
 }
 
-function objectBoundsIntersectsBounds(nodeId: string, bounds: Bounds): boolean {
+function objectBoundsIntersectsBounds(nodeId: string, bounds: BoxSelectBounds): boolean {
   const obj = sceneRegistry.nodes.get(nodeId)
   if (!obj) return false
 
@@ -170,7 +68,13 @@ function objectBoundsIntersectsBounds(nodeId: string, bounds: Bounds): boolean {
 
   if (_tempBox.isEmpty()) {
     const xz = getNodeWorldXZ(nodeId)
-    return Boolean(xz && pointInBounds(xz[0], xz[1], bounds))
+    return Boolean(
+      xz &&
+        xz[0] >= bounds.minX &&
+        xz[0] <= bounds.maxX &&
+        xz[1] >= bounds.minZ &&
+        xz[1] <= bounds.maxZ,
+    )
   }
 
   return !(
@@ -181,7 +85,7 @@ function objectBoundsIntersectsBounds(nodeId: string, bounds: Bounds): boolean {
   )
 }
 
-function collectNodeIdsInBounds(bounds: Bounds): string[] {
+function collectNodeIdsInBounds(bounds: BoxSelectBounds): string[] {
   const { levelId } = useViewer.getState().selection
   const { nodes } = useScene.getState()
   const { phase, structureLayer } = useEditor.getState()
@@ -238,6 +142,10 @@ function collectNodeIdsInBounds(bounds: Bounds): string[] {
         }
       } else if (node.type === 'stair') {
         if (objectBoundsIntersectsBounds(node.id, bounds)) {
+          result.push(node.id)
+        }
+      } else if (node.type === 'sketch-line' || node.type === 'sketch-circle') {
+        if (sketchNodeIntersectsBounds(node, bounds)) {
           result.push(node.id)
         }
       }
@@ -484,7 +392,7 @@ const BoxSelectToolInner: React.FC = () => {
         const point = raycastToGround(e)
         if (point) setSnappedPoint(currentPoint.current, point.x, point.y, point.z)
 
-        const bounds: Bounds = {
+        const bounds: BoxSelectBounds = {
           minX: Math.min(startPoint.current.x, currentPoint.current.x),
           maxX: Math.max(startPoint.current.x, currentPoint.current.x),
           minZ: Math.min(startPoint.current.z, currentPoint.current.z),
@@ -579,7 +487,7 @@ const BoxSelectToolInner: React.FC = () => {
         }
         previousGridPosition.current = nextGridPosition
 
-        const bounds: Bounds = {
+        const bounds: BoxSelectBounds = {
           minX: Math.min(startPoint.current.x, currentPoint.current.x),
           maxX: Math.max(startPoint.current.x, currentPoint.current.x),
           minZ: Math.min(startPoint.current.z, currentPoint.current.z),

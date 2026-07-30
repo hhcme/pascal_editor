@@ -86,6 +86,7 @@ const DEFAULT_SKETCH_LINEAR_PATTERN_SPACING = 1
 const DEFAULT_SKETCH_LINEAR_PATTERN_COUNT = 3
 const DEFAULT_SKETCH_CORNER_DISTANCE = 0.5
 const DEFAULT_SKETCH_EXTRUDE_DEPTH = 2.8
+const DEFAULT_FACE_SKETCH_EXTRUDE_DEPTH = 0.2
 const DEFAULT_SKETCH_REVOLVE_ANGLE = Math.PI * 2
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -781,13 +782,17 @@ export function useFloorplanSketchActions({
 
       const { createNode, nodes } = useScene.getState()
       const sketchPlane = getSketchPlaneFromProfile(selectedSketchProfile, nodes)
+      const extrudeDepth =
+        sketchPlane?.kind === 'feature-face'
+          ? DEFAULT_FACE_SKETCH_EXTRUDE_DEPTH
+          : DEFAULT_SKETCH_EXTRUDE_DEPTH
       const featureCount = Object.values(nodes).filter((node) => node.type === 'feature').length
       const feature = FeatureNodeSchema.parse({
         name: `拉伸 ${featureCount + 1}`,
         kind: 'extrude',
         operation: 'add',
         profile: buildFeatureProfileFromSketchProfile(selectedSketchProfile),
-        depth: DEFAULT_SKETCH_EXTRUDE_DEPTH,
+        depth: extrudeDepth,
         baseElevation: getSketchPlaneBaseElevation(sketchPlane),
         metadata: {
           sketchSource: {

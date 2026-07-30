@@ -174,6 +174,7 @@ export function DoorPanel() {
       contentPadding: node.contentPadding,
       hingesSide: node.hingesSide,
       swingDirection: node.swingDirection,
+      openAngle: node.openAngle,
       threshold: node.threshold,
       thresholdHeight: node.thresholdHeight,
       handle: node.handle,
@@ -343,6 +344,16 @@ export function DoorPanel() {
 
           <PanelSection title="Swing">
             <div className="flex flex-col gap-2 px-1 pb-1">
+              <SliderControl
+                label="Open Angle"
+                max={120}
+                min={0}
+                onChange={(v) => handleUpdate({ openAngle: v })}
+                precision={0}
+                step={5}
+                unit="°"
+                value={Math.round(node.openAngle)}
+              />
               <div className="space-y-1">
                 <span className="font-semibold text-[11px] text-muted-foreground">
                   Hinges Side

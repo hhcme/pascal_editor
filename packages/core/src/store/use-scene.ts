@@ -157,14 +157,16 @@ function migrateStairSurfaceMaterials(node: Record<string, any>) {
     if (node.treadMaterial !== undefined || typeof node.treadMaterialPreset === 'string') {
       return {
         material: node.treadMaterial,
-        materialPreset: typeof node.treadMaterialPreset === 'string' ? node.treadMaterialPreset : undefined,
+        materialPreset:
+          typeof node.treadMaterialPreset === 'string' ? node.treadMaterialPreset : undefined,
       }
     }
 
     if (node.sideMaterial !== undefined || typeof node.sideMaterialPreset === 'string') {
       return {
         material: node.sideMaterial,
-        materialPreset: typeof node.sideMaterialPreset === 'string' ? node.sideMaterialPreset : undefined,
+        materialPreset:
+          typeof node.sideMaterialPreset === 'string' ? node.sideMaterialPreset : undefined,
       }
     }
 
@@ -337,6 +339,10 @@ function migrateNodes(nodes: Record<string, any>): Record<string, AnyNode> {
 
     if (node.type === 'wall') {
       patchedNodes[id] = migrateWallSurfaceMaterials(patchedNodes[id])
+    }
+
+    if (node.type === 'door' && !Number.isFinite(node.openAngle)) {
+      patchedNodes[id] = { ...patchedNodes[id], openAngle: 0 }
     }
 
     if (node.type === 'roof') {

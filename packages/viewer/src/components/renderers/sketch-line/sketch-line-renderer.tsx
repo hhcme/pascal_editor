@@ -1,8 +1,12 @@
 import {
+  type AnyNode,
+  type FeatureNode,
+  getRenderableFeatureStep,
   getSketchLineChordLength,
   type SketchLineNode,
   sampleSketchLineCenterline,
   useRegistry,
+  useScene,
 } from '@pascal-app/core'
 import { useEffect, useMemo, useRef } from 'react'
 import { Color, DoubleSide, type Group, Matrix4, Quaternion, Vector3 } from 'three'
@@ -137,12 +141,28 @@ type RenderSketchPlane = {
   zAxis: [number, number, number]
 }
 
+type SceneNodes = Record<string, AnyNode | undefined>
+
+type FeatureFaceSketchPlane = {
+  kind: 'feature-face'
+  targetNodeId?: string
+  space?: 'target-local' | 'scene'
+  origin: [number, number, number]
+  uAxis: [number, number, number]
+  vAxis: [number, number, number]
+  normal: [number, number, number]
+}
+
 function isNumberTuple3(value: unknown): value is [number, number, number] {
   return (
     Array.isArray(value) &&
     value.length === 3 &&
     value.every((entry) => typeof entry === 'number' && Number.isFinite(entry))
   )
+}
+
+function getFeatureFacePlaneSpace(value: unknown): FeatureFaceSketchPlane['space'] {
+  return value === 'scene' || value === 'target-local' ? value : undefined
 }
 
 function getSketchPlaneElevation(node: SketchLineNode): number {
@@ -160,33 +180,96 @@ function getSketchPlaneElevation(node: SketchLineNode): number {
   return typeof elevation === 'number' && Number.isFinite(elevation) ? elevation : 0
 }
 
-function getRenderSketchPlane(node: SketchLineNode): RenderSketchPlane {
-  const metadata = node.metadata
-  if (typeof metadata === 'object' && metadata !== null && 'sketchPlane' in metadata) {
-    const sketchPlane = (metadata as Record<string, unknown>).sketchPlane
-    if (typeof sketchPlane === 'object' && sketchPlane !== null) {
-      const plane = sketchPlane as Record<string, unknown>
-      if (
-        plane.kind === 'feature-face' &&
-        isNumberTuple3(plane.origin) &&
-        isNumberTuple3(plane.uAxis) &&
-        isNumberTuple3(plane.vAxis) &&
-        isNumberTuple3(plane.normal)
-      ) {
-        const origin = plane.origin
-        const uAxis = plane.uAxis
-        const vAxis = plane.vAxis
-        const normal = plane.normal
-        const offsetOrigin = origin.map(
-          (value, index) => value + normal[index]! * SKETCH_LINE_Y_OFFSET,
-        ) as [number, number, number]
-        return {
-          origin: offsetOrigin,
-          xAxis: uAxis,
-          yAxis: normal,
-          zAxis: vAxis,
-        }
-      }
+function getFeatureSketchPlane(metadata: unknown): FeatureFaceSketchPlane | null {
+  if (!(typeof metadata === 'object' && metadata !== null && 'sketchPlane' in metadata)) {
+    return null
+  }
+
+  const sketchPlane = (metadata as Record<string, unknown>).sketchPlane
+  if (!(typeof sketchPlane === 'object' && sketchPlane !== null)) {
+    return null
+  }
+
+  const plane = sketchPlane as Record<string, unknown>
+  if (
+    plane.kind === 'feature-face' &&
+    isNumberTuple3(plane.origin) &&
+    isNumberTuple3(plane.uAxis) &&
+    isNumberTuple3(plane.vAxis) &&
+    isNumberTuple3(plane.normal)
+  ) {
+    return {
+      kind: 'feature-face',
+      targetNodeId: typeof plane.targetNodeId === 'string' ? plane.targetNodeId : undefined,
+      space: getFeatureFacePlaneSpace(plane.space),
+      origin: plane.origin,
+      uAxis: plane.uAxis,
+      vAxis: plane.vAxis,
+      normal: plane.normal,
+    }
+  }
+
+  return null
+}
+
+function composeFeatureFacePlaneMatrix(
+  sketchPlane: FeatureFaceSketchPlane,
+  nodes: SceneNodes,
+  visited = new Set<string>(),
+): Matrix4 {
+  const planeMatrix = new Matrix4()
+    .makeBasis(
+      new Vector3(...sketchPlane.uAxis),
+      new Vector3(...sketchPlane.normal),
+      new Vector3(...sketchPlane.vAxis),
+    )
+    .setPosition(new Vector3(...sketchPlane.origin))
+
+  const targetNode = sketchPlane.targetNodeId ? nodes[sketchPlane.targetNodeId] : null
+  if (sketchPlane.space !== 'scene' && targetNode?.type === 'feature') {
+    planeMatrix.premultiply(composeFeatureBaseMatrix(targetNode, nodes, visited))
+  }
+
+  return planeMatrix
+}
+
+function composeFeatureBaseMatrix(
+  node: FeatureNode,
+  nodes: SceneNodes,
+  visited = new Set<string>(),
+): Matrix4 {
+  if (visited.has(node.id)) {
+    return new Matrix4().makeTranslation(0, node.baseElevation, 0)
+  }
+  visited.add(node.id)
+
+  const sketchPlane = getFeatureSketchPlane(node.metadata)
+  if (sketchPlane?.kind === 'feature-face') {
+    return composeFeatureFacePlaneMatrix(sketchPlane, nodes, visited)
+  }
+
+  const baseElevation = getRenderableFeatureStep(node)?.baseElevation ?? node.baseElevation
+  return new Matrix4().makeTranslation(0, baseElevation, 0)
+}
+
+function getRenderSketchPlane(node: SketchLineNode, nodes: SceneNodes): RenderSketchPlane {
+  const sketchPlane = getFeatureSketchPlane(node.metadata)
+  if (sketchPlane?.kind === 'feature-face') {
+    const planeMatrix = composeFeatureFacePlaneMatrix(sketchPlane, nodes)
+    const origin = new Vector3()
+    const xAxis = new Vector3()
+    const yAxis = new Vector3()
+    const zAxis = new Vector3()
+    planeMatrix.extractBasis(xAxis, yAxis, zAxis)
+    origin
+      .setFromMatrixPosition(planeMatrix)
+      .addScaledVector(yAxis.clone().normalize(), SKETCH_LINE_Y_OFFSET)
+
+    return {
+      origin: origin.toArray() as [number, number, number],
+      xAxis: xAxis.normalize().toArray() as [number, number, number],
+      yAxis: yAxis.normalize().toArray() as [number, number, number],
+      zAxis: zAxis.normalize().toArray() as [number, number, number],
     }
   }
 
@@ -199,8 +282,10 @@ function getRenderSketchPlane(node: SketchLineNode): RenderSketchPlane {
 }
 
 function useSketchPlaneTransform(node: SketchLineNode) {
+  const sceneNodes = useScene((state) => state.nodes as SceneNodes)
+
   return useMemo(() => {
-    const plane = getRenderSketchPlane(node)
+    const plane = getRenderSketchPlane(node, sceneNodes)
     const matrix = new Matrix4().makeBasis(
       new Vector3(...plane.xAxis),
       new Vector3(...plane.yAxis),
@@ -212,7 +297,7 @@ function useSketchPlaneTransform(node: SketchLineNode) {
       position: position.toArray() as [number, number, number],
       quaternion,
     }
-  }, [node])
+  }, [node, sceneNodes])
 }
 
 export const SketchLineRenderer = ({ node }: { node: SketchLineNode }) => {

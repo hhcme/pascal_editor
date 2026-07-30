@@ -8,9 +8,6 @@ export const DoorRenderer = ({ node }: { node: DoorNode }) => {
   const ref = useRef<Mesh>(null!)
 
   useRegistry(node.id, 'door', ref)
-  useLayoutEffect(() => {
-    useScene.getState().markDirty(node.id)
-  }, [node.id])
   const handlers = useNodeEvents(node, 'door')
   const isTransient = !!(node.metadata as Record<string, unknown> | null)?.isTransient
 
@@ -19,6 +16,11 @@ export const DoorRenderer = ({ node }: { node: DoorNode }) => {
     if (!mat) return DEFAULT_DOOR_MATERIAL
     return createMaterial(mat)
   }, [node.material, node.material?.preset, node.material?.properties, node.material?.texture])
+
+  useLayoutEffect(() => {
+    ref.current.userData.doorMaterial = material
+    useScene.getState().markDirty(node.id)
+  }, [material, node.id])
 
   return (
     <mesh

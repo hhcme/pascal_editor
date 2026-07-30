@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import {
+  applyDetectedGuideModel,
   applyDetectedOpenings,
   applyDetectedWalls,
   detectGuideCandidates,
@@ -58,6 +59,7 @@ const REFERENCE_PANEL_COPY = {
     clearDetectionRegion: '清除范围',
     detectWallsAndOpenings: '识别墙体 / 开口',
     detecting: '识别中…',
+    detectionFailed: '识别失败，请确认参考图仍可访问后重试。',
     detectionCandidates: '识别候选结果',
     detectionReviewHint: '先确认候选，再应用到模型。取消墙体会同时跳过其门窗。',
     detectionRegion: '识别范围',
@@ -65,6 +67,7 @@ const REFERENCE_PANEL_COPY = {
     detectionRegionLockedHint: '已设置识别范围，识别时只分析框选区域。',
     detectionSummary: (wallCount: number, openingCount: number) =>
       `${wallCount} 个墙体候选 · ${openingCount} 个开口候选`,
+    door: '门',
     doorsAndWindows: (doorCount: number, windowCount: number) =>
       `${doorCount} 门 · ${windowCount} 窗`,
     guideCalibrationPromptAction: '开始两点校准',
@@ -76,9 +79,12 @@ const REFERENCE_PANEL_COPY = {
     guideLockPromptLater: '稍后',
     guideLockPromptTitle: '建议锁定参考图',
     guideImage: '参考图',
+    generate3D: (wallCount: number, openingCount: number) =>
+      `生成 3D · ${wallCount} 墙 / ${openingCount} 开口`,
     lockGuide: '锁定参考图',
     lockedHint: '参考图已锁定。解锁前不可移动、旋转或缩放。',
     opacity: '不透明度',
+    openingKind: '开口类型',
     position: '位置',
     positionAxisSuffix: '位置',
     rotation: '旋转',
@@ -95,6 +101,7 @@ const REFERENCE_PANEL_COPY = {
     tracing: '描图',
     unlockGuide: '解锁参考图',
     unlockedHint: '对齐后建议锁定参考图，避免描图时误拖动。',
+    window: '窗',
     cancelDetectionRegion: '取消框选',
   },
   en: {
@@ -107,6 +114,7 @@ const REFERENCE_PANEL_COPY = {
     clearDetectionRegion: 'Clear Region',
     detectWallsAndOpenings: 'Detect Walls / Openings',
     detecting: 'Detecting…',
+    detectionFailed: 'Detection failed. Make sure the guide image is still available and try again.',
     detectionCandidates: 'Detection candidates',
     detectionReviewHint: 'Review candidates before applying them to the model. Clearing a wall also skips its openings.',
     detectionRegion: 'Detection Region',
@@ -114,6 +122,7 @@ const REFERENCE_PANEL_COPY = {
     detectionRegionLockedHint: 'A detection region is set. Recognition will only analyze the boxed area.',
     detectionSummary: (wallCount: number, openingCount: number) =>
       `${wallCount} wall candidates · ${openingCount} opening candidates`,
+    door: 'Door',
     doorsAndWindows: (doorCount: number, windowCount: number) =>
       `${doorCount} doors · ${windowCount} windows`,
     guideCalibrationPromptAction: 'Start 2-point calibration',
@@ -127,9 +136,12 @@ const REFERENCE_PANEL_COPY = {
     guideLockPromptLater: 'Later',
     guideLockPromptTitle: 'Lock The Guide',
     guideImage: 'Guide Image',
+    generate3D: (wallCount: number, openingCount: number) =>
+      `Generate 3D · ${wallCount} walls / ${openingCount} openings`,
     lockGuide: 'Lock Guide',
     lockedHint: 'Guide is locked. Move / rotate / scale is disabled until you unlock it.',
     opacity: 'Opacity',
+    openingKind: 'Opening type',
     position: 'Position',
     positionAxisSuffix: 'pos',
     rotation: 'Rotation',
@@ -146,6 +158,7 @@ const REFERENCE_PANEL_COPY = {
     tracing: 'Tracing',
     unlockGuide: 'Unlock Guide',
     unlockedHint: 'Lock the guide after alignment to avoid accidental drags while tracing.',
+    window: 'Window',
     cancelDetectionRegion: 'Cancel Boxing',
   },
 } satisfies Record<
@@ -160,12 +173,14 @@ const REFERENCE_PANEL_COPY = {
     clearDetectionRegion: string
     detectWallsAndOpenings: string
     detecting: string
+    detectionFailed: string
     detectionCandidates: string
     detectionReviewHint: string
     detectionRegion: string
     detectionRegionHint: string
     detectionRegionLockedHint: string
     detectionSummary: (wallCount: number, openingCount: number) => string
+    door: string
     doorsAndWindows: (doorCount: number, windowCount: number) => string
     guideCalibrationPromptAction: string
     guideCalibrationPromptBody: string
@@ -176,9 +191,11 @@ const REFERENCE_PANEL_COPY = {
     guideLockPromptLater: string
     guideLockPromptTitle: string
     guideImage: string
+    generate3D: (wallCount: number, openingCount: number) => string
     lockGuide: string
     lockedHint: string
     opacity: string
+    openingKind: string
     position: string
     positionAxisSuffix: string
     rotation: string
@@ -194,6 +211,7 @@ const REFERENCE_PANEL_COPY = {
     tracing: string
     unlockGuide: string
     unlockedHint: string
+    window: string
     cancelDetectionRegion: string
   }
 >
@@ -203,6 +221,7 @@ export function ReferencePanel() {
   const copy = REFERENCE_PANEL_COPY[language]
   const selectedReferenceId = useEditor((s) => s.selectedReferenceId)
   const setSelectedReferenceId = useEditor((s) => s.setSelectedReferenceId)
+  const setViewMode = useEditor((s) => s.setViewMode)
   const updateNode = useScene((s) => s.updateNode)
   const createNode = useScene((s) => s.createNode)
   const calibrationDraft = useDeliveryStore((s) => s.calibrationDraft)
@@ -218,6 +237,7 @@ export function ReferencePanel() {
   const detectionCandidates = useDeliveryStore((s) => s.detectionCandidates)
   const hoveredDetectionCandidateId = useDeliveryStore((s) => s.hoveredDetectionCandidateId)
   const setDetectionCandidates = useDeliveryStore((s) => s.setDetectionCandidates)
+  const setDetectionOpeningKind = useDeliveryStore((s) => s.setDetectionOpeningKind)
   const setDetectionWallSelected = useDeliveryStore((s) => s.setDetectionWallSelected)
   const setDetectionOpeningSelected = useDeliveryStore((s) => s.setDetectionOpeningSelected)
   const setHoveredDetectionCandidateId = useDeliveryStore((s) => s.setHoveredDetectionCandidateId)
@@ -226,6 +246,7 @@ export function ReferencePanel() {
   )
   const clearDetectionCandidates = useDeliveryStore((s) => s.clearDetectionCandidates)
   const [isDetecting, setIsDetecting] = useState(false)
+  const [detectionError, setDetectionError] = useState<string | null>(null)
 
   const node = useScene((s) =>
     selectedReferenceId
@@ -262,16 +283,22 @@ export function ReferencePanel() {
     }
 
     setIsDetecting(true)
+    setDetectionError(null)
     try {
       const candidates = await detectGuideCandidates(node)
       setDetectionCandidates(candidates)
+    } catch {
+      setDetectionError(copy.detectionFailed)
     } finally {
       setIsDetecting(false)
     }
-  }, [node, setDetectionCandidates])
+  }, [copy.detectionFailed, node, setDetectionCandidates])
 
   const handleApplyDetectedWalls = useCallback(() => {
     if (!(node?.type === 'guide' && node.parentId && detectionCandidates?.guideId === node.id)) {
+      return
+    }
+    if (Object.keys(detectionCandidates.appliedWallIds ?? {}).length > 0) {
       return
     }
 
@@ -302,6 +329,29 @@ export function ReferencePanel() {
     clearDetectionCandidates()
   }, [clearDetectionCandidates, createNode, detectionCandidates, node])
 
+  const handleGenerateDetectedModel = useCallback(() => {
+    if (!(node?.type === 'guide' && node.parentId && detectionCandidates?.guideId === node.id)) {
+      return
+    }
+
+    const selectedCandidates = getSelectedGuideDetectionCandidates(detectionCandidates)
+    if (selectedCandidates.walls.length === 0) {
+      return
+    }
+
+    applyDetectedGuideModel(node.parentId as AnyNodeId, selectedCandidates, createNode)
+    clearDetectionCandidates()
+    setSelectedReferenceId(null)
+    setViewMode('3d')
+  }, [
+    clearDetectionCandidates,
+    createNode,
+    detectionCandidates,
+    node,
+    setSelectedReferenceId,
+    setViewMode,
+  ])
+
   const isScan = node?.type === 'scan'
   const isGuide = node?.type === 'guide'
   const isCalibrationActive = calibrationDraft?.guideId === node?.id
@@ -325,6 +375,7 @@ export function ReferencePanel() {
   const doorCount = guideCandidates?.openings.filter((opening) => opening.kind === 'door').length ?? 0
   const windowCount =
     guideCandidates?.openings.filter((opening) => opening.kind === 'window').length ?? 0
+  const hasAppliedWalls = Object.keys(guideCandidates?.appliedWallIds ?? {}).length > 0
   const shouldShowCalibrationPrompt =
     node?.type === 'guide' &&
     calibrationPromptGuideId === node.id &&
@@ -497,6 +548,15 @@ export function ReferencePanel() {
             />
           </ActionGroup>
 
+          {detectionError ? (
+            <div
+              className="rounded-md border border-destructive/35 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+              role="alert"
+            >
+              {detectionError}
+            </div>
+          ) : null}
+
           {guideCandidates ? (
             <>
               <div className="rounded-md border border-border/55 bg-card px-3 py-2 text-xs">
@@ -517,9 +577,19 @@ export function ReferencePanel() {
 
               <ActionGroup className="pt-1">
                 <ActionButton
+                  className="border-primary bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/85"
+                  icon={<Box className="h-4 w-4" />}
+                  label={copy.generate3D(selectedWallCount, selectedOpeningCount)}
+                  onClick={handleGenerateDetectedModel}
+                  disabled={!selectedWallCount}
+                />
+              </ActionGroup>
+
+              <ActionGroup className="pt-1">
+                <ActionButton
                   label={`${copy.applyWalls} ${selectedWallCount}`}
                   onClick={handleApplyDetectedWalls}
-                  disabled={!selectedWallCount}
+                  disabled={!selectedWallCount || hasAppliedWalls}
                 />
                 <ActionButton
                   label={`${copy.applyOpenings} ${selectedOpeningCount}`}
@@ -534,11 +604,13 @@ export function ReferencePanel() {
 
               <ActionGroup className="pt-1">
                 <ActionButton
+                  disabled={hasAppliedWalls}
                   icon={<CheckSquare className="h-4 w-4" />}
                   label={copy.selectAllCandidates}
                   onClick={() => setAllDetectionCandidatesSelected(true)}
                 />
                 <ActionButton
+                  disabled={hasAppliedWalls}
                   icon={<Square className="h-4 w-4" />}
                   label={copy.selectNoCandidates}
                   onClick={() => setAllDetectionCandidatesSelected(false)}
@@ -578,6 +650,7 @@ export function ReferencePanel() {
                           <input
                             checked={selectedWall}
                             className="h-3.5 w-3.5 accent-primary"
+                            disabled={hasAppliedWalls}
                             onChange={(event) =>
                               setDetectionWallSelected(wall.id, event.target.checked)
                             }
@@ -598,7 +671,7 @@ export function ReferencePanel() {
                               const isOpeningHovered = hoveredDetectionCandidateId === opening.id
 
                               return (
-                                <label
+                                <div
                                   className={cn(
                                     'flex items-center gap-2 rounded px-1 py-0.5 text-muted-foreground transition-colors',
                                     isOpeningHovered && 'bg-primary/10 text-foreground',
@@ -614,6 +687,7 @@ export function ReferencePanel() {
                                   }}
                                 >
                                   <input
+                                    aria-label={`${opening.kind === 'door' ? copy.door : copy.window} ${opening.width.toFixed(2)} m`}
                                     checked={selectedOpeningIds.has(opening.id)}
                                     className="h-3.5 w-3.5 accent-primary"
                                     disabled={!selectedWall}
@@ -623,10 +697,23 @@ export function ReferencePanel() {
                                     type="checkbox"
                                   />
                                   <DoorOpen className="h-3.5 w-3.5" />
-                                  <span>
-                                    {opening.kind} · {opening.width.toFixed(2)} m
-                                  </span>
-                                </label>
+                                  <select
+                                    aria-label={copy.openingKind}
+                                    className="h-6 rounded border border-border/60 bg-background px-1 text-[11px] text-foreground"
+                                    disabled={!selectedWall}
+                                    onChange={(event) =>
+                                      setDetectionOpeningKind(
+                                        opening.id,
+                                        event.target.value as 'door' | 'window',
+                                      )
+                                    }
+                                    value={opening.kind}
+                                  >
+                                    <option value="door">{copy.door}</option>
+                                    <option value="window">{copy.window}</option>
+                                  </select>
+                                  <span>· {opening.width.toFixed(2)} m</span>
+                                </div>
                               )
                             })}
                           </div>

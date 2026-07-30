@@ -1857,8 +1857,7 @@ export function CharacterActorSystem() {
     const selectedPerson =
       people.find((person) => person.id === current.selectedPersonId) ?? people[0]
     if (!(current.enabled && selectedPerson)) return
-    const actor = actorRefs.current.get(selectedPerson.id)
-    if (!actor) return
+    const selectedActor = actorRefs.current.get(selectedPerson.id)
 
     const keys = keysRef.current
     const wantsMove = keys.forward || keys.backward || keys.left || keys.right
@@ -1867,7 +1866,9 @@ export function CharacterActorSystem() {
     const selectedId = selectedPerson.id
 
     const now = performance.now() / 1000
-    const selectedWaterArea = getCharacterWaterAreaAt(actor.position.x, actor.position.z, collision)
+    const selectedWaterArea = selectedActor
+      ? getCharacterWaterAreaAt(selectedActor.position.x, selectedActor.position.z, collision)
+      : null
     const selectedWaterMotion = selectedWaterArea
       ? getWaterMotion(selectedPerson, now, waterRuntimeRef)
       : null
@@ -1875,7 +1876,8 @@ export function CharacterActorSystem() {
       delete waterRuntimeRef.current[selectedId]
     }
     const selectedIsImmobile = selectedWaterMotion === 'dead'
-    const selectedIsKeyboardControlled = (wantsMove || wantsCrouch || keys.jump) && !selectedIsImmobile
+    const selectedIsKeyboardControlled =
+      Boolean(selectedActor) && (wantsMove || wantsCrouch || keys.jump) && !selectedIsImmobile
     const roamUpdates = new Map<string, { motion: CharacterMotion; position: [number, number, number] }>()
     const roamingPeople = people.filter((person) => person.roam && person.enabled)
 
@@ -1990,6 +1992,28 @@ export function CharacterActorSystem() {
       }
     }
 
+    if (!selectedActor) {
+      if (roamUpdates.size > 0) {
+        const nextPeople = people.map((person) =>
+          roamUpdates.has(person.id)
+            ? {
+                ...person,
+                motion: roamUpdates.get(person.id)?.motion ?? person.motion,
+                position: roamUpdates.get(person.id)?.position ?? person.position,
+              }
+            : person,
+        )
+        useViewer.setState({
+          characterActor: {
+            ...current,
+            people: nextPeople,
+          },
+        })
+      }
+      return
+    }
+
+    const actor = selectedActor
     const jumpOffset = jumpOffsetRef.current[selectedId] ?? 0
     const jumpVelocity = jumpVelocityRef.current[selectedId] ?? 0
 

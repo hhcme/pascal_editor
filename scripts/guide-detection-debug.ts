@@ -115,6 +115,9 @@ async function getImageInputs(input: string, excludedRoots: string[] = []) {
 
     for (const entry of entries) {
       const entryPath = join(current, entry.name)
+      if (entry.name.startsWith('._')) {
+        continue
+      }
       if (entry.isDirectory()) {
         if (isIgnoredDirectory(entryPath, excludedRoots)) {
           continue
@@ -342,12 +345,16 @@ function toJsonSummary(
     quality,
     candidates: snapshot.candidates,
     rasterWalls: snapshot.rasterWalls,
+    rasterWallStages: snapshot.rasterWallStages,
+    splitWallIds: snapshot.splitWallIds,
+    supplementalRasterWalls: snapshot.supplementalRasterWalls,
+    supplementedWallIds: snapshot.supplementedWallIds,
   }
 }
 
 type DebugQuality = {
   flags: string[]
-  score: number
+  score: number | null
   wallRecallEstimate: number | null
 }
 
@@ -391,7 +398,7 @@ function evaluateDebugQuality(input: {
 
   return {
     flags,
-    score: clampNumber(score, 0, 100),
+    score: wallRecallEstimate === null ? null : clampNumber(score, 0, 100),
     wallRecallEstimate,
   }
 }
@@ -409,7 +416,9 @@ function buildReportHtml(
   stats: ReturnType<typeof summarizeRuns>,
   outRoot: string,
 ) {
-  const rows = [...summaries].sort((left, right) => left.quality.score - right.quality.score)
+  const rows = [...summaries].sort(
+    (left, right) => (left.quality.score ?? Number.POSITIVE_INFINITY) - (right.quality.score ?? Number.POSITIVE_INFINITY),
+  )
 
   return `<!doctype html>
 <html lang="en">
@@ -453,7 +462,13 @@ function buildReportHtml(
         const outputPath = summary.output ? resolve(workspaceRoot, summary.output) : null
         const relOutput = outputPath ? relative(outRoot, outputPath).replaceAll('\\', '/') : null
         const articleClass =
-          summary.quality.score < 50 ? 'bad' : summary.quality.score < 75 ? 'warn' : ''
+          summary.quality.score === null
+            ? ''
+            : summary.quality.score < 50
+              ? 'bad'
+              : summary.quality.score < 75
+                ? 'warn'
+                : ''
         const imageBlock = relOutput
           ? `<div class="images">
               <figure><img src="${htmlEscape(relOutput)}/overlay.png" /><figcaption>overlay</figcaption></figure>
@@ -465,7 +480,7 @@ function buildReportHtml(
           <div class="meta">
             <div class="source">${htmlEscape(summary.source)}</div>
             <div class="metrics">
-              <span class="pill">score ${summary.quality.score}</span>
+              <span class="pill">score ${summary.quality.score ?? 'unscored'}</span>
               <span class="pill">${summary.mode}</span>
               <span class="pill">${summary.walls} walls</span>
               <span class="pill">${summary.openings} openings</span>
@@ -574,6 +589,14 @@ async function debugOne(
       writeMaskPng(snapshot.masks.structuralCombined, png.width, png.height),
     )
     await writeFile(
+      join(outDir, 'horizontal-wall-mask.png'),
+      writeMaskPng(snapshot.masks.structuralHorizontal, png.width, png.height),
+    )
+    await writeFile(
+      join(outDir, 'vertical-wall-mask.png'),
+      writeMaskPng(snapshot.masks.structuralVertical, png.width, png.height),
+    )
+    await writeFile(
       join(outDir, 'candidates.json'),
       `${JSON.stringify(
         toJsonSummary(snapshot, relative(workspaceRoot, inputPath), {
@@ -623,7 +646,11 @@ function summarizeRuns(
   const doorTotal = summaries.reduce((sum, summary) => sum + summary.doors, 0)
   const windowTotal = summaries.reduce((sum, summary) => sum + summary.windows, 0)
   const rasterWallTotal = summaries.reduce((sum, summary) => sum + summary.rasterWalls, 0)
-  const scoreTotal = summaries.reduce((sum, summary) => sum + summary.quality.score, 0)
+  const scoredSummaries = summaries.filter(
+    (summary): summary is typeof summary & { quality: DebugQuality & { score: number } } =>
+      summary.quality.score !== null,
+  )
+  const scoreTotal = scoredSummaries.reduce((sum, summary) => sum + summary.quality.score, 0)
 
   return {
     total,
@@ -632,7 +659,10 @@ function summarizeRuns(
     zeroWallImages: summaries.filter((summary) => summary.walls === 0).length,
     zeroOpeningImages: summaries.filter((summary) => summary.openings === 0).length,
     flaggedImages: summaries.filter((summary) => summary.quality.flags.length > 0).length,
-    avgQualityScore: Number((scoreTotal / safeTotal).toFixed(2)),
+    avgQualityScore:
+      scoredSummaries.length > 0
+        ? Number((scoreTotal / scoredSummaries.length).toFixed(2))
+        : null,
     avgWalls: Number((wallTotal / safeTotal).toFixed(2)),
     avgOpenings: Number((openingTotal / safeTotal).toFixed(2)),
     avgDoors: Number((doorTotal / safeTotal).toFixed(2)),

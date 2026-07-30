@@ -41,6 +41,7 @@ yarn-error.log*
 
 # Misc
 .DS_Store
+._*
 *.pem
 /.playwright-mcp
 og-test

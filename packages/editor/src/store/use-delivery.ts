@@ -68,6 +68,7 @@ type DeliveryState = {
   requestCalibrationPrompt: (guideId: GuideNode['id']) => void
   requestLockPrompt: (guideId: GuideNode['id']) => void
   setDetectionCandidates: (candidates: GuideDetectionCandidates | null) => void
+  setDetectionOpeningKind: (openingId: string, kind: GuideDetectionOpeningCandidate['kind']) => void
   setDetectionOpeningSelected: (openingId: string, selected: boolean) => void
   setDetectionWallSelected: (wallId: string, selected: boolean) => void
   setHoveredDetectionCandidateId: (candidateId: string | null) => void
@@ -223,6 +224,28 @@ export const useDeliveryStore = create<DeliveryState>()((set) => ({
           ...state.detectionCandidates,
           selectedWallIds: [...selectedWallIds],
           selectedOpeningIds: [...selectedOpeningIds],
+        },
+      }
+    }),
+  setDetectionOpeningKind: (openingId, kind) =>
+    set((state) => {
+      if (!state.detectionCandidates) {
+        return state
+      }
+
+      return {
+        detectionCandidates: {
+          ...state.detectionCandidates,
+          openings: state.detectionCandidates.openings.map((opening) =>
+            opening.id === openingId
+              ? {
+                  ...opening,
+                  kind,
+                  height: kind === 'door' ? 2.1 : 1.5,
+                  yOffset: kind === 'door' ? 1.05 : 1.45,
+                }
+              : opening,
+          ),
         },
       }
     }),

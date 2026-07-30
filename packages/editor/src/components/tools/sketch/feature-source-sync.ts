@@ -22,6 +22,15 @@ export type SourceStatus = {
   tone: 'ok' | 'warning' | 'danger'
 }
 
+const SOURCE_MISSING_MESSAGE = '来源草图缺失，保留上次快照。'
+const SOURCE_OPEN_MESSAGE = '来源草图未闭合，保留上次快照。'
+const SOURCE_SYNCED_MESSAGE = '已自动同步来源草图。'
+const SOURCE_MESSAGES = new Set([
+  SOURCE_MISSING_MESSAGE,
+  SOURCE_OPEN_MESSAGE,
+  SOURCE_SYNCED_MESSAGE,
+])
+
 export function haveSameLineIds(first: readonly string[], second: readonly string[]) {
   if (first.length !== second.length) return false
   const secondIds = new Set(second)
@@ -50,6 +59,10 @@ function haveSameProfileSource(first: FeatureProfileReference, second: FeaturePr
     haveSameLineIds(first.lineIds, second.lineIds) &&
     haveSameCircleIds(first.circleIds ?? [], second.circleIds ?? [])
   )
+}
+
+function hasProfileSource(profile: FeatureProfileReference) {
+  return profile.lineIds.length > 0 || (profile.circleIds?.length ?? 0) > 0
 }
 
 function haveSameJsonValue(first: unknown, second: unknown) {
@@ -187,7 +200,7 @@ function syncStepProfile(step: FeatureStep, previous: FeatureProfile, next: Feat
     ...step,
     profile: next,
     references: buildProfileReferences(next),
-    rebuild: { status: 'ok' as const, message: '已自动同步来源草图。' },
+    rebuild: { status: 'ok' as const, message: SOURCE_SYNCED_MESSAGE },
   } as FeatureStep
 }
 
@@ -206,8 +219,76 @@ function rebuildStepProfileFromSource(step: FeatureStep, nodes: Record<string, A
     ...step,
     profile: nextProfile,
     references: buildProfileReferences(nextProfile),
-    rebuild: { status: 'ok' as const, message: '已自动同步来源草图。' },
+    rebuild: { status: 'ok' as const, message: SOURCE_SYNCED_MESSAGE },
   } as FeatureStep
+}
+
+function getProfileSourceIssue(nodes: Record<string, AnyNode>, profile: FeatureProfileReference) {
+  if (!hasProfileSource(profile)) {
+    return null
+  }
+
+  const status = getSourceStatus(nodes, profile)
+  if (status.tone === 'danger') {
+    return {
+      status: 'failed' as const,
+      message: SOURCE_MISSING_MESSAGE,
+    }
+  }
+
+  if (status.label === '未闭合') {
+    return {
+      status: 'warning' as const,
+      message: SOURCE_OPEN_MESSAGE,
+    }
+  }
+
+  return null
+}
+
+function markStepSourceState(step: FeatureStep, nodes: Record<string, AnyNode>) {
+  if (!('profile' in step)) {
+    return step
+  }
+
+  const issue = getProfileSourceIssue(nodes, step.profile)
+  if (!issue) {
+    if (SOURCE_MESSAGES.has(step.rebuild.message ?? '')) {
+      return {
+        ...step,
+        rebuild: {
+          ...step.rebuild,
+          status: 'ok',
+          message: SOURCE_SYNCED_MESSAGE,
+        },
+      } as FeatureStep
+    }
+
+    return step
+  }
+
+  return {
+    ...step,
+    rebuild: {
+      ...step.rebuild,
+      status: issue.status,
+      message: issue.message,
+    },
+  } as FeatureStep
+}
+
+function getDefinitionStatus(
+  steps: readonly FeatureStep[],
+): FeatureDefinition['rebuild']['status'] {
+  if (steps.some((step) => step.rebuild.status === 'failed')) {
+    return 'failed'
+  }
+
+  if (steps.some((step) => step.rebuild.status === 'warning')) {
+    return 'warning'
+  }
+
+  return 'ok'
 }
 
 function syncFeatureDefinition(
@@ -239,24 +320,30 @@ function syncFeatureDefinition(
       }
 
       if (nextStep.kind === 'extrude') {
-        return {
-          ...nextStep,
-          depth: nextFeature.depth,
-          baseElevation: nextFeature.baseElevation,
-        }
+        return markStepSourceState(
+          {
+            ...nextStep,
+            depth: nextFeature.depth,
+            baseElevation: nextFeature.baseElevation,
+          },
+          nodes,
+        )
       }
 
       if (nextStep.kind === 'revolve') {
-        return {
-          ...nextStep,
-          baseElevation: nextFeature.baseElevation,
-          revolveAxisX: nextFeature.revolveAxisX,
-          revolveAxisLineId: nextFeature.revolveAxisLineId,
-          revolveAngle: nextFeature.revolveAngle,
-        }
+        return markStepSourceState(
+          {
+            ...nextStep,
+            baseElevation: nextFeature.baseElevation,
+            revolveAxisX: nextFeature.revolveAxisX,
+            revolveAxisLineId: nextFeature.revolveAxisLineId,
+            revolveAngle: nextFeature.revolveAngle,
+          },
+          nodes,
+        )
       }
 
-      return rebuildStepProfileFromSource(nextStep, nodes)
+      return markStepSourceState(rebuildStepProfileFromSource(nextStep, nodes), nodes)
     }),
     bodies: definition.bodies.map((body, index) =>
       index === 0
@@ -271,7 +358,22 @@ function syncFeatureDefinition(
     rebuild: { status: 'ok', message: '已自动同步来源草图。' },
   }
 
-  return haveSameJsonValue(nextDefinition, definition) ? undefined : nextDefinition
+  const nextDefinitionWithStatus: FeatureDefinition = {
+    ...nextDefinition,
+    rebuild: {
+      status: getDefinitionStatus(nextDefinition.steps),
+      message:
+        getDefinitionStatus(nextDefinition.steps) === 'failed'
+          ? '存在来源缺失的特征步骤。'
+          : getDefinitionStatus(nextDefinition.steps) === 'warning'
+            ? '存在来源未闭合的特征步骤。'
+            : SOURCE_SYNCED_MESSAGE,
+    },
+  }
+
+  return haveSameJsonValue(nextDefinitionWithStatus, definition)
+    ? undefined
+    : nextDefinitionWithStatus
 }
 
 export function buildFeatureSourceSyncUpdate(

@@ -13,6 +13,14 @@ import type { SketchContextTool } from './floorplan-sketch-menus'
 type SketchDraftKind = 'line' | 'rectangle' | 'circle' | 'arc' | null
 type SketchWorkbenchTab = 'sketch' | 'features'
 
+export type SketchPlaneRecord = {
+  id: string
+  label: string
+  count: number
+  sketchPlane: SketchPlane
+  active: boolean
+}
+
 type FloorplanSketchCommandBarProps = {
   activeTool: SketchContextTool | null
   activeTab: SketchWorkbenchTab
@@ -21,10 +29,12 @@ type FloorplanSketchCommandBarProps = {
   sketchPlane: SketchPlane | null
   lineSelectionCount: number
   circleSelectionCount: number
+  sketchPlaneRecords: SketchPlaneRecord[]
   sketchLineActions: NodeActionMenuExtraAction[]
   sketchCircleActions: NodeActionMenuExtraAction[]
   onActivateTool: (tool: SketchContextTool) => void
   onChangeTab: (tab: SketchWorkbenchTab) => void
+  onSelectSketchPlaneRecord: (record: SketchPlaneRecord) => void
   onCommitDraft: () => void
   onCancelDraft: () => void
   onExitSketch: () => void
@@ -44,6 +54,9 @@ type CommandBarCopy = {
   cancelDraft: string
   completeSketch: string
   moreActions: string
+  sketchRecords: string
+  noSketchRecords: string
+  sketchRecordCount: (count: number) => string
   closedSketchRequired: string
   topFacePlane: (elevation: number) => string
   facePlane: (label?: string) => string
@@ -74,6 +87,9 @@ const COPY: Record<'zh-CN' | 'en', CommandBarCopy> = {
     cancelDraft: '取消草稿',
     completeSketch: '完成草图',
     moreActions: '更多',
+    sketchRecords: '草图记录',
+    noSketchRecords: '暂无面草图',
+    sketchRecordCount: (count) => `${count} 个对象`,
     closedSketchRequired: '需要选择闭合草图',
     topFacePlane: (elevation) => `顶面 · ${elevation.toFixed(2)} m`,
     facePlane: (label) => `实体面 · ${label ?? '侧面'}`,
@@ -103,6 +119,9 @@ const COPY: Record<'zh-CN' | 'en', CommandBarCopy> = {
     cancelDraft: 'Cancel Draft',
     completeSketch: 'Finish Sketch',
     moreActions: 'More',
+    sketchRecords: 'Sketch Records',
+    noSketchRecords: 'No face sketches',
+    sketchRecordCount: (count) => `${count} object${count === 1 ? '' : 's'}`,
     closedSketchRequired: 'Select a closed sketch',
     topFacePlane: (elevation) => `Top face · ${elevation.toFixed(2)} m`,
     facePlane: (label) => `Face · ${label ?? 'Side'}`,
@@ -577,10 +596,12 @@ export const FloorplanSketchCommandBar = memo(function FloorplanSketchCommandBar
   sketchPlane,
   lineSelectionCount,
   circleSelectionCount,
+  sketchPlaneRecords,
   sketchLineActions,
   sketchCircleActions,
   onActivateTool,
   onChangeTab,
+  onSelectSketchPlaneRecord,
   onCommitDraft,
   onCancelDraft,
   onExitSketch,
@@ -727,6 +748,44 @@ export const FloorplanSketchCommandBar = memo(function FloorplanSketchCommandBar
                   {copy.featuresTab}
                 </button>
               </div>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    className="h-6 shrink-0 rounded-md border border-border/70 bg-background/50 px-2 font-medium text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    type="button"
+                  >
+                    {copy.sketchRecords}
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-64 p-1.5" side="bottom" sideOffset={8}>
+                  {sketchPlaneRecords.length > 0 ? (
+                    <div className="flex flex-col gap-1">
+                      {sketchPlaneRecords.map((record) => (
+                        <button
+                          className={cn(
+                            'flex min-w-0 items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-xs transition-colors',
+                            record.active
+                              ? 'bg-primary/10 text-primary'
+                              : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                          )}
+                          key={record.id}
+                          onClick={() => onSelectSketchPlaneRecord(record)}
+                          type="button"
+                        >
+                          <span className="min-w-0 truncate font-medium">{record.label}</span>
+                          <span className="shrink-0 text-[10px] opacity-70">
+                            {copy.sketchRecordCount(record.count)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="px-2.5 py-2 text-muted-foreground text-xs">
+                      {copy.noSketchRecords}
+                    </div>
+                  )}
+                </PopoverContent>
+              </Popover>
               {activeTool ? (
                 <>
                   <span className="text-border">/</span>

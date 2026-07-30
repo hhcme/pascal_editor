@@ -33,12 +33,108 @@ import { sfxEmitter } from '../../lib/sfx-bus'
 import useEditor, {
   type MaterialTargetRole,
   type Phase,
+  type SketchPlane,
   type StructureLayer,
 } from './../../store/use-editor'
 import { boxSelectHandled } from '../tools/select/box-select-tool'
 
 const FEATURE_TOP_FACE_HIT_TOLERANCE = 0.06
 const FEATURE_FACE_NORMAL_THRESHOLD = 0.45
+
+function isNumberTuple3(value: unknown): value is [number, number, number] {
+  return (
+    Array.isArray(value) &&
+    value.length === 3 &&
+    value.every((entry) => typeof entry === 'number' && Number.isFinite(entry))
+  )
+}
+
+function getSketchPlaneFromMetadata(metadata: unknown): SketchPlane | null {
+  if (!(typeof metadata === 'object' && metadata !== null && 'sketchPlane' in metadata)) {
+    return null
+  }
+
+  const rawPlane = (metadata as Record<string, unknown>).sketchPlane
+  if (!(typeof rawPlane === 'object' && rawPlane !== null)) {
+    return null
+  }
+
+  const plane = rawPlane as Record<string, unknown>
+  if (
+    plane.kind === 'feature-top' &&
+    typeof plane.targetNodeId === 'string' &&
+    typeof plane.elevation === 'number' &&
+    Number.isFinite(plane.elevation)
+  ) {
+    return {
+      kind: 'feature-top',
+      targetNodeId: plane.targetNodeId as AnyNodeId,
+      elevation: plane.elevation,
+    }
+  }
+
+  if (
+    plane.kind === 'feature-face' &&
+    typeof plane.targetNodeId === 'string' &&
+    isNumberTuple3(plane.origin) &&
+    isNumberTuple3(plane.uAxis) &&
+    isNumberTuple3(plane.vAxis) &&
+    isNumberTuple3(plane.normal)
+  ) {
+    return {
+      kind: 'feature-face',
+      targetNodeId: plane.targetNodeId as AnyNodeId,
+      space: plane.space === 'scene' || plane.space === 'target-local' ? plane.space : undefined,
+      origin: plane.origin,
+      uAxis: plane.uAxis,
+      vAxis: plane.vAxis,
+      normal: plane.normal,
+      label: typeof plane.label === 'string' ? plane.label : undefined,
+    }
+  }
+
+  return null
+}
+
+function getSketchPlaneSignature(plane: SketchPlane | null | undefined): string | null {
+  if (!plane) return null
+
+  if (plane.kind === 'feature-top') {
+    return `feature-top:${plane.targetNodeId}:${plane.elevation}`
+  }
+
+  const normal = plane.normal
+  const origin = plane.origin
+  const planeOffset = normal[0] * origin[0] + normal[1] * origin[1] + normal[2] * origin[2]
+  const formatPlaneNumber = (value: number) => (Math.round(value * 10000) / 10000).toString()
+
+  return [
+    'feature-face',
+    plane.targetNodeId,
+    plane.space ?? 'target-local',
+    ...normal.map(formatPlaneNumber),
+    formatPlaneNumber(planeOffset),
+  ].join(':')
+}
+
+function findExistingSketchPlane(candidate: SketchPlane): SketchPlane | null {
+  const candidateSignature = getSketchPlaneSignature(candidate)
+  if (!candidateSignature) return null
+
+  const nodes = useScene.getState().nodes
+  for (const node of Object.values(nodes)) {
+    if (!(node?.type === 'sketch-line' || node?.type === 'sketch-circle')) {
+      continue
+    }
+
+    const sketchPlane = getSketchPlaneFromMetadata(node.metadata)
+    if (getSketchPlaneSignature(sketchPlane) === candidateSignature) {
+      return sketchPlane
+    }
+  }
+
+  return null
+}
 
 const isNodeInCurrentLevel = (node: AnyNode): boolean => {
   const currentLevelId = useViewer.getState().selection.levelId
@@ -228,6 +324,7 @@ function getFeatureSideFaceSketchPlane(event: NodeEvent<FeatureNode>) {
 
   const object = getEventObject(event)
   object.updateWorldMatrix(true, false)
+  object.parent?.updateWorldMatrix(true, false)
 
   const worldNormal = new Vector3(...normal)
     .applyNormalMatrix(new Matrix3().getNormalMatrix(object.matrixWorld))
@@ -244,18 +341,35 @@ function getFeatureSideFaceSketchPlane(event: NodeEvent<FeatureNode>) {
   }
 
   const uAxis = new Vector3().crossVectors(vAxis, worldNormal).normalize()
-  const origin = event.position as [number, number, number]
+  const parentWorldToLocal = object.parent?.matrixWorld.clone().invert()
+  const parentNormalMatrix = parentWorldToLocal
+    ? new Matrix3().getNormalMatrix(parentWorldToLocal)
+    : null
+  const rawOrigin = parentWorldToLocal
+    ? new Vector3(...event.position).applyMatrix4(parentWorldToLocal)
+    : new Vector3(...event.position)
+  const localUAxis = parentNormalMatrix
+    ? uAxis.clone().applyNormalMatrix(parentNormalMatrix)
+    : uAxis
+  const localVAxis = parentNormalMatrix
+    ? vAxis.clone().applyNormalMatrix(parentNormalMatrix)
+    : vAxis
+  const localNormal = parentNormalMatrix
+    ? worldNormal.clone().applyNormalMatrix(parentNormalMatrix)
+    : worldNormal
+  const normalizedVAxis = localVAxis.clone().normalize()
+  const origin = rawOrigin.clone().addScaledVector(normalizedVAxis, -rawOrigin.dot(normalizedVAxis))
   const dominantAxis = Math.abs(worldNormal.x) >= Math.abs(worldNormal.z) ? 'x' : 'z'
   const positiveSide = dominantAxis === 'x' ? worldNormal.x >= 0 : worldNormal.z >= 0
 
   return {
     kind: 'feature-face' as const,
     targetNodeId: event.node.id as AnyNodeId,
-    space: 'scene' as const,
-    origin,
-    uAxis: uAxis.toArray() as [number, number, number],
-    vAxis: vAxis.toArray() as [number, number, number],
-    normal: worldNormal.toArray() as [number, number, number],
+    space: parentWorldToLocal ? ('target-local' as const) : ('scene' as const),
+    origin: origin.toArray() as [number, number, number],
+    uAxis: localUAxis.normalize().toArray() as [number, number, number],
+    vAxis: localVAxis.normalize().toArray() as [number, number, number],
+    normal: localNormal.normalize().toArray() as [number, number, number],
     label:
       dominantAxis === 'x'
         ? positiveSide
@@ -286,10 +400,11 @@ function activateFeatureTopFaceSketch(feature: FeatureNode) {
 }
 
 function activateFeatureSideFaceSketch(event: NodeEvent<FeatureNode>) {
-  const sketchPlane = getFeatureSideFaceSketchPlane(event)
-  if (!sketchPlane) {
+  const candidateSketchPlane = getFeatureSideFaceSketchPlane(event)
+  if (!candidateSketchPlane) {
     return false
   }
+  const sketchPlane = findExistingSketchPlane(candidateSketchPlane) ?? candidateSketchPlane
 
   const editor = useEditor.getState()
   const viewer = useViewer.getState()

@@ -257,4 +257,117 @@ describe('feature source sync', () => {
 
     expect(buildFeatureSourceSyncUpdate(feature, nodes)).toBeNull()
   })
+
+  test('marks feature step failed when source sketch geometry is missing', () => {
+    const lines = [
+      createSketchLine('sketch_line_a', [0, 0], [2, 0]),
+      createSketchLine('sketch_line_b', [2, 0], [2, 2]),
+      createSketchLine('sketch_line_c', [2, 2], [0, 2]),
+    ]
+    const profile = {
+      kind: 'sketch-profile' as const,
+      lineIds: ['sketch_line_a', 'sketch_line_b', 'sketch_line_c', 'sketch_line_d'],
+      circleIds: [],
+      points: [
+        [0, 0],
+        [2, 0],
+        [2, 2],
+        [0, 2],
+      ] as [number, number][],
+      holes: [],
+    }
+    const feature = FeatureNode.parse({
+      id: 'feature_missing_source',
+      parentId: 'level_0',
+      kind: 'extrude',
+      profile,
+      definition: {
+        version: 1,
+        autoRebuild: false,
+        steps: [
+          {
+            id: 'feature_step_base',
+            kind: 'extrude',
+            operation: 'add',
+            profile,
+            depth: 2.8,
+            baseElevation: 0,
+            references: [],
+            rebuild: { status: 'ok' },
+          },
+        ],
+        bodies: [],
+        referenceGeometry: [],
+        rebuild: { status: 'ok' },
+      },
+    })
+    const nodes = Object.fromEntries([...lines, feature].map((node) => [node.id, node])) as Record<
+      string,
+      AnyNode
+    >
+
+    const update = buildFeatureSourceSyncUpdate(feature, nodes)
+    const firstStep = update?.definition?.steps[0]
+
+    expect(firstStep?.rebuild.status).toBe('failed')
+    expect(firstStep?.rebuild.message).toContain('来源草图缺失')
+    expect(update?.definition?.rebuild.status).toBe('failed')
+  })
+
+  test('marks feature step warning when source sketch profile is open', () => {
+    const lines = [
+      createSketchLine('sketch_line_a', [0, 0], [2, 0]),
+      createSketchLine('sketch_line_b', [2, 0], [2, 2]),
+      createSketchLine('sketch_line_c', [2, 2], [0, 2]),
+      createSketchLine('sketch_line_d', [0, 2], [0, 0.5]),
+    ]
+    const profile = {
+      kind: 'sketch-profile' as const,
+      lineIds: ['sketch_line_a', 'sketch_line_b', 'sketch_line_c', 'sketch_line_d'],
+      circleIds: [],
+      points: [
+        [0, 0],
+        [2, 0],
+        [2, 2],
+        [0, 2],
+      ] as [number, number][],
+      holes: [],
+    }
+    const feature = FeatureNode.parse({
+      id: 'feature_open_source',
+      parentId: 'level_0',
+      kind: 'extrude',
+      profile,
+      definition: {
+        version: 1,
+        autoRebuild: false,
+        steps: [
+          {
+            id: 'feature_step_base',
+            kind: 'extrude',
+            operation: 'add',
+            profile,
+            depth: 2.8,
+            baseElevation: 0,
+            references: [],
+            rebuild: { status: 'ok' },
+          },
+        ],
+        bodies: [],
+        referenceGeometry: [],
+        rebuild: { status: 'ok' },
+      },
+    })
+    const nodes = Object.fromEntries([...lines, feature].map((node) => [node.id, node])) as Record<
+      string,
+      AnyNode
+    >
+
+    const update = buildFeatureSourceSyncUpdate(feature, nodes)
+    const firstStep = update?.definition?.steps[0]
+
+    expect(firstStep?.rebuild.status).toBe('warning')
+    expect(firstStep?.rebuild.message).toContain('来源草图未闭合')
+    expect(update?.definition?.rebuild.status).toBe('warning')
+  })
 })
